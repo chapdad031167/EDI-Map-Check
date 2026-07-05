@@ -1,0 +1,49 @@
+# X12 943 Warehouse Stock Transfer Shipment Advice (v004010).
+#
+# The transfer pair's shipping side (943 ships, 944 receives). W04 detail
+# lines are read as 01=quantity, 02=UOM, 03=UPC — assumption noted for
+# amendment against a specific partner guide. Cross-transaction 943/944
+# pairing is a future feature; within the 943, the W03 total reconciles
+# against the line quantities.
+
+transaction:
+  set: "943"
+  name: Warehouse Stock Transfer Shipment Advice
+  functional_group: AR
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [W06, N9, G61, G62, W27, W28]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, PER]
+        max_repeats: 10
+
+  - area: detail
+    opens_area: [W04]
+    loops:
+      - id: W04
+        trigger: W04
+        qualifier: 1
+        max_repeats: 10000
+        segments: [G69, N9, QTY]
+
+  - area: summary
+    opens_area: [W03]
+    segments: [W03]
+
+output_pairing:
+  list_path: lines
+  loop: W04
+
+reconciliation:
+  - id: w03-transfer-sum
+    description: W03 total units must equal the sum of W04 line quantities
+    left: { value: W0301 }
+    right: { sum: { loop: W04, value: W0401 } }
+    check: equals
+    when: { exists: W0301 }
+    severity: warning

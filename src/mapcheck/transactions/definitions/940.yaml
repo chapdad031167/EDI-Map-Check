@@ -1,0 +1,40 @@
+# X12 940 Warehouse Shipping Order (v004010) — transaction definition.
+#
+# Built from the public X12 940 structure. Detail lines are bare W01
+# loops (no LX wrapper) per the most common public companion guides; the
+# 945 reply is LX-wrapped. The 940 is an instruction rather than a
+# report, so no quantity reconciliation ships by default — spec-level
+# LOOP_COUNT rows cover line counting.
+
+transaction:
+  set: "940"
+  name: Warehouse Shipping Order
+  functional_group: OW
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [W05, N9, G61, G62, W09, W66, W6, R2, BNX, NTE]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, PER]
+        max_repeats: 10
+
+  - area: detail
+    opens_area: [W01]
+    loops:
+      - id: W01
+        trigger: W01
+        qualifier: 1
+        max_repeats: 10000
+        segments: [G69, N9, W20, QTY, AMT]
+
+  - area: summary
+    opens_area: [W76]
+    segments: [W76]
+
+output_pairing:
+  list_path: lines
+  loop: W01
