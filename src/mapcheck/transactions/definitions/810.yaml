@@ -1,0 +1,71 @@
+# X12 810 Invoice (v004010) — transaction definition.
+#
+# The tds-invoice-total rule is the first cross-field arithmetic
+# reconciliation: TDS01 (X12 N2, implied two decimals) must equal the sum
+# of the line extensions (IT102 x IT104) plus summary-level charges
+# (SAC01 = C) minus allowances (SAC01 = A). SAC amounts are N2 as well.
+
+transaction:
+  set: "810"
+  name: Invoice
+  functional_group: IN
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [BIG, NTE, CUR, REF, PER, ITD, DTM, FOB, PID, MEA, PWK, PKG,
+               L7, BAL, INC, PAM]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, REF, PER, DMG]
+        max_repeats: 200
+
+  - area: detail
+    opens_area: [IT1]
+    loops:
+      - id: IT1
+        trigger: IT1
+        qualifier: 1
+        max_repeats: 200000
+        segments: [CRC, QTY, CUR, IT3, TXI, CTP, PAM, MEA, PID, PWK, PKG,
+                   PO4, ITD, REF, PER, SDQ, DTM, CAD, SAC, SLN, TC2]
+
+  - area: summary
+    opens_area: [TDS]
+    segments: [TDS, TXI, CAD, AMT, ISS, CTT]
+    loops:
+      - id: SAC
+        trigger: SAC
+        qualifier: 1
+        segments: [TXI]
+        max_repeats: 25
+
+output_pairing:
+  list_path: lines
+  loop: IT1
+
+reconciliation:
+  - id: ctt-line-count
+    description: CTT01 must equal the IT1 loop count
+    left: { value: CTT01 }
+    right: { count: IT1 }
+    check: equals
+    when: { exists: CTT01 }
+    severity: warning
+
+  # Invoice math: total = line extensions + charges - allowances.
+  - id: tds-invoice-total
+    description: TDS01 must equal line extensions plus charges minus allowances
+    left: { value: TDS01, implied: 2 }
+    right:
+      combine:
+        add:
+          - { sum: { loop: IT1, expr: "IT102 * IT104" } }
+          - { sum: { loop: "SAC[C]", value: SAC05, implied: 2 } }
+        subtract:
+          - { sum: { loop: "SAC[A]", value: SAC05, implied: 2 } }
+    check: equals
+    when: { exists: TDS01 }
+    severity: warning
