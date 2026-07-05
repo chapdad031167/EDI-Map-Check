@@ -1,8 +1,13 @@
 # EDI MapCheck
 
 **Vendor-neutral validation for EDI mapping work.** Give it three artifacts — a
-mapping spec, an X12 850 source file, and the translated output — and it tells
+mapping spec, an X12 source file, and the translated output — and it tells
 you, field by field, whether the output actually does what the spec says.
+
+Transactions are **declarative**: each supported set is a YAML definition file
+(segment dictionary, loop hierarchy, reconciliation rules), not parser code.
+The transaction is auto-detected from the file's ST01. `mapcheck transactions`
+lists what's registered.
 
 ![CI](https://github.com/chapdad031167/EDI-Map-Check/actions/workflows/ci.yml/badge.svg)
 
@@ -88,10 +93,30 @@ by status, download the color-coded Excel report:
 ### Other commands
 
 ```bash
+mapcheck transactions             # list registered transaction definitions
 mapcheck init-spec my_spec.xlsx   # blank spec template with instructions sheet
 mapcheck history                  # recent runs from the SQLite audit trail
-mapcheck validate --help          # all options (--verbose, --db, --no-history, ...)
+mapcheck validate --help          # all options (--transaction, --verbose, --db, ...)
 ```
+
+## Transaction coverage
+
+| Set | Name | Status | Notes |
+|-----|------|--------|-------|
+| 850 | Purchase Order | ✅ Supported | Reference spec + full synthetic test set |
+| 856 | Ship Notice/Manifest (ASN) | 🔜 Next | HL hierarchy support designed into the schema |
+| 855 / 810 | PO Ack / Invoice | Planned | Order cycle |
+| 940 / 945 / 943 / 944 / 947 | Warehouse suite | Planned | 3PL flows |
+| 846 / 812 / 867 | Inventory & product movement | Planned | |
+| 844 / 845 / 849 / 854 | Pharma contract & chargeback | Planned | Built from public X12 documentation |
+| 997 | Functional Acknowledgment | Planned | |
+
+Each transaction is a YAML file under `src/mapcheck/transactions/definitions/`
+declaring its areas, segment dictionary, loops (including HL-style
+parent-child trees), envelope expectations, and declarative reconciliation
+rules (e.g. *CTT01 must equal the PO1 loop count*). The parser and engine are
+generic; adding a set means adding a definition file, a reference spec, and
+synthetic test data — no parser code.
 
 ## The spec template
 
@@ -136,24 +161,25 @@ generator and asserted in the test suite).
 
 ```
 src/mapcheck/
-├── spec/       Excel template, rule model, condition grammar, spec loader
-├── x12/        pyx12-backed 850 parser + loop/addressing layer
-├── output/     JSON + keyed-flat adapters onto one canonical model
-├── engine/     rule evaluation, format checks, findings
-├── report/     terminal report, Excel export, SQLite history
-└── cli.py      the mapcheck command
-app.py          Streamlit UI
-examples/       synthetic spec + 850s + outputs (clean and defective)
-scripts/        example-set generator
-tests/          pytest suite (every rule category, every planted defect)
+├── spec/          Excel template, rule model, condition grammar, spec loader
+├── transactions/  declarative transaction definitions (YAML) + registry
+├── x12/           pyx12-backed generic parser, driven by the definitions
+├── output/        JSON + keyed-flat adapters onto one canonical model
+├── engine/        rule evaluation, format checks, reconciliation, findings
+├── report/        terminal report, Excel export, SQLite history
+└── cli.py         the mapcheck command
+app.py             Streamlit UI
+examples/          synthetic specs + source files + outputs (clean and defective)
+scripts/           example-set generator
+tests/             pytest suite (every rule category, every planted defect)
 ```
 
-## Scope (MVP)
+## Scope
 
-Inbound X12 850 → generic internal output, one spec template format. Not yet:
-other transaction sets, outbound direction, arbitrary spec formats,
-partner-specific overrides. The layering above is built so those grow without
-rework.
+Inbound X12 → generic internal output, one spec template format. Not yet:
+outbound direction, arbitrary spec formats, partner-specific overrides,
+cross-transaction pairing (e.g. 844/849). The layering above is built so
+those grow without rework.
 
 ## Development
 
