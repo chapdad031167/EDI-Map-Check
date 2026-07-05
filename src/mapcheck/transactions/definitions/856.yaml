@@ -1,0 +1,78 @@
+# X12 856 Ship Notice/Manifest (ASN, v004010) — transaction definition.
+#
+# Built from the public X12 856 structure. The HL loop is hierarchical:
+# HL01 carries the occurrence id, HL02 the parent id, HL03 the level code.
+# Allowed levels cover standard (S>O>I), pick-and-pack (S>O>P>I), and
+# palletized (S>O>T>P>I) shipments. Orphaned HL02 references, unknown
+# level codes, and illegal nesting are structural failures.
+#
+# Spec addressing note: an item-level rule (Loop Context HL[I]) can read
+# its ancestors' segments — PRF from the parent order, MAN from the
+# carton — nearest ancestor first. Party N1 loops nest inside HL levels.
+
+transaction:
+  set: "856"
+  name: Ship Notice/Manifest
+  functional_group: SH
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [BSN, DTM]
+
+  - area: detail
+    opens_area: [HL]
+    loops:
+      - id: HL
+        trigger: HL
+        max_repeats: 200000
+        hierarchical:
+          id_element: 1
+          parent_element: 2
+          level_element: 3
+        levels:
+          S: { children: [O],       segments: [TD1, TD5, TD3, TD4, REF, PER, DTM, FOB, MAN] }
+          O: { children: [T, P, I], segments: [PRF, REF, PID, MEA, PER, DTM, TD1, TD5] }
+          T: { children: [P, I],    segments: [PAL, MAN, REF] }
+          P: { children: [I],       segments: [PO4, MAN, REF] }
+          I: { children: [],        segments: [LIN, SN1, SLN, PRF, PID, MEA, PO4, REF, DTM, MAN] }
+        loops:
+          - id: N1
+            trigger: N1
+            qualifier: 1
+            segments: [N2, N3, N4, REF, PER, FOB]
+
+  - area: summary
+    opens_area: [CTT]
+    segments: [CTT, AMT]
+
+output_pairing:
+  list_path: lines
+  loop: HL[I]
+
+reconciliation:
+  - id: ctt-hl-count
+    description: CTT01 must equal the total number of HL loops
+    left: { value: CTT01 }
+    right: { count: HL }
+    check: equals
+    when: { exists: CTT01 }
+    severity: warning
+
+  - id: ctt02-unit-sum
+    description: CTT02 (hash total), when sent, must equal the sum of item SN1 quantities
+    left: { value: CTT02 }
+    right: { sum: { loop: "HL[I]", value: SN102 } }
+    check: equals
+    when: { exists: CTT02 }
+    severity: warning
+
+  # TD102 with a carton packaging code (CTN25) is a count of cartons, not
+  # units — so it reconciles against the pack level, not the SN1 unit sum.
+  - id: td1-carton-count
+    description: shipment-level TD1 lading quantity, when sent, must equal the number of pack (P) loops
+    left: { value: TD102, context: "HL[S]" }
+    right: { count: "HL[P]" }
+    check: equals
+    when: { exists: TD102, context: "HL[S]" }
+    severity: warning
