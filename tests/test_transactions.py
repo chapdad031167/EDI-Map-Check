@@ -319,7 +319,7 @@ class TestDefinitionLoaderErrors:
             )
 
     def test_bad_operand(self, tmp_path):
-        with pytest.raises(DefinitionError, match="exactly one of 'value' or 'count'"):
+        with pytest.raises(DefinitionError, match="exactly one of 'value', 'count', or 'sum'"):
             self._load(
                 tmp_path,
                 """
@@ -425,7 +425,7 @@ class TestCliTransactions:
             "--spec", str(examples_dir / "specs" / "850_reference_spec.xlsx"),
             "--source", str(examples_dir / "source" / "850_baseline.edi"),
             "--output", str(examples_dir / "output" / "po_baseline.json"),
-            "--transaction", "856",
+            "--transaction", "810",
             "--no-history",
         ])
         assert code == 2

@@ -20,12 +20,24 @@ from mapcheck.x12.parser import X12ParseError
 
 EXAMPLES = Path(__file__).parent / "examples"
 
+#: scenario -> (spec, source, output)
 EXAMPLE_SCENARIOS = {
-    "Clean baseline (all PASS)": ("850_baseline.edi", "po_baseline.json"),
-    "Defective output (planted mapping bugs)": ("850_baseline.edi", "po_baseline_defects.json"),
-    "Defective source (bad data, naive translator)": ("850_defects.edi", "po_from_bad_source.json"),
-    "Minimal PO (optional segments absent)": ("850_minimal.edi", "po_minimal.json"),
-    "Flat output format": ("850_baseline.edi", "po_baseline.flat"),
+    "850 clean baseline (all PASS)": (
+        "850_reference_spec.xlsx", "850_baseline.edi", "po_baseline.json"),
+    "850 defective output (planted mapping bugs)": (
+        "850_reference_spec.xlsx", "850_baseline.edi", "po_baseline_defects.json"),
+    "850 defective source (bad data, naive translator)": (
+        "850_reference_spec.xlsx", "850_defects.edi", "po_from_bad_source.json"),
+    "850 minimal PO (optional segments absent)": (
+        "850_reference_spec.xlsx", "850_minimal.edi", "po_minimal.json"),
+    "850 flat output format": (
+        "850_reference_spec.xlsx", "850_baseline.edi", "po_baseline.flat"),
+    "856 pick-and-pack ASN (all PASS)": (
+        "856_reference_spec.xlsx", "856_pickpack.edi", "asn_pickpack.json"),
+    "856 standard-carton ASN (all PASS)": (
+        "856_reference_spec.xlsx", "856_standard.edi", "asn_standard.json"),
+    "856 defective ASN (HL orphans, bad rollups)": (
+        "856_reference_spec.xlsx", "856_defects.edi", "asn_defects.json"),
 }
 
 _STATUS_COLORS = {
@@ -134,11 +146,11 @@ def main() -> None:
 
         if use_example and EXAMPLES.exists():
             scenario = st.selectbox("Scenario", list(EXAMPLE_SCENARIOS))
-            source_name, output_name = EXAMPLE_SCENARIOS[scenario]
-            spec_path = str(EXAMPLES / "specs" / "850_reference_spec.xlsx")
+            spec_name, source_name, output_name = EXAMPLE_SCENARIOS[scenario]
+            spec_path = str(EXAMPLES / "specs" / spec_name)
             source_path = str(EXAMPLES / "source" / source_name)
             output_path = str(EXAMPLES / "output" / output_name)
-            st.caption(f"Spec: 850_reference_spec.xlsx\n\nSource: {source_name}\n\nOutput: {output_name}")
+            st.caption(f"Spec: {spec_name}\n\nSource: {source_name}\n\nOutput: {output_name}")
         else:
             spec_upload = st.file_uploader("Mapping spec (.xlsx)", type=["xlsx"])
             source_upload = st.file_uploader("X12 850 source", type=["edi", "txt", "x12", "dat"])

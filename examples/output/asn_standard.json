@@ -1,0 +1,44 @@
+{
+  "shipment": {
+    "purpose": "ORIGINAL",
+    "asn_number": "ASN20260712002",
+    "asn_date": "2026-07-12",
+    "asn_time": "08:30",
+    "structure_code": "SHIPMENT_ORDER_ITEM",
+    "ship_date": "2026-07-12",
+    "scac": "UPSN",
+    "ship_mode": "MOTOR",
+    "bol_number": "BOL8802290",
+    "record_type": "ASN_INBOUND"
+  },
+  "ship_to": {
+    "name": "RIVERBEND MARKET",
+    "id": "0007",
+    "address1": "15 HARBOR ROW",
+    "city": "PORTLAND",
+    "state": "OR",
+    "zip": "97201"
+  },
+  "lines": [
+    {
+      "po_number": "PO7700003",
+      "line_no": 1,
+      "qty_shipped": 100,
+      "uom": "EACH",
+      "upc": "614141007352",
+      "description": "NO2 PENCILS 10PK"
+    },
+    {
+      "po_number": "PO7700003",
+      "line_no": 2,
+      "qty_shipped": 40,
+      "uom": "EACH",
+      "upc": "614141007353",
+      "description": "MARKERS 8CT"
+    }
+  ],
+  "summary": {
+    "hl_count": 4,
+    "total_units": 140
+  }
+}
