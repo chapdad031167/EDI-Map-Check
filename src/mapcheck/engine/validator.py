@@ -553,6 +553,55 @@ def _scoped_value(field: str, context: str | None, tx: TransactionDocument) -> s
     return scopes[0].value(seg_id, element) if scopes else None
 
 
+def _sum_operand(operand: Operand, tx: TransactionDocument) -> tuple[Any, str]:
+    """Evaluate a sum operand.
+
+    ``sum_value`` sums the element over **every** matching segment in each
+    occurrence (an 855 line's repeated ACKs all count); ``sum_expr``
+    multiplies its element refs once per occurrence (first match each).
+    Missing/non-numeric contributions are skipped — which correctly skews
+    the total when the source is incomplete.
+    """
+    assert operand.sum_loop is not None
+    total = Decimal(0)
+    for scope in _loop_occurrences(operand.sum_loop, tx):
+        if operand.sum_value is not None:
+            seg_id, element = split_source_field(operand.sum_value)
+            for segment in scope.segments:
+                if segment.seg_id != seg_id:
+                    continue
+                raw = segment.element(element)
+                if raw is None:
+                    continue
+                try:
+                    number = Decimal(raw)
+                except InvalidOperation:
+                    continue
+                if operand.implied is not None:
+                    number = number.scaleb(-operand.implied)
+                total += number
+        else:
+            product = Decimal(1)
+            complete = True
+            for ref in operand.sum_expr:
+                seg_id, element = split_source_field(ref)
+                raw = scope.value(seg_id, element)
+                if raw is None:
+                    complete = False
+                    break
+                try:
+                    product *= Decimal(raw)
+                except InvalidOperation:
+                    complete = False
+                    break
+            if complete:
+                if operand.implied is not None:
+                    product = product.scaleb(-operand.implied)
+                total += product
+    what = operand.sum_value or " * ".join(operand.sum_expr)
+    return total, f"sum({what} over {operand.sum_loop})={display(total)}"
+
+
 def _resolve_operand(operand: Operand, tx: TransactionDocument) -> tuple[Any, str] | None:
     """Resolve a reconciliation operand to ``(comparable value, display)``.
 
@@ -562,21 +611,21 @@ def _resolve_operand(operand: Operand, tx: TransactionDocument) -> tuple[Any, st
         count = len(_loop_occurrences(operand.count, tx))
         return count, f"count({operand.count})={count}"
     if operand.sum_loop is not None:
-        assert operand.sum_value is not None
-        seg_id, element = split_source_field(operand.sum_value)
+        return _sum_operand(operand, tx)
+    if operand.is_combine:
         total = Decimal(0)
-        for scope in _loop_occurrences(operand.sum_loop, tx):
-            raw = scope.value(seg_id, element)
-            if raw is None:
-                continue  # a missing element contributes nothing — and skews the sum
-            try:
-                number = Decimal(raw)
-            except InvalidOperation:
-                continue
-            if operand.implied is not None:
-                number = number.scaleb(-operand.implied)
-            total += number
-        return total, f"sum({operand.sum_value} over {operand.sum_loop})={display(total)}"
+        parts: list[str] = []
+        for sign, children in ((1, operand.add), (-1, operand.subtract)):
+            for child in children:
+                resolved = _resolve_operand(child, tx)
+                if resolved is None:
+                    continue
+                child_value, child_text = resolved
+                if not isinstance(child_value, (Decimal, int)):
+                    continue
+                total += sign * Decimal(child_value)
+                parts.append(("+ " if sign > 0 else "- ") + child_text)
+        return total, f"({' '.join(parts)})={display(total)}"
     assert operand.value is not None
     raw = _scoped_value(operand.value, operand.context, tx)
     if raw is None:
@@ -649,18 +698,25 @@ def _referenced_elements(spec: MappingSpec, tx: TransactionDocument) -> set[tupl
             ):
                 mark(occurrence.trigger, element)
 
+    def mark_all(scope: Scope, field: str) -> None:
+        # A rule that reads SEGnn references every SEGnn in its scope: a
+        # repeating segment (an 855 line's second ACK) is still spec-covered
+        # data even though value rules read the first occurrence.
+        seg_id, element = split_source_field(field)
+        for segment in scope.segments:
+            if segment.seg_id == seg_id:
+                mark(segment, element)
+
     for rule in spec.rules:
         for scope in tx.scopes(rule.loop_context):
             if rule.loop_context is not None and rule.loop_context.qualifier is not None:
                 context_loop = tx.definition.loop(rule.loop_context.segment_id)
                 mark(scope.segments[0], context_loop.qualifier if context_loop else 1)
             if rule.source_field and rule.rule_type is not RuleType.LOOP_COUNT:
-                seg_id, element = split_source_field(rule.source_field)
-                mark(scope.first(seg_id), element)
+                mark_all(scope, rule.source_field)
             if rule.condition is not None:
                 for predicate in rule.condition.predicates:
-                    seg_id, element = split_source_field(predicate.field)
-                    mark(scope.first(seg_id), element)
+                    mark_all(scope, predicate.field)
     return referenced
 
 

@@ -98,8 +98,15 @@ class Operand:
       ``HL[S]``) when given.
     * ``count`` — a loop id, optionally qualifier/level-filtered
       (``PO1``, ``HL``, ``HL[I]``).
-    * ``sum_value`` + ``sum_loop`` — sum an element (``SN102``) across the
-      occurrences of a loop reference (``HL[I]``).
+    * ``sum_loop`` + (``sum_value`` | ``sum_expr``) — sum across a loop
+      reference (``HL[I]``, ``SAC[C]``). A ``sum_value`` element
+      (``ACK02``) is summed over **every** matching segment in each
+      occurrence (repeats included); a ``sum_expr`` product
+      (``"IT102 * IT104"``, parsed into element refs — no eval) is
+      evaluated once per occurrence.
+    * ``add`` / ``subtract`` — a combine operand: the sum of the ``add``
+      sub-operands minus the sum of the ``subtract`` ones (invoice math:
+      lines + charges − allowances).
 
     ``implied`` shifts a numeric operand's decimal point, matching the
     spec Format grammar.
@@ -110,7 +117,14 @@ class Operand:
     count: str | None = None
     sum_loop: str | None = None
     sum_value: str | None = None
+    sum_expr: tuple[str, ...] = ()  # element refs multiplied together
+    add: tuple["Operand", ...] = ()
+    subtract: tuple["Operand", ...] = ()
     implied: int | None = None
+
+    @property
+    def is_combine(self) -> bool:
+        return bool(self.add or self.subtract)
 
 
 @dataclass(frozen=True)
