@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "edi-mapcheck"
+version = "0.1.0"
+description = "Vendor-neutral validation tool for EDI mapping work: spec vs. X12 source vs. translated output, with a field-level pass/fail report."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Jason Chapman" }]
+keywords = ["edi", "x12", "850", "mapping", "validation", "testing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Office/Business",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = [
+    "pyx12>=4.0",
+    "openpyxl>=3.1",
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+ui = ["streamlit>=1.30"]
+dev = ["pytest>=8.0", "streamlit>=1.30"]
+
+[project.scripts]
+mapcheck = "mapcheck.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
