@@ -83,11 +83,12 @@ def export_excel(result: RunResult, path: str | Path) -> Path:
 
     put(1, "EDI MapCheck report", result.spec_name or "", bold=True)
     put(2, "Run at (UTC)", result.run_at.strftime("%Y-%m-%d %H:%M:%S"))
-    put(3, "Spec", result.spec_path)
-    put(4, "Source", result.source_path)
-    put(5, "Output", result.output_path)
-    put(6, "Overall result", result.overall.value, bold=True)
-    row = 8
+    put(3, "Transaction", f"{result.transaction_set or ''} {result.transaction_name or ''}".strip())
+    put(4, "Spec", result.spec_path)
+    put(5, "Source", result.source_path)
+    put(6, "Output", result.output_path)
+    put(7, "Overall result", result.overall.value, bold=True)
+    row = 9
     put(row, "Status counts", "")
     for status, count in result.counts.items():
         row += 1

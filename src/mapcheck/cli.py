@@ -5,6 +5,7 @@ Subcommands:
 * ``mapcheck validate --spec spec.xlsx --source po.edi --output out.json``
 * ``mapcheck init-spec new_spec.xlsx`` — write a blank spec template
 * ``mapcheck history`` — list recent validation runs
+* ``mapcheck transactions`` — list registered transaction definitions
 """
 
 from __future__ import annotations
@@ -45,6 +46,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_val.add_argument("--source", required=True, help="X12 850 source file")
     p_val.add_argument("--output", required=True, help="translated output file (.json or flat)")
     p_val.add_argument(
+        "--transaction",
+        metavar="SET",
+        help="force a transaction set (default: auto-detect from the source file's ST01)",
+    )
+    p_val.add_argument(
         "--export-xlsx",
         metavar="PATH",
         help="also write a color-coded Excel report to PATH",
@@ -70,12 +76,16 @@ def _build_parser() -> argparse.ArgumentParser:
     p_hist = sub.add_parser("history", help="list recent validation runs")
     p_hist.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
     p_hist.add_argument("--limit", type=int, default=20, help="number of runs to show")
+
+    sub.add_parser("transactions", help="list registered transaction definitions")
     return parser
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
     try:
-        result = validate_files(args.spec, args.source, args.output)
+        result = validate_files(
+            args.spec, args.source, args.output, transaction=args.transaction
+        )
     except (SpecLoadError, X12ParseError, OutputLoadError) as exc:
         print(f"mapcheck: {exc}", file=sys.stderr)
         return EXIT_USAGE
@@ -128,12 +138,28 @@ def _cmd_history(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_transactions(args: argparse.Namespace) -> int:
+    from mapcheck.transactions.registry import default_registry
+
+    definitions = default_registry.all()
+    print(f"{'SET':<6} {'NAME':<40} {'GROUP':<6} {'VERSION':<8} LOOPS")
+    for definition in definitions:
+        loops = ", ".join(loop.id for loop in definition.all_loops()) or "-"
+        print(
+            f"{definition.set_code:<6} {definition.name:<40} "
+            f"{definition.functional_group:<6} {definition.version or '-':<8} {loops}"
+        )
+    print(f"\n{len(definitions)} transaction definition(s) registered")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     handlers = {
         "validate": _cmd_validate,
         "init-spec": _cmd_init_spec,
         "history": _cmd_history,
+        "transactions": _cmd_transactions,
     }
     return handlers[args.command](args)
 

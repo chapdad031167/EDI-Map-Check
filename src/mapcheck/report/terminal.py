@@ -45,6 +45,9 @@ def render_report(
 
     lines: list[str] = []
     lines.append(_color("EDI MapCheck — validation report", _BOLD, color))
+    if result.transaction_set:
+        name = f" — {result.transaction_name}" if result.transaction_name else ""
+        lines.append(f"Transaction: {result.transaction_set}{name}")
     if result.spec_name:
         lines.append(f"Spec:   {result.spec_path} ({result.spec_name})")
     else:
