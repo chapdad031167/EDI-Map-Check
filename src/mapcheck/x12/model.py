@@ -1,14 +1,14 @@
-"""Queryable structure for a parsed X12 850 transaction.
+"""Queryable structure for a parsed X12 transaction.
 
-The 850 is modeled as three areas (heading, detail, summary) with two
-explicit loops — N1 (party) and PO1 (line item). Loop members are kept as
-flat segment lists inside their loop; nested detail loops (e.g. PID inside
-PO1) are members of the PO1 loop, which is as deep as the MVP needs.
+The document layout — areas, loops, nesting — comes entirely from a
+:class:`~mapcheck.transactions.schema.TransactionDefinition`; nothing in
+this module is specific to any transaction set. The 850 shape (header /
+detail with PO1 loops / summary) is just what its definition file declares.
 
-Resolution against spec addressing happens through :meth:`Transaction850.scopes`:
-a :class:`Scope` is the list of segments a rule's Loop Context selects, and
-plain ``SEGnn`` source fields are read from the first matching segment in
-that scope.
+Resolution against spec addressing happens through
+:meth:`TransactionDocument.scopes`: a :class:`Scope` is the list of segments
+a rule's Loop Context selects, and plain ``SEGnn`` source fields are read
+from the first matching segment in that scope.
 """
 
 from __future__ import annotations
@@ -17,12 +17,7 @@ from dataclasses import dataclass, field
 from typing import Iterator
 
 from mapcheck.spec.model import LoopContext
-
-#: Loop trigger segments the 850 layer knows about.
-LOOP_TRIGGERS = frozenset({"N1", "PO1"})
-
-#: Segments that belong to an open N1 loop rather than closing it.
-N1_LOOP_MEMBERS = frozenset({"N2", "N3", "N4", "REF", "PER", "FOB", "TD5"})
+from mapcheck.transactions.schema import TransactionDefinition
 
 #: Envelope/control segments excluded from business-data checks.
 ENVELOPE_SEGMENTS = frozenset({"ISA", "GS", "ST", "SE", "GE", "IEA", "TA1"})
@@ -53,10 +48,15 @@ class Segment:
 
 @dataclass
 class Loop:
-    """A loop occurrence: trigger segment plus member segments, in order."""
+    """A loop occurrence: trigger segment plus member segments, in order.
+
+    ``qualifier_element`` comes from the loop's definition (element 01 for
+    conventional loops, the level element for HL-style loops).
+    """
 
     loop_id: str
     segments: list[Segment] = field(default_factory=list)
+    qualifier_element: int = 1
 
     @property
     def trigger(self) -> Segment:
@@ -64,8 +64,8 @@ class Loop:
 
     @property
     def qualifier(self) -> str | None:
-        """Element 01 of the trigger segment (N101, PO101, ...)."""
-        return self.trigger.element(1)
+        """The trigger element used for ``LOOP[qualifier]`` addressing."""
+        return self.trigger.element(self.qualifier_element)
 
 
 @dataclass(frozen=True)
@@ -89,46 +89,86 @@ class Scope:
 
 
 @dataclass
-class Transaction850:
-    """A parsed 850: areas, loops, envelope metadata, and control notes."""
+class TransactionDocument:
+    """A parsed transaction: areas, loops, envelope metadata, and notes."""
 
-    heading: list[Segment] = field(default_factory=list)
-    n1_loops: list[Loop] = field(default_factory=list)
-    po1_loops: list[Loop] = field(default_factory=list)
-    summary: list[Segment] = field(default_factory=list)
+    definition: TransactionDefinition
+    #: Flat (non-loop) segments per area id, in document order.
+    area_segments: dict[str, list[Segment]] = field(default_factory=dict)
+    #: Loop occurrences per loop id, in document order.
+    loop_occurrences: dict[str, list[Loop]] = field(default_factory=dict)
     envelope: dict[str, str] = field(default_factory=dict)
     #: Structural/control problems reported by pyx12 (SE counts, control
     #: number mismatches, ...). Surfaced as warnings by the engine.
     control_notes: list[str] = field(default_factory=list)
+    #: Deviations from the transaction definition (unknown segments,
+    #: repeat limits). Surfaced as source-data warnings by the engine.
+    definition_notes: list[str] = field(default_factory=list)
+
+    # -- area conveniences ---------------------------------------------------
+
+    def area(self, area_id: str) -> list[Segment]:
+        return self.area_segments.get(area_id, [])
+
+    @property
+    def heading(self) -> list[Segment]:
+        """Flat segments of the first area."""
+        if not self.definition.areas:
+            return []
+        return self.area(self.definition.areas[0].id)
+
+    @property
+    def summary(self) -> list[Segment]:
+        """Flat segments of the last area (when there is more than one)."""
+        if len(self.definition.areas) < 2:
+            return []
+        return self.area(self.definition.areas[-1].id)
+
+    # -- loop conveniences ----------------------------------------------------
+
+    def loops(self, loop_id: str) -> list[Loop]:
+        return self.loop_occurrences.get(loop_id, [])
+
+    @property
+    def n1_loops(self) -> list[Loop]:  # backward-compatible convenience
+        return self.loops("N1")
+
+    @property
+    def po1_loops(self) -> list[Loop]:  # backward-compatible convenience
+        return self.loops("PO1")
+
+    @property
+    def line_loop_id(self) -> str | None:
+        """The loop paired with the spec's ``lines[]`` targets, if declared."""
+        pairing = self.definition.output_pairing
+        return pairing.loop if pairing else None
 
     # -- addressing ---------------------------------------------------------
 
     def flat_scope(self) -> Scope:
-        """Heading + summary segments outside any loop (empty Loop Context)."""
-        return Scope(label="header", segments=(*self.heading, *self.summary))
-
-    def loops(self, loop_id: str) -> list[Loop]:
-        if loop_id == "N1":
-            return self.n1_loops
-        if loop_id == "PO1":
-            return self.po1_loops
-        return []
+        """All non-loop segments across the areas (empty Loop Context)."""
+        segments: list[Segment] = []
+        for area in self.definition.areas:
+            segments.extend(self.area(area.id))
+        return Scope(label="header", segments=tuple(segments))
 
     def scopes(self, context: LoopContext | None) -> list[Scope]:
         """Resolve a spec Loop Context to the scopes it selects.
 
-        * ``None`` — one scope: the flat heading/summary area.
-        * qualified loop trigger (``N1[ST]``) — each matching loop occurrence.
-        * bare loop trigger (``PO1``) — one scope per loop occurrence.
-        * qualified plain segment (``REF[DP]``) — each matching segment in
-          the flat area, one single-segment scope apiece.
+        * ``None`` — one scope: the flat (non-loop) segments.
+        * qualified loop (``N1[ST]``, ``HL[I]``) — each loop occurrence
+          whose qualifier element (from the definition) matches.
+        * bare loop (``PO1``) — one scope per loop occurrence.
+        * qualified plain segment (``REF[DP]``) — each matching flat
+          segment, one single-segment scope apiece; the qualifier always
+          matches element 01.
 
         Returns an empty list when nothing matches (the caller decides
         whether that means NOT TESTED, a failed condition, or a defect).
         """
         if context is None:
             return [self.flat_scope()]
-        if context.segment_id in LOOP_TRIGGERS:
+        if self.definition.loop(context.segment_id) is not None:
             matches = [
                 loop
                 for loop in self.loops(context.segment_id)
@@ -146,16 +186,37 @@ class Transaction850:
 
     # -- iteration ----------------------------------------------------------
 
+    def _loop_label(self, loop_id: str, index: int, loop: Loop) -> str:
+        if loop_id == self.line_loop_id:
+            return f"{loop_id} #{index}"
+        return f"{loop_id}[{loop.qualifier or '?'}]"
+
     def business_segments(self) -> Iterator[tuple[str, Segment]]:
-        """Yield ``(context_label, segment)`` for every business segment."""
-        for seg in self.heading:
-            yield "header", seg
-        for loop in self.n1_loops:
-            label = f"N1[{loop.qualifier or '?'}]"
+        """Yield ``(context_label, segment)`` for every business segment.
+
+        Flat segments are labeled with their area id; loop segments with
+        ``LOOP[qualifier]`` (or ``LOOP #n`` for the line loop).
+        """
+        emitted_loops: set[int] = set()
+        for area_def in self.definition.areas:
+            for seg in self.area(area_def.id):
+                yield area_def.id, seg
+            for loop_def in area_def.loops:
+                yield from self._walk_loops(loop_def.id, emitted_loops)
+
+    def _walk_loops(self, loop_id: str, emitted: set[int]) -> Iterator[tuple[str, Segment]]:
+        for index, loop in enumerate(self.loops(loop_id), start=1):
+            if id(loop) in emitted:
+                continue
+            emitted.add(id(loop))
+            label = self._loop_label(loop_id, index, loop)
             for seg in loop.segments:
                 yield label, seg
-        for index, loop in enumerate(self.po1_loops, start=1):
-            for seg in loop.segments:
-                yield f"PO1 #{index}", seg
-        for seg in self.summary:
-            yield "summary", seg
+        loop_def = self.definition.loop(loop_id)
+        if loop_def:
+            for child in loop_def.loops:
+                yield from self._walk_loops(child.id, emitted)
+
+
+#: Backward-compatible alias: the 850 was the first (and once only) document.
+Transaction850 = TransactionDocument

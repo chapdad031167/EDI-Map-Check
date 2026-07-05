@@ -65,6 +65,11 @@ def _render_result(result: RunResult) -> None:
     overall = result.overall.value
 
     st.subheader("Result")
+    if result.transaction_set:
+        st.caption(
+            f"Detected transaction: **{result.transaction_set}"
+            + (f" — {result.transaction_name}**" if result.transaction_name else "**")
+        )
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Overall", overall)
     m2.metric("PASS", counts[Status.PASS])

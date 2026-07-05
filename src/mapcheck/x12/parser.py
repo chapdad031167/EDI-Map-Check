@@ -1,18 +1,24 @@
-"""X12 850 file parser.
+"""Generic, definition-driven X12 transaction parser.
 
 pyx12's :class:`~pyx12.x12file.X12Reader` does the low-level work —
 delimiter detection, segment tokenization, and interchange control checks
-(SE counts, control number agreement). This module layers the 850 area and
-loop structure on top; pyx12 ships no 850 transaction map (its bundled maps
-are HIPAA sets), so the hierarchy rules live here.
+(SE counts, control number agreement). This module builds the transaction
+structure on top, driven entirely by a
+:class:`~mapcheck.transactions.schema.TransactionDefinition`: which
+segments open which loops, how loops nest, and where the areas begin. The
+transaction set is auto-detected from ST01 against the registry unless a
+definition is passed explicitly.
 
-Known MVP limitations, by design:
+Known limitations, by design:
 
 * Only the first ST/SE transaction in the interchange is parsed; extra
   transactions are noted, not validated.
-* Composite elements are kept as raw strings (the 850 subset used here has
-  none).
-* Loop hierarchy covers N1 and PO1 (with PID/PO4/etc. as PO1 members).
+* Composite elements are kept as raw strings.
+* Segments the definition doesn't know are attached where they appear and
+  reported as definition notes (warnings), not errors — real-world files
+  are messy, and a validator that dies on the first surprise doesn't run.
+* HL-style hierarchical loops parse as flat occurrences for now; tree
+  linking (HL01/HL02) lands with the 856.
 """
 
 from __future__ import annotations
@@ -22,17 +28,22 @@ from pathlib import Path
 import pyx12.errors
 import pyx12.x12file
 
+from mapcheck.transactions.registry import (
+    TransactionRegistry,
+    UnknownTransactionError,
+    default_registry,
+)
+from mapcheck.transactions.schema import AreaDef, LoopDef, TransactionDefinition
 from mapcheck.x12.model import (
     ENVELOPE_SEGMENTS,
-    N1_LOOP_MEMBERS,
     Loop,
     Segment,
-    Transaction850,
+    TransactionDocument,
 )
 
 
 class X12ParseError(Exception):
-    """Raised when the file cannot be read as an X12 850 interchange."""
+    """Raised when the file cannot be read as an X12 interchange."""
 
 
 def _raw_segments(path: Path) -> tuple[list[Segment], list[str]]:
@@ -88,40 +99,145 @@ def _capture_envelope(segments: list[Segment]) -> dict[str, str]:
     return envelope
 
 
-def parse_850(path: str | Path) -> Transaction850:
-    """Parse an X12 file into a :class:`Transaction850`.
+class _StructureWalker:
+    """Places each business segment into areas and loops per the definition."""
 
-    Raises :class:`X12ParseError` when the file is unreadable, contains no
-    ST, or the first transaction is not an 850.
+    def __init__(self, doc: TransactionDocument) -> None:
+        self.doc = doc
+        self.definition = doc.definition
+        self.area_index = 0
+        #: Stack of (loop definition, open occurrence), innermost last.
+        self.stack: list[tuple[LoopDef, Loop]] = []
+        self._unknown_reported: set[str] = set()
+
+    @property
+    def area(self) -> AreaDef:
+        return self.definition.areas[self.area_index]
+
+    def _advance_area(self, seg_id: str) -> None:
+        for index in range(self.area_index + 1, len(self.definition.areas)):
+            if seg_id in self.definition.areas[index].opens_with:
+                self.area_index = index
+                self.stack.clear()
+                return
+
+    def _open_loop(self, loop_def: LoopDef, depth: int, seg: Segment) -> None:
+        del self.stack[depth:]
+        occurrence = Loop(
+            loop_id=loop_def.id,
+            segments=[seg],
+            qualifier_element=loop_def.qualifier,
+        )
+        occurrences = self.doc.loop_occurrences.setdefault(loop_def.id, [])
+        occurrences.append(occurrence)
+        if loop_def.max_repeats is not None and len(occurrences) == loop_def.max_repeats + 1:
+            self.doc.definition_notes.append(
+                f"loop {loop_def.id} exceeds max_repeats={loop_def.max_repeats}"
+            )
+        self.stack.append((loop_def, occurrence))
+
+    def _loops_at(self, depth: int) -> tuple[LoopDef, ...]:
+        """Child loop definitions available at a stack depth (0 = area level)."""
+        if depth == 0:
+            return self.area.loops
+        return self.stack[depth - 1][0].loops
+
+    def place(self, seg: Segment) -> None:
+        """Find the segment's home, preferring the deepest open context."""
+        self._advance_area(seg.seg_id)
+
+        for depth in range(len(self.stack), -1, -1):
+            for loop_def in self._loops_at(depth):
+                if seg.seg_id == loop_def.trigger:
+                    self._open_loop(loop_def, depth, seg)
+                    return
+            if depth > 0:
+                loop_def, occurrence = self.stack[depth - 1]
+                if seg.seg_id in loop_def.segments or (
+                    loop_def.is_hierarchical and self._in_level_segments(loop_def, seg)
+                ):
+                    del self.stack[depth:]
+                    occurrence.segments.append(seg)
+                    return
+            elif seg.seg_id in self.area.segments:
+                self.stack.clear()
+                self.doc.area_segments.setdefault(self.area.id, []).append(seg)
+                return
+
+        # Unknown segment: keep it where it appeared (innermost open context)
+        # and note the deviation once per segment id.
+        if seg.seg_id not in self._unknown_reported:
+            self._unknown_reported.add(seg.seg_id)
+            self.doc.definition_notes.append(
+                f"segment {seg.seg_id} (line {seg.line_number}) is not in the "
+                f"{self.definition.set_code} definition"
+            )
+        if self.stack:
+            self.stack[-1][1].segments.append(seg)
+        else:
+            self.doc.area_segments.setdefault(self.area.id, []).append(seg)
+
+    def _in_level_segments(self, loop_def: LoopDef, seg: Segment) -> bool:
+        """For hierarchical loops, membership can be declared per level."""
+        return any(seg.seg_id in level.segments for level in loop_def.levels)
+
+
+def parse_transaction(
+    path: str | Path,
+    definition: TransactionDefinition | None = None,
+    registry: TransactionRegistry | None = None,
+) -> TransactionDocument:
+    """Parse an X12 file into a :class:`TransactionDocument`.
+
+    When ``definition`` is None the transaction set is auto-detected from
+    ST01 and resolved against the registry. Raises :class:`X12ParseError`
+    when the file is unreadable, contains no ST, the set is unknown, or a
+    forced definition doesn't match the file.
     """
     path = Path(path)
     if not path.exists():
         raise X12ParseError(f"source file not found: {path}")
 
-    segments, notes = _raw_segments(path)
-    if not any(s.seg_id == "ST" for s in segments):
+    segments, control_notes = _raw_segments(path)
+    st = next((s for s in segments if s.seg_id == "ST"), None)
+    if st is None:
         raise X12ParseError(f"{path}: no ST segment found — not a valid X12 transaction")
+    st01 = st.element(1) or ""
 
-    tx = Transaction850(envelope=_capture_envelope(segments), control_notes=notes)
+    if definition is not None:
+        if st01 != definition.set_code:
+            raise X12ParseError(
+                f"{path}: expected transaction set {definition.set_code}, got {st01!r}"
+            )
+    else:
+        try:
+            definition = (registry or default_registry).get(st01)
+        except UnknownTransactionError as exc:
+            raise X12ParseError(f"{path}: {exc.args[0]}") from exc
 
+    doc = TransactionDocument(
+        definition=definition,
+        envelope=_capture_envelope(segments),
+        control_notes=control_notes,
+    )
+    group = doc.envelope.get("functional_group")
+    if group and group != definition.functional_group:
+        doc.control_notes.append(
+            f"functional group {group!r} does not match the "
+            f"{definition.set_code} definition ({definition.functional_group!r})"
+        )
+
+    walker = _StructureWalker(doc)
     in_transaction = False
     transaction_done = False
-    area = "heading"
-    open_n1: Loop | None = None
-    open_po1: Loop | None = None
-
     for seg in segments:
         if seg.seg_id == "ST":
             if transaction_done:
-                tx.control_notes.append(
+                doc.control_notes.append(
                     f"line {seg.line_number}: additional transaction "
-                    f"(ST*{seg.element(1)}) ignored — MVP validates the first 850 only"
+                    f"(ST*{seg.element(1)}) ignored — only the first transaction is validated"
                 )
                 continue
-            if seg.element(1) != "850":
-                raise X12ParseError(
-                    f"{path}: expected transaction set 850, got {seg.element(1)!r}"
-                )
             in_transaction = True
             continue
         if seg.seg_id == "SE":
@@ -131,34 +247,14 @@ def parse_850(path: str | Path) -> Transaction850:
             continue
         if seg.seg_id in ENVELOPE_SEGMENTS or not in_transaction:
             continue
-
-        if seg.seg_id == "PO1":
-            area = "detail"
-            open_n1 = None
-            open_po1 = Loop(loop_id="PO1", segments=[seg])
-            tx.po1_loops.append(open_po1)
-            continue
-        if seg.seg_id == "CTT":
-            # CTT opens the summary area; an AMT before it stays in its PO1 loop.
-            area = "summary"
-        if area == "summary":
-            tx.summary.append(seg)
-            continue
-        if area == "detail":
-            assert open_po1 is not None
-            open_po1.segments.append(seg)
-            continue
-
-        # heading area
-        if seg.seg_id == "N1":
-            open_n1 = Loop(loop_id="N1", segments=[seg])
-            tx.n1_loops.append(open_n1)
-        elif open_n1 is not None and seg.seg_id in N1_LOOP_MEMBERS:
-            open_n1.segments.append(seg)
-        else:
-            open_n1 = None
-            tx.heading.append(seg)
+        walker.place(seg)
 
     if not transaction_done:
         raise X12ParseError(f"{path}: transaction is not terminated by an SE segment")
-    return tx
+    return doc
+
+
+def parse_850(path: str | Path) -> TransactionDocument:
+    """Parse an X12 850 file. Backward-compatible wrapper around
+    :func:`parse_transaction` that requires the 850 definition."""
+    return parse_transaction(path, definition=default_registry.get("850"))
