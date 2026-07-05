@@ -17,6 +17,7 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from mapcheck.spec.conditions import ConditionSyntaxError, parse_condition, parse_outcome
+from mapcheck.spec.formats import FormatSpecError, parse_format
 from mapcheck.spec.model import (
     CodeList,
     DataType,
@@ -193,6 +194,13 @@ def _parse_rule(
             else_outcome = parse_outcome(else_raw)
         except ConditionSyntaxError as exc:
             err(f"Else: {exc}")
+            ok = False
+
+    if format_raw:
+        try:
+            parse_format(format_raw)
+        except FormatSpecError as exc:
+            err(f"Format: {exc}")
             ok = False
 
     data_type: DataType | None = None
