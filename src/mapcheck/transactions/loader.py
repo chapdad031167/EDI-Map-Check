@@ -7,6 +7,7 @@ bad definition can never half-work at parse time.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -159,30 +160,67 @@ def _parse_loop(node: Any, path: str, ctx: _Ctx) -> LoopDef | None:
     )
 
 
+def _parse_expr(text: str, path: str, ctx: _Ctx) -> tuple[str, ...]:
+    """Parse a product expression like ``IT102 * IT104`` into element refs."""
+    refs = [part.strip().upper() for part in text.split("*")]
+    if not refs or any(not re.match(r"^[A-Z][A-Z0-9]{1,2}\d{2}$", ref) for ref in refs):
+        ctx.err(
+            path,
+            f"invalid expression {text!r} (expected element refs joined by *, "
+            "e.g. 'IT102 * IT104')",
+        )
+        return ()
+    return tuple(refs)
+
+
 def _parse_operand(node: Any, path: str, ctx: _Ctx) -> Operand:
     if not isinstance(node, dict):
         ctx.err(
             path,
             "expected a mapping like {value: CTT01}, {count: PO1}, "
-            "or {sum: {loop: 'HL[I]', value: SN102}}",
+            "{sum: {loop: 'HL[I]', value: SN102}}, or {combine: {add: [...]}}",
         )
         return Operand()
-    keys = {k for k in ("value", "count", "sum") if k in node}
+    keys = {k for k in ("value", "count", "sum", "combine") if k in node}
     if len(keys) != 1:
-        ctx.err(path, "exactly one of 'value', 'count', or 'sum' is required")
+        ctx.err(path, "exactly one of 'value', 'count', 'sum', or 'combine' is required")
         return Operand()
     sum_loop = sum_value = None
+    sum_expr: tuple[str, ...] = ()
+    add: list[Operand] = []
+    subtract: list[Operand] = []
     if "sum" in node:
         sum_node = node["sum"]
+        has_value = isinstance(sum_node, dict) and isinstance(sum_node.get("value"), str)
+        has_expr = isinstance(sum_node, dict) and isinstance(sum_node.get("expr"), str)
         if (
             not isinstance(sum_node, dict)
             or not isinstance(sum_node.get("loop"), str)
-            or not isinstance(sum_node.get("value"), str)
+            or has_value == has_expr  # exactly one of value/expr
         ):
-            ctx.err(f"{path}.sum", "expected {loop: 'HL[I]', value: SN102}")
+            ctx.err(
+                f"{path}.sum",
+                "expected {loop: 'HL[I]', value: SN102} or {loop: IT1, expr: 'IT102 * IT104'}",
+            )
         else:
             sum_loop = sum_node["loop"].upper()
-            sum_value = sum_node["value"].upper()
+            if has_value:
+                sum_value = sum_node["value"].upper()
+            else:
+                sum_expr = _parse_expr(sum_node["expr"], f"{path}.sum.expr", ctx)
+            # implied may sit inside the sum block, next to the value it shifts
+            if "implied" in sum_node and "implied" not in node:
+                node = {**node, "implied": sum_node["implied"]}
+    if "combine" in node:
+        combine_node = node["combine"]
+        if not isinstance(combine_node, dict) or not (
+            combine_node.get("add") or combine_node.get("subtract")
+        ):
+            ctx.err(f"{path}.combine", "expected {add: [operands], subtract: [operands]}")
+        else:
+            for key, bucket in (("add", add), ("subtract", subtract)):
+                for index, child in enumerate(combine_node.get(key, []) or []):
+                    bucket.append(_parse_operand(child, f"{path}.combine.{key}[{index}]", ctx))
     context = node.get("context")
     if context is not None and not isinstance(context, str):
         ctx.err(f"{path}.context", "expected a Loop Context string like HL[S]")
@@ -196,6 +234,9 @@ def _parse_operand(node: Any, path: str, ctx: _Ctx) -> Operand:
         count=str(node["count"]).upper() if "count" in node else None,
         sum_loop=sum_loop,
         sum_value=sum_value,
+        sum_expr=sum_expr,
+        add=tuple(add),
+        subtract=tuple(subtract),
         implied=ctx.int_at(node, path, "implied", default=None),
     )
 
@@ -333,17 +374,22 @@ def parse_definition(data: Any, source: str) -> TransactionDefinition:
         raise DefinitionError(
             source, [f"output_pairing.loop {pairing.loop!r} is not a declared loop"]
         )
+    def _check_loop_refs(operand: "Operand", rule_id: str) -> None:
+        for reference in (operand.count, operand.sum_loop):
+            if reference and definition.loop(_base_loop(reference)) is None:
+                raise DefinitionError(
+                    source,
+                    [
+                        f"reconciliation rule {rule_id!r} references "
+                        f"undeclared loop {reference!r}"
+                    ],
+                )
+        for child in (*operand.add, *operand.subtract):
+            _check_loop_refs(child, rule_id)
+
     for rule in recon:
         for operand in (rule.left, rule.right):
-            for reference in (operand.count, operand.sum_loop):
-                if reference and definition.loop(_base_loop(reference)) is None:
-                    raise DefinitionError(
-                        source,
-                        [
-                            f"reconciliation rule {rule.id!r} references "
-                            f"undeclared loop {reference!r}"
-                        ],
-                    )
+            _check_loop_refs(operand, rule.id)
     trigger_seen: dict[str, str] = {}
     for loop in definition.all_loops():
         if loop.id in trigger_seen:

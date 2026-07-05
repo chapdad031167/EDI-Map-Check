@@ -38,6 +38,14 @@ EXAMPLE_SCENARIOS = {
         "856_reference_spec.xlsx", "856_standard.edi", "asn_standard.json"),
     "856 defective ASN (HL orphans, bad rollups)": (
         "856_reference_spec.xlsx", "856_defects.edi", "asn_defects.json"),
+    "855 PO acknowledgment (accept/reject split)": (
+        "855_reference_spec.xlsx", "855_baseline.edi", "poa_baseline.json"),
+    "855 defective POA (vanished units, bad status)": (
+        "855_reference_spec.xlsx", "855_defects.edi", "poa_defects.json"),
+    "810 invoice (clean math)": (
+        "810_reference_spec.xlsx", "810_baseline.edi", "invoice_baseline.json"),
+    "810 defective invoice (missed allowance)": (
+        "810_reference_spec.xlsx", "810_defects.edi", "invoice_defects.json"),
 }
 
 _STATUS_COLORS = {

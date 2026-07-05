@@ -1,0 +1,62 @@
+# X12 855 Purchase Order Acknowledgment (v004010) — transaction definition.
+#
+# Structurally close to the 850: BAK replaces BEG, and each PO1 line loop
+# carries ACK segments with the line status and acknowledged quantity.
+# ACK repeats within a line for partial accept/reject splits; the
+# ack-qty-accounted reconciliation sums EVERY ACK02 so split lines still
+# balance against the ordered quantities.
+
+transaction:
+  set: "855"
+  name: Purchase Order Acknowledgment
+  functional_group: PR
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [BAK, CUR, REF, PER, TAX, FOB, CTP, SAC, ITD, DIS, INC, DTM,
+               PID, MEA, PWK, PKG, TD1, TD5, TD3, TD4, MAN, TXI, N9, MSG]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, REF, PER, SI, FOB, TD1, TD5, TD3, TD4, PKG]
+        max_repeats: 200
+
+  - area: detail
+    opens_area: [PO1]
+    loops:
+      - id: PO1
+        trigger: PO1
+        qualifier: 1
+        max_repeats: 100000
+        segments: [LIN, SI, CUR, PO3, CTP, PAM, MEA, PID, PWK, PO4, REF,
+                   PER, SAC, IT8, ITD, DIS, INC, TAX, FOB, SDQ, IT3, DTM,
+                   TC2, TD1, TD5, TD3, TD4, MAN, MSG, ACK, AMT, N9, N1,
+                   N2, N3, N4, SLN]
+
+  - area: summary
+    opens_area: [CTT]
+    segments: [CTT, AMT]
+
+output_pairing:
+  list_path: lines
+  loop: PO1
+
+reconciliation:
+  - id: ctt-line-count
+    description: CTT01 must equal the PO1 loop count
+    left: { value: CTT01 }
+    right: { count: PO1 }
+    check: equals
+    when: { exists: CTT01 }
+    severity: warning
+
+  # Every ordered unit must be accounted for across the line ACKs —
+  # partial accept/reject splits (repeated ACK segments) are summed.
+  - id: ack-qty-accounted
+    description: total acknowledged quantity (all ACKs) must equal total ordered quantity
+    left: { sum: { loop: PO1, value: ACK02 } }
+    right: { sum: { loop: PO1, value: PO102 } }
+    check: equals
+    severity: warning

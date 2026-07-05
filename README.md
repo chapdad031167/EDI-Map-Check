@@ -105,8 +105,9 @@ mapcheck validate --help          # all options (--transaction, --verbose, --db,
 |-----|------|--------|-------|
 | 850 | Purchase Order | ✅ Supported | Reference spec + full synthetic test set |
 | 856 | Ship Notice/Manifest (ASN) | ✅ Supported | Full HL hierarchy: standard, pick-and-pack, and palletized structures; orphan/nesting integrity; SN1 rollup reconciliation |
-| 855 / 810 | PO Ack / Invoice | 🔜 Next | Order cycle |
-| 940 / 945 / 943 / 944 / 947 | Warehouse suite | Planned | 3PL flows |
+| 855 | Purchase Order Acknowledgment | ✅ Supported | ACK line-status code lists; accept/reject splits reconcile against ordered quantities |
+| 810 | Invoice | ✅ Supported | TDS total reconciles against line extensions + charges − allowances (declarative arithmetic) |
+| 940 / 945 / 943 / 944 / 947 | Warehouse suite | 🔜 Next | 3PL flows |
 | 846 / 812 / 867 | Inventory & product movement | Planned | |
 | 844 / 845 / 849 / 854 | Pharma contract & chargeback | Planned | Built from public X12 documentation |
 | 997 | Functional Acknowledgment | Planned | |
