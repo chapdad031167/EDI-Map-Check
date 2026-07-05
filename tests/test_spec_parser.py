@@ -58,7 +58,7 @@ class TestReferenceSpec:
     def test_loads_clean(self, reference_spec_path: Path):
         spec = load_spec(reference_spec_path)
         assert spec.transaction_set == "850"
-        assert len(spec.rules) == 30
+        assert len(spec.rules) == 32
         assert set(spec.code_lists) == {"TX_PURPOSE", "PO_TYPE", "UOM"}
 
     def test_covers_every_rule_type(self, reference_spec_path: Path):

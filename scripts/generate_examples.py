@@ -42,8 +42,9 @@ SPEC_ROWS: list[tuple[str, ...]] = [
      "", "", "string", "len:1..22", "Customer PO number."),
     ("M-005", "BEG05", "", "order.po_date", "DIRECT", "", "", "", "",
      "", "", "date", "%Y-%m-%d", "PO date, CCYYMMDD in source."),
-    ("M-006", "CUR02", "", "order.currency", "DIRECT", "", "", "", "",
-     "USD", "", "string", "len:3..3", "Defaults to USD when CUR absent."),
+    ("M-006", "CUR02", "", "order.currency", "CONDITIONAL",
+     "Map the currency only when a buying-party currency code is sent.",
+     "CUR01 = 'BY'", "SOURCE", "SKIP", "", "", "string", "len:3..3", ""),
     ("M-007", "REF02", "REF[DP]", "order.department", "DIRECT", "", "", "", "",
      "", "", "string", "", "Department number."),
     ("M-008", "REF02", "REF[IA]", "order.vendor_number", "DIRECT", "", "", "", "",
@@ -63,8 +64,9 @@ SPEC_ROWS: list[tuple[str, ...]] = [
      "SAC05 is X12 N2: implied two decimals. 2500 in source = 25.00 out."),
     ("M-014", "N102", "N1[ST]", "ship_to.name", "DIRECT", "", "", "", "",
      "", "", "string", "len:1..60", ""),
-    ("M-015", "N104", "N1[ST]", "ship_to.id", "DIRECT", "", "", "", "",
-     "", "", "string", "", "Store number (N103 qualifier 92)."),
+    ("M-015", "N104", "N1[ST]", "ship_to.id", "CONDITIONAL",
+     "Map the store number only when the ID qualifier is 92 (assigned by buyer).",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
     ("M-016", "N301", "N1[ST]", "ship_to.address1", "DIRECT", "", "", "", "",
      "", "", "string", "", ""),
     ("M-017", "N401", "N1[ST]", "ship_to.city", "DIRECT", "", "", "", "",
@@ -75,8 +77,9 @@ SPEC_ROWS: list[tuple[str, ...]] = [
      "", "", "string", "len:5..10", ""),
     ("M-020", "N102", "N1[BT]", "bill_to.name", "DIRECT", "", "", "", "",
      "", "", "string", "len:1..60", ""),
-    ("M-021", "N104", "N1[BT]", "bill_to.id", "DIRECT", "", "", "", "",
-     "", "", "string", "", ""),
+    ("M-021", "N104", "N1[BT]", "bill_to.id", "CONDITIONAL",
+     "Map the bill-to ID only when the ID qualifier is 92 (assigned by buyer).",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
     ("M-022", "PO101", "PO1", "lines[].line_no", "DIRECT", "", "", "", "",
      "", "", "integer", "", "Line sequence number."),
     ("M-023", "PO102", "PO1", "lines[].qty", "DIRECT", "", "", "", "",
@@ -85,10 +88,12 @@ SPEC_ROWS: list[tuple[str, ...]] = [
      "", "UOM", "string", "", "Unit of measure, translated to internal values."),
     ("M-025", "PO104", "PO1", "lines[].unit_price", "DIRECT", "", "", "", "",
      "", "", "decimal", "places:2", "PO104 is X12 R: explicit decimal."),
-    ("M-026", "PO107", "PO1", "lines[].upc", "DIRECT", "", "", "", "",
-     "", "", "string", "len:12..14", "PO106 qualifier UP."),
-    ("M-027", "PID05", "PO1", "lines[].description", "DIRECT", "", "", "", "",
-     "", "", "string", "len:1..80", "Item description from the PID inside the PO1 loop."),
+    ("M-026", "PO107", "PO1", "lines[].upc", "CONDITIONAL",
+     "Map the UPC only when the product ID qualifier is UP.",
+     "PO106 = 'UP'", "SOURCE", "SKIP", "", "", "string", "len:12..14", ""),
+    ("M-027", "PID05", "PO1", "lines[].description", "CONDITIONAL",
+     "Map the free-form description when the PID is free-form (PID01 = F).",
+     "PID01 = 'F'", "SOURCE", "SKIP", "", "", "string", "len:1..80", ""),
     ("M-028", "CTT01", "", "summary.line_count", "DIRECT", "", "", "", "",
      "", "", "integer", "", "CTT line count as transmitted."),
     ("M-029", "PO1", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
@@ -96,6 +101,10 @@ SPEC_ROWS: list[tuple[str, ...]] = [
      "Actual PO1 loop occurrences must also equal the output line count."),
     ("M-030", "AMT02", "AMT[TT]", "summary.total_amount", "DIRECT", "", "", "", "",
      "", "", "decimal", "places:2", "Total transaction amount."),
+    ("M-031", "SAC02", "SAC[A]", "order.allowance_code", "DIRECT", "", "", "", "",
+     "", "", "string", "len:4..4", "Allowance/charge code (SAC01 = A)."),
+    ("M-032", "BEG04", "", "order.release_number", "DIRECT", "", "", "", "",
+     "NONE", "", "string", "", "Release number; this partner never sends one, default NONE."),
 ]
 
 # List Name, Source Value, Target Value, Description
@@ -143,8 +152,119 @@ def generate_spec(path: Path) -> None:
     print(f"wrote {path.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# Synthetic X12 850 source files
+# --------------------------------------------------------------------------
+
+
+def build_850(
+    business_segments: list[str],
+    control_number: str,
+    se_count_offset: int = 0,
+) -> str:
+    """Wrap business segments in a full ISA/GS/ST...SE/GE/IEA interchange.
+
+    ``se_count_offset`` deliberately corrupts the SE segment count so pyx12's
+    control checks have something to catch in the defective file.
+    """
+    icn = control_number.zfill(9)
+    st = f"ST*850*{control_number.zfill(4)}"
+    # SE count = business segments + ST + SE
+    se = f"SE*{len(business_segments) + 2 + se_count_offset}*{control_number.zfill(4)}"
+    segments = [
+        "ISA*00*          *00*          *ZZ*MAPCHECKSND    *ZZ*MAPCHECKRCV    "
+        f"*260615*1200*U*00401*{icn}*0*T*>",
+        f"GS*PO*MAPCHECKSND*MAPCHECKRCV*20260615*1200*{int(control_number)}*X*004010",
+        st,
+        *business_segments,
+        se,
+        f"GE*1*{int(control_number)}",
+        f"IEA*1*{icn}",
+    ]
+    return "~\n".join(segments) + "~\n"
+
+
+BASELINE_850 = [
+    "BEG*00*SA*PO4400021**20260615",
+    "CUR*BY*USD",
+    "REF*DP*045",
+    "REF*IA*VEND8821",
+    "REF*PD*SUMMER26",
+    "DTM*002*20260701",
+    "DTM*001*20260801",
+    "SAC*A*C310***2500",
+    "N1*ST*ALPINE OUTFITTERS STORE 118*92*0118",
+    "N3*4501 CASCADE AVE",
+    "N4*BOULDER*CO*80301",
+    "N1*BT*ALPINE OUTFITTERS CORPORATE*92*0001",
+    "PO1*1*12*EA*8.5**UP*614141007349",
+    "PID*F****TRAIL MIX 12OZ",
+    "PO1*2*6*CA*24**UP*614141007350",
+    "PID*F****SPRING WATER 24PK",
+    "PO1*3*5*DZ*12**UP*614141007351",
+    "PID*F****GRANOLA BARS VARIETY",
+    "CTT*3",
+    "AMT*TT*306",
+]
+
+# Sparse but valid: exercises SKIP conditionals, the BEG04 default, and
+# NOT TESTED statuses for segments this partner simply does not send.
+MINIMAL_850 = [
+    "BEG*00*NE*PO7700003**20260620",
+    "N1*ST*RIVERBEND MARKET*92*0007",
+    "PO1*1*100*EA*0.99**UP*614141007352",
+    "PID*F****NO2 PENCILS 10PK",
+    "CTT*1",
+]
+
+# Deliberately defective source. Planted defects:
+#   1. BEG05 is not a valid date (month 13)
+#   2. PO103 on line 2 uses UOM code 'XX', absent from the UOM code list
+#   3. CTT01 says 5 lines but only 3 PO1 loops are present
+#   4. ITD payment terms segment is not referenced by the spec (unmapped)
+#   5. The N1[BT] loop is missing entirely
+#   6. SE segment count is off by two (control-level defect for pyx12)
+DEFECTS_850 = [
+    "BEG*00*SA*PO4400022**20261301",
+    "CUR*BY*USD",
+    "REF*DP*045",
+    "REF*IA*VEND8821",
+    "REF*PD*SUMMER26",
+    "DTM*002*20260701",
+    "DTM*001*20260801",
+    "ITD*01*3*2**30**60",
+    "SAC*A*C310***2500",
+    "N1*ST*ALPINE OUTFITTERS STORE 118*92*0118",
+    "N3*4501 CASCADE AVE",
+    "N4*BOULDER*CO*80301",
+    "PO1*1*12*EA*8.5**UP*614141007349",
+    "PID*F****TRAIL MIX 12OZ",
+    "PO1*2*6*XX*24**UP*614141007350",
+    "PID*F****SPRING WATER 24PK",
+    "PO1*3*5*DZ*12**UP*614141007351",
+    "PID*F****GRANOLA BARS VARIETY",
+    "CTT*5",
+    "AMT*TT*306",
+]
+
+
+def generate_source_files() -> None:
+    source_dir = EXAMPLES / "source"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    files = {
+        "850_baseline.edi": build_850(BASELINE_850, "1"),
+        "850_minimal.edi": build_850(MINIMAL_850, "2"),
+        "850_defects.edi": build_850(DEFECTS_850, "3", se_count_offset=2),
+    }
+    for name, content in files.items():
+        path = source_dir / name
+        path.write_text(content)
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(EXAMPLES / "specs" / "850_reference_spec.xlsx")
+    generate_source_files()
 
 
 if __name__ == "__main__":
