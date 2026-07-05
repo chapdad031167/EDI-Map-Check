@@ -109,6 +109,8 @@ class _StructureWalker:
         #: Stack of (loop definition, open occurrence), innermost last.
         self.stack: list[tuple[LoopDef, Loop]] = []
         self._unknown_reported: set[str] = set()
+        #: Per hierarchical loop id: HL id -> occurrence, for parent linking.
+        self._hl_index: dict[str, dict[str, Loop]] = {}
 
     @property
     def area(self) -> AreaDef:
@@ -134,7 +136,64 @@ class _StructureWalker:
             self.doc.definition_notes.append(
                 f"loop {loop_def.id} exceeds max_repeats={loop_def.max_repeats}"
             )
+        if loop_def.is_hierarchical:
+            self._link_hierarchy(loop_def, occurrence, seg)
         self.stack.append((loop_def, occurrence))
+
+    def _link_hierarchy(self, loop_def: LoopDef, occurrence: Loop, seg: Segment) -> None:
+        """Record the occurrence's HL id and link it to its parent.
+
+        Structural problems (duplicate ids, orphaned parents, unknown level
+        codes, illegal nesting) go to ``hierarchy_errors`` — the tree still
+        builds as well as it can so the rest of the run stays useful.
+        """
+        assert loop_def.hierarchy is not None
+        hierarchy = loop_def.hierarchy
+        err = self.doc.hierarchy_errors.append
+        where = f"{loop_def.trigger} at line {seg.line_number}"
+
+        hl_id = seg.element(hierarchy.id_element)
+        parent_id = seg.element(hierarchy.parent_element)
+        level_code = seg.element(hierarchy.level_element)
+        occurrence.hl_id = hl_id
+
+        index = self._hl_index.setdefault(loop_def.id, {})
+        if hl_id is None:
+            err(f"{where}: missing hierarchical id ({seg.ref(hierarchy.id_element)})")
+        elif hl_id in index:
+            err(f"{where}: duplicate hierarchical id {hl_id!r}")
+        else:
+            index[hl_id] = occurrence
+
+        level = loop_def.level(level_code) if level_code else None
+        if level_code is None:
+            err(f"{where}: missing level code ({seg.ref(hierarchy.level_element)})")
+        elif level is None:
+            allowed = ", ".join(lv.code for lv in loop_def.levels)
+            err(f"{where}: unknown level code {level_code!r} (allowed: {allowed})")
+
+        if parent_id is None:
+            return  # a root (e.g. the shipment level)
+        parent = index.get(parent_id)
+        if parent is None or parent is occurrence:
+            err(
+                f"{where}: parent id {parent_id!r} does not reference an "
+                "earlier hierarchical loop (orphan)"
+            )
+            return
+        occurrence.parent = parent
+        parent_level_code = parent.trigger.element(hierarchy.level_element)
+        parent_level = loop_def.level(parent_level_code) if parent_level_code else None
+        if (
+            level_code is not None
+            and parent_level is not None
+            and level_code not in parent_level.children
+        ):
+            err(
+                f"{where}: level {level_code!r} is not an allowed child of "
+                f"level {parent_level_code!r} "
+                f"(allowed children: {', '.join(parent_level.children) or 'none'})"
+            )
 
     def _loops_at(self, depth: int) -> tuple[LoopDef, ...]:
         """Child loop definitions available at a stack depth (0 = area level)."""
