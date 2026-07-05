@@ -91,15 +91,25 @@ class OutputPairing:
 class Operand:
     """One side of a reconciliation check.
 
-    Exactly one of ``value`` (an element reference like ``CTT01``) or
-    ``count`` (a loop id, optionally level-qualified like ``HL[I]``) is
-    set. ``implied`` shifts a ``value`` operand's decimal point, matching
-    the spec Format grammar. A ``sum`` operand form is reserved for the
-    810/856 arithmetic phases.
+    Exactly one of these is set:
+
+    * ``value`` — an element reference like ``CTT01``, read from the flat
+      (non-loop) scope, or from ``context`` (a Loop Context string like
+      ``HL[S]``) when given.
+    * ``count`` — a loop id, optionally qualifier/level-filtered
+      (``PO1``, ``HL``, ``HL[I]``).
+    * ``sum_value`` + ``sum_loop`` — sum an element (``SN102``) across the
+      occurrences of a loop reference (``HL[I]``).
+
+    ``implied`` shifts a numeric operand's decimal point, matching the
+    spec Format grammar.
     """
 
     value: str | None = None
+    context: str | None = None
     count: str | None = None
+    sum_loop: str | None = None
+    sum_value: str | None = None
     implied: int | None = None
 
 
@@ -112,6 +122,7 @@ class ReconRule:
     right: Operand
     check: str = "equals"  # only comparison supported so far
     when_exists: str | None = None  # skip silently unless this element exists
+    when_context: str | None = None  # Loop Context the when-element lives in
     severity: str = "warning"  # 'warning' (default) or 'error'
     description: str = ""
 

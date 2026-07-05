@@ -51,12 +51,15 @@ class Loop:
     """A loop occurrence: trigger segment plus member segments, in order.
 
     ``qualifier_element`` comes from the loop's definition (element 01 for
-    conventional loops, the level element for HL-style loops).
+    conventional loops, the level element for HL-style loops). Hierarchical
+    occurrences additionally carry their ``hl_id`` and a ``parent`` link.
     """
 
     loop_id: str
     segments: list[Segment] = field(default_factory=list)
     qualifier_element: int = 1
+    hl_id: str | None = None
+    parent: "Loop | None" = None
 
     @property
     def trigger(self) -> Segment:
@@ -66,6 +69,13 @@ class Loop:
     def qualifier(self) -> str | None:
         """The trigger element used for ``LOOP[qualifier]`` addressing."""
         return self.trigger.element(self.qualifier_element)
+
+    def ancestors(self) -> Iterator["Loop"]:
+        """Walk up the hierarchy, nearest ancestor first."""
+        node = self.parent
+        while node is not None:
+            yield node
+            node = node.parent
 
 
 @dataclass(frozen=True)
@@ -104,6 +114,10 @@ class TransactionDocument:
     #: Deviations from the transaction definition (unknown segments,
     #: repeat limits). Surfaced as source-data warnings by the engine.
     definition_notes: list[str] = field(default_factory=list)
+    #: Structural corruption in hierarchical (HL) loops: orphaned parents,
+    #: illegal nesting, duplicate or unknown level codes. Surfaced as
+    #: source-data FAILURES by the engine — a broken tree is never OK.
+    hierarchy_errors: list[str] = field(default_factory=list)
 
     # -- area conveniences ---------------------------------------------------
 
@@ -157,7 +171,10 @@ class TransactionDocument:
 
         * ``None`` — one scope: the flat (non-loop) segments.
         * qualified loop (``N1[ST]``, ``HL[I]``) — each loop occurrence
-          whose qualifier element (from the definition) matches.
+          whose qualifier element (from the definition) matches. For
+          hierarchical loops the scope also includes the occurrence's
+          ancestors' segments, nearest first — an item-level rule can read
+          its order's PRF or its carton's MAN without new spec syntax.
         * bare loop (``PO1``) — one scope per loop occurrence.
         * qualified plain segment (``REF[DP]``) — each matching flat
           segment, one single-segment scope apiece; the qualifier always
@@ -168,14 +185,22 @@ class TransactionDocument:
         """
         if context is None:
             return [self.flat_scope()]
-        if self.definition.loop(context.segment_id) is not None:
+        loop_def = self.definition.loop(context.segment_id)
+        if loop_def is not None:
             matches = [
                 loop
                 for loop in self.loops(context.segment_id)
                 if context.qualifier is None or loop.qualifier == context.qualifier
             ]
+            def scope_segments(loop: Loop) -> tuple[Segment, ...]:
+                segments = list(loop.segments)
+                if loop_def.is_hierarchical:
+                    for ancestor in loop.ancestors():
+                        segments.extend(ancestor.segments)
+                return tuple(segments)
+
             return [
-                Scope(label=str(context), segments=tuple(loop.segments)) for loop in matches
+                Scope(label=str(context), segments=scope_segments(loop)) for loop in matches
             ]
         return [
             Scope(label=str(context), segments=(seg,))

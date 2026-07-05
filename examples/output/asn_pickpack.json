@@ -1,0 +1,57 @@
+{
+  "shipment": {
+    "purpose": "ORIGINAL",
+    "asn_number": "ASN20260708001",
+    "asn_date": "2026-07-08",
+    "asn_time": "10:15",
+    "structure_code": "SHIPMENT_ORDER_PACK_ITEM",
+    "ship_date": "2026-07-08",
+    "packaging_code": "CTN25",
+    "carton_count": 2,
+    "scac": "RDWY",
+    "ship_mode": "MOTOR",
+    "bol_number": "BOL8802214",
+    "record_type": "ASN_INBOUND"
+  },
+  "ship_to": {
+    "name": "ALPINE OUTFITTERS DC 12",
+    "id": "0012",
+    "address1": "880 GRANITE PARKWAY",
+    "city": "DENVER",
+    "state": "CO",
+    "zip": "80201"
+  },
+  "lines": [
+    {
+      "po_number": "PO4400021",
+      "line_no": 1,
+      "qty_shipped": 12,
+      "uom": "EACH",
+      "upc": "614141007349",
+      "description": "TRAIL MIX 12OZ",
+      "sscc": "00061414100734900012"
+    },
+    {
+      "po_number": "PO4400021",
+      "line_no": 2,
+      "qty_shipped": 24,
+      "uom": "EACH",
+      "upc": "614141007350",
+      "description": "SPRING WATER 24PK",
+      "sscc": "00061414100734900012"
+    },
+    {
+      "po_number": "PO4400021",
+      "line_no": 3,
+      "qty_shipped": 60,
+      "uom": "EACH",
+      "upc": "614141007351",
+      "description": "GRANOLA BARS VARIETY",
+      "sscc": "00061414100734900029"
+    }
+  ],
+  "summary": {
+    "hl_count": 7,
+    "total_units": 96
+  }
+}

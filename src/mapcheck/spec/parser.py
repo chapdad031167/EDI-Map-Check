@@ -266,11 +266,11 @@ def _parse_rule(
         else_outcome = Outcome(kind=OutcomeKind.SKIP)
 
     per_line = target_field is not None and "[]" in target_field
-    if per_line and (loop_context is None or loop_context.qualifier is not None):
+    if per_line and loop_context is None:
         if rule_type is not RuleType.LOOP_COUNT:
             err(
                 f"per-line target {target_field!r} requires a repeating Loop Context "
-                "(bare loop id like 'PO1')"
+                "(a loop id like 'PO1', or a level-qualified one like 'HL[I]')"
             )
             ok = False
     if not per_line and loop_context is not None and loop_context.qualifier is None:
