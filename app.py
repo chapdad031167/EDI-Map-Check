@@ -46,6 +46,20 @@ EXAMPLE_SCENARIOS = {
         "810_reference_spec.xlsx", "810_baseline.edi", "invoice_baseline.json"),
     "810 defective invoice (missed allowance)": (
         "810_reference_spec.xlsx", "810_defects.edi", "invoice_defects.json"),
+    "940 warehouse ship order (all PASS)": (
+        "940_reference_spec.xlsx", "940_baseline.edi", "shiporder_baseline.json"),
+    "945 ship advice (declared short-ship)": (
+        "945_reference_spec.xlsx", "945_baseline.edi", "shipadvice_baseline.json"),
+    "945 defective advice (undeclared short-ship)": (
+        "945_reference_spec.xlsx", "945_defects.edi", "shipadvice_defects.json"),
+    "943 stock transfer ship (all PASS)": (
+        "943_reference_spec.xlsx", "943_baseline.edi", "xfership_baseline.json"),
+    "944 stock transfer receipt (all PASS)": (
+        "944_reference_spec.xlsx", "944_baseline.edi", "xferreceipt_baseline.json"),
+    "947 inventory adjustment (reason codes)": (
+        "947_reference_spec.xlsx", "947_baseline.edi", "invadjust_baseline.json"),
+    "947 defective adjustment (unknown reason)": (
+        "947_reference_spec.xlsx", "947_defects.edi", "invadjust_defects.json"),
 }
 
 _STATUS_COLORS = {
