@@ -1,0 +1,52 @@
+{
+  "order": {
+    "tx_purpose": "ORIGINAL",
+    "po_type": "STANDALONE",
+    "drop_ship_flag": "Y",
+    "po_number": "PO4400012",
+    "po_date": "06/15/2026",
+    "currency": "USD",
+    "department": "045",
+    "vendor_number": "VEND8821",
+    "promo_code": "SUMMER26",
+    "requested_delivery_date": "2026-07-01",
+    "cancel_after_date": "2026-08-01",
+    "allowance_code": "C310",
+    "allowance_amount": 2500,
+    "warehouse_code": "WH9"
+  },
+  "ship_to": {
+    "name": "ALPINE OUTFITTERS STORE 118",
+    "id": "0118",
+    "address1": "4501 CASCADE AVE",
+    "city": "BOULDER",
+    "state": "COLO",
+    "zip": "80301"
+  },
+  "bill_to": {
+    "name": "ALPINE OUTFITTERS CORPORATE",
+    "id": "0001"
+  },
+  "lines": [
+    {
+      "line_no": 1,
+      "qty": 12,
+      "uom": "EA",
+      "unit_price": 8.5,
+      "upc": "614141007349",
+      "description": "TRAIL MIX 12OZ"
+    },
+    {
+      "line_no": 2,
+      "qty": "6",
+      "uom": "CASE",
+      "unit_price": 24.0,
+      "upc": "614141007350",
+      "description": "SPRING WATER 24PK"
+    }
+  ],
+  "summary": {
+    "line_count": 3,
+    "total_amount": 306.0
+  }
+}
