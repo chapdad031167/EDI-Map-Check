@@ -107,8 +107,12 @@ mapcheck validate --help          # all options (--transaction, --verbose, --db,
 | 856 | Ship Notice/Manifest (ASN) | ✅ Supported | Full HL hierarchy: standard, pick-and-pack, and palletized structures; orphan/nesting integrity; SN1 rollup reconciliation |
 | 855 | Purchase Order Acknowledgment | ✅ Supported | ACK line-status code lists; accept/reject splits reconcile against ordered quantities |
 | 810 | Invoice | ✅ Supported | TDS total reconciles against line extensions + charges − allowances (declarative arithmetic) |
-| 940 / 945 / 943 / 944 / 947 | Warehouse suite | 🔜 Next | 3PL flows |
-| 846 / 812 / 867 | Inventory & product movement | Planned | |
+| 940 | Warehouse Shipping Order | ✅ Supported | Bare W01 line loops; ship-to / warehouse party loops |
+| 945 | Warehouse Shipping Advice | ✅ Supported | LX-wrapped lines; W03 total + undeclared-short-ship reconciliation |
+| 943 | Warehouse Stock Transfer Shipment | ✅ Supported | Transfer pair (ship side); W03 total vs line sums |
+| 944 | Warehouse Stock Transfer Receipt | ✅ Supported | Transfer pair (receipt side); W14 total vs line sums |
+| 947 | Warehouse Inventory Adjustment | ✅ Supported | W19 adjustment-reason code list; signed adjustment quantities |
+| 846 / 812 / 867 | Inventory & product movement | 🔜 Next | |
 | 844 / 845 / 849 / 854 | Pharma contract & chargeback | Planned | Built from public X12 documentation |
 | 997 | Functional Acknowledgment | Planned | |
 
@@ -128,6 +132,16 @@ directly under a shipment) are structural failures. Assumption noted for the
 reference spec: shipment-level TD1 lading quantity reconciles against the
 pack-loop count (cartons), while CTT02 covers the unit rollup — TD102 with a
 carton packaging code counts cartons, not units.
+
+**Warehouse suite (940/945/943/944/947):** built as a family from public 4010
+companion guides. The 945 detail is LX-wrapped (`W12` shipped-item segments)
+while the 940 uses bare `W01` line loops. Reconciliations declared per set:
+945 checks `W03` total shipped against the line sum and flags *undeclared*
+short-ships (ordered − shipped must equal the declared `W12` differences);
+943/944 check `W03`/`W14` totals against their line quantities; 947 leans on
+the `ADJ_REASON` code list with signed adjustment quantities. Element-usage
+assumptions (e.g. `W12` positional meaning) are noted in each definition
+file's header for amendment against a specific partner guide.
 
 ## The spec template
 

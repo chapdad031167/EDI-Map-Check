@@ -1116,6 +1116,536 @@ def generate_order_cycle_files() -> None:
         print(f"wrote {path.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# Warehouse suite: 940 / 945 / 943 / 944 / 947
+# --------------------------------------------------------------------------
+
+_WH_UOM = [
+    ("UOM", "EA", "EACH", "Each"),
+    ("UOM", "CA", "CASE", "Case"),
+]
+_WH_SHIP_METHOD = [
+    ("SHIP_METHOD", "M", "MOTOR", "Motor (common carrier)"),
+    ("SHIP_METHOD", "A", "AIR", "Air"),
+    ("SHIP_METHOD", "R", "RAIL", "Rail"),
+]
+
+SPEC940_ROWS: list[tuple[str, ...]] = [
+    ("O-001", "W0501", "", "order.order_status", "CODE_LIST", "", "", "", "",
+     "", "ORDER_STATUS", "string", "", ""),
+    ("O-002", "W0502", "", "order.order_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", "Depositor order number."),
+    ("O-003", "W0503", "", "order.po_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", ""),
+    ("O-004", "G6202", "G62[10]", "order.requested_ship_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", "G62 qualifier 10 = requested ship."),
+    ("O-005", "W6601", "", "order.freight_terms", "CODE_LIST", "", "", "", "",
+     "", "FREIGHT_TERMS", "string", "", ""),
+    ("O-006", "W6602", "", "order.ship_method", "CODE_LIST", "", "", "", "",
+     "", "SHIP_METHOD", "string", "", ""),
+    ("O-007", "", "", "order.record_type", "CONSTANT", "", "", "", "",
+     "SHIP_ORDER", "", "string", "", ""),
+    ("O-008", "N102", "N1[ST]", "ship_to.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("O-009", "N104", "N1[ST]", "ship_to.id", "CONDITIONAL",
+     "Map the store number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("O-010", "N301", "N1[ST]", "ship_to.address1", "DIRECT", "", "", "", "",
+     "", "", "string", "", ""),
+    ("O-011", "N401", "N1[ST]", "ship_to.city", "DIRECT", "", "", "", "",
+     "", "", "string", "", ""),
+    ("O-012", "N402", "N1[ST]", "ship_to.state", "DIRECT", "", "", "", "",
+     "", "", "string", "len:2..2", ""),
+    ("O-013", "N403", "N1[ST]", "ship_to.zip", "DIRECT", "", "", "", "",
+     "", "", "string", "len:5..10", ""),
+    ("O-014", "N102", "N1[WH]", "warehouse.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("O-015", "N104", "N1[WH]", "warehouse.id", "CONDITIONAL",
+     "Map the warehouse code only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("O-016", "W0101", "W01", "lines[].qty_ordered", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("O-017", "W0102", "W01", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("O-018", "W0103", "W01", "lines[].upc", "DIRECT", "", "", "", "",
+     "", "", "string", "len:12..14", ""),
+    ("O-019", "W0105", "W01", "lines[].vendor_sku", "CONDITIONAL",
+     "Map the vendor SKU only when the ID qualifier is VN.",
+     "W0104 = 'VN'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("O-020", "G6901", "W01", "lines[].description", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..80", ""),
+    ("O-021", "W01", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_940_ROWS = [
+    ("ORDER_STATUS", "N", "NEW", "Original shipping order"),
+    ("ORDER_STATUS", "R", "REPLACE", "Replacement order"),
+    ("ORDER_STATUS", "F", "CONFIRMATION", "Confirmation"),
+    ("FREIGHT_TERMS", "PP", "PREPAID", "Prepaid by seller"),
+    ("FREIGHT_TERMS", "CC", "COLLECT", "Collect"),
+    *_WH_SHIP_METHOD,
+    *_WH_UOM,
+]
+
+BASELINE_940 = [
+    "W05*N*ORD8801*PO4400021",
+    "N1*ST*ALPINE OUTFITTERS STORE 118*92*0118",
+    "N3*4501 CASCADE AVE",
+    "N4*BOULDER*CO*80301",
+    "N1*WH*CASCADE 3PL DENVER*92*W22",
+    "G62*10*20260722",
+    "W66*PP*M",
+    "W01*24*EA*614141007349*VN*SKU-1001",
+    "G69*TRAIL MIX 12OZ",
+    "W01*60*EA*614141007351*VN*SKU-1003",
+    "G69*GRANOLA BARS VARIETY",
+]
+
+# Defects: unknown order status X, invalid requested-ship date (day 50),
+# unknown UOM ZZ on line 1, unreferenced W09 temperature data.
+DEFECTS_940 = [
+    "W05*X*ORD8802*PO4400022",
+    "N1*ST*ALPINE OUTFITTERS STORE 118*92*0118",
+    "N3*4501 CASCADE AVE",
+    "N4*BOULDER*CO*80301",
+    "N1*WH*CASCADE 3PL DENVER*92*W22",
+    "G62*10*20260750",
+    "W66*PP*M",
+    "W09*CZ*34*FA",
+    "W01*24*ZZ*614141007349*VN*SKU-1001",
+    "G69*TRAIL MIX 12OZ",
+    "W01*60*EA*614141007351*VN*SKU-1003",
+    "G69*GRANOLA BARS VARIETY",
+]
+
+BASELINE_940_OUTPUT: dict = {
+    "order": {
+        "order_status": "NEW", "order_number": "ORD8801", "po_number": "PO4400021",
+        "requested_ship_date": "2026-07-22", "freight_terms": "PREPAID",
+        "ship_method": "MOTOR", "record_type": "SHIP_ORDER",
+    },
+    "ship_to": {"name": "ALPINE OUTFITTERS STORE 118", "id": "0118",
+                "address1": "4501 CASCADE AVE", "city": "BOULDER",
+                "state": "CO", "zip": "80301"},
+    "warehouse": {"name": "CASCADE 3PL DENVER", "id": "W22"},
+    "lines": [
+        {"qty_ordered": 24, "uom": "EACH", "upc": "614141007349",
+         "vendor_sku": "SKU-1001", "description": "TRAIL MIX 12OZ"},
+        {"qty_ordered": 60, "uom": "EACH", "upc": "614141007351",
+         "vendor_sku": "SKU-1003", "description": "GRANOLA BARS VARIETY"},
+    ],
+    "summary": {"line_count": 2},
+}
+
+DEFECTS_940_OUTPUT: dict = json.loads(json.dumps(BASELINE_940_OUTPUT))
+DEFECTS_940_OUTPUT["order"].update(
+    {"order_status": "X", "order_number": "ORD8802", "po_number": "PO4400022",
+     "requested_ship_date": "2026-07-50"}
+)
+DEFECTS_940_OUTPUT["lines"][0]["uom"] = "ZZ"
+
+SPEC945_ROWS: list[tuple[str, ...]] = [
+    ("S-001", "W0601", "", "advice.reporting_code", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..2", "Passed through; partner-specific values."),
+    ("S-002", "W0602", "", "advice.order_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", ""),
+    ("S-003", "W0603", "", "advice.ship_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("S-004", "W2701", "", "advice.ship_method", "CODE_LIST", "", "", "", "",
+     "", "SHIP_METHOD", "string", "", ""),
+    ("S-005", "W2702", "", "advice.scac", "DIRECT", "", "", "", "",
+     "", "", "string", "len:2..4", ""),
+    ("S-006", "", "", "advice.record_type", "CONSTANT", "", "", "", "",
+     "SHIP_ADVICE", "", "string", "", ""),
+    ("S-007", "N102", "N1[ST]", "ship_to.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("S-008", "N104", "N1[ST]", "ship_to.id", "CONDITIONAL",
+     "Map the store number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("S-009", "LX01", "LX", "lines[].seq", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("S-010", "W1201", "LX", "lines[].ship_status", "CODE_LIST", "", "", "", "",
+     "", "SHIP_STATUS", "string", "", "Assumed codes G/P; amend per guide."),
+    ("S-011", "W1202", "LX", "lines[].qty_ordered", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("S-012", "W1203", "LX", "lines[].qty_shipped", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("S-013", "W1204", "LX", "lines[].qty_difference", "CONDITIONAL",
+     "Map the quantity difference only when the warehouse declares one.",
+     "EXISTS(W1204)", "SOURCE", "SKIP", "", "", "integer", "", ""),
+    ("S-014", "W1205", "LX", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("S-015", "W1206", "LX", "lines[].upc", "DIRECT", "", "", "", "",
+     "", "", "string", "len:12..14", ""),
+    ("S-016", "G6901", "LX", "lines[].description", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..80", ""),
+    ("S-017", "W0301", "", "summary.total_shipped", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("S-018", "LX", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("S-019", "W0302", "", "summary.total_weight", "DIRECT", "", "", "", "",
+     "", "", "decimal", "", ""),
+    ("S-020", "W0303", "", "summary.weight_uom", "CODE_LIST", "", "", "", "",
+     "", "WEIGHT_UOM", "string", "", ""),
+]
+
+CODE_LIST_945_ROWS = [
+    ("SHIP_STATUS", "G", "COMPLETE", "Shipped complete (assumed usage)"),
+    ("SHIP_STATUS", "P", "PARTIAL", "Shipped partial (assumed usage)"),
+    ("WEIGHT_UOM", "LB", "POUNDS", "Pounds"),
+    ("WEIGHT_UOM", "KG", "KILOGRAMS", "Kilograms"),
+    *_WH_SHIP_METHOD,
+    *_WH_UOM,
+]
+
+BASELINE_945 = [
+    "W06*F*ORD8801*20260723",
+    "N1*ST*ALPINE OUTFITTERS STORE 118*92*0118",
+    "W27*M*RDWY",
+    "LX*1",
+    "W12*G*24*24**EA*614141007349",
+    "G69*TRAIL MIX 12OZ",
+    "LX*2",
+    "W12*P*60*55*5*EA*614141007351",
+    "G69*GRANOLA BARS VARIETY",
+    "W03*79*310*LB",
+]
+
+# Defects: invalid ship date (day 50), line 1 short-ships 4 units WITHOUT
+# declaring a difference, unknown UOM ZZ on line 2, W03 total that matches
+# neither the shipped sum nor the declared differences, unreferenced W10.
+DEFECTS_945 = [
+    "W06*F*ORD8802*20260750",
+    "N1*ST*ALPINE OUTFITTERS STORE 118*92*0118",
+    "W27*M*RDWY",
+    "W10*DOCK 7",
+    "LX*1",
+    "W12*G*24*20**EA*614141007349",
+    "G69*TRAIL MIX 12OZ",
+    "LX*2",
+    "W12*P*60*55*5*ZZ*614141007351",
+    "G69*GRANOLA BARS VARIETY",
+    "W03*80*310*LB",
+]
+
+BASELINE_945_OUTPUT: dict = {
+    "advice": {"reporting_code": "F", "order_number": "ORD8801",
+               "ship_date": "2026-07-23", "ship_method": "MOTOR",
+               "scac": "RDWY", "record_type": "SHIP_ADVICE"},
+    "ship_to": {"name": "ALPINE OUTFITTERS STORE 118", "id": "0118"},
+    "lines": [
+        {"seq": 1, "ship_status": "COMPLETE", "qty_ordered": 24, "qty_shipped": 24,
+         "uom": "EACH", "upc": "614141007349", "description": "TRAIL MIX 12OZ"},
+        {"seq": 2, "ship_status": "PARTIAL", "qty_ordered": 60, "qty_shipped": 55,
+         "qty_difference": 5, "uom": "EACH", "upc": "614141007351",
+         "description": "GRANOLA BARS VARIETY"},
+    ],
+    "summary": {"total_shipped": 79, "line_count": 2, "total_weight": 310,
+                "weight_uom": "POUNDS"},
+}
+
+DEFECTS_945_OUTPUT: dict = json.loads(json.dumps(BASELINE_945_OUTPUT))
+DEFECTS_945_OUTPUT["advice"].update({"order_number": "ORD8802", "ship_date": "2026-07-50"})
+DEFECTS_945_OUTPUT["lines"][0]["qty_shipped"] = 20
+DEFECTS_945_OUTPUT["lines"][1]["uom"] = "ZZ"
+DEFECTS_945_OUTPUT["summary"]["total_shipped"] = 80
+
+_XFER_LINES = [
+    {"qty": 40, "uom": "EACH", "upc": "614141007349", "description": "TRAIL MIX 12OZ"},
+    {"qty": 24, "uom": "EACH", "upc": "614141007350", "description": "SPRING WATER 24PK"},
+]
+
+SPEC943_ROWS: list[tuple[str, ...]] = [
+    ("T-001", "W0601", "", "transfer.reporting_code", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..2", ""),
+    ("T-002", "W0602", "", "transfer.transfer_order", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", ""),
+    ("T-003", "W0603", "", "transfer.ship_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("T-004", "W2701", "", "transfer.ship_method", "CODE_LIST", "", "", "", "",
+     "", "SHIP_METHOD", "string", "", ""),
+    ("T-005", "W2702", "", "transfer.scac", "DIRECT", "", "", "", "",
+     "", "", "string", "len:2..4", ""),
+    ("T-006", "", "", "transfer.record_type", "CONSTANT", "", "", "", "",
+     "XFER_SHIP", "", "string", "", ""),
+    ("T-007", "N102", "N1[WH]", "warehouse.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", "Receiving warehouse."),
+    ("T-008", "N104", "N1[WH]", "warehouse.id", "CONDITIONAL",
+     "Map the warehouse code only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("T-009", "W0401", "W04", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("T-010", "W0402", "W04", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("T-011", "W0403", "W04", "lines[].upc", "DIRECT", "", "", "", "",
+     "", "", "string", "len:12..14", ""),
+    ("T-012", "G6901", "W04", "lines[].description", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..80", ""),
+    ("T-013", "W0301", "", "summary.total_units", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("T-014", "W04", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_943_ROWS = [*_WH_SHIP_METHOD, *_WH_UOM]
+
+BASELINE_943 = [
+    "W06*F*XFER7701*20260724",
+    "N1*WH*CASCADE 3PL RENO*92*W31",
+    "W27*M*RDWY",
+    "W04*40*EA*614141007349",
+    "G69*TRAIL MIX 12OZ",
+    "W04*24*EA*614141007350",
+    "G69*SPRING WATER 24PK",
+    "W03*64",
+]
+
+# Defects: W03 total lies (70 vs 64 actual), unknown UOM, invalid ship
+# date, unreferenced G61 contact data.
+DEFECTS_943 = [
+    "W06*F*XFER7702*20260750",
+    "G61*IC*JANE DOE",
+    "N1*WH*CASCADE 3PL RENO*92*W31",
+    "W27*M*RDWY",
+    "W04*40*ZZ*614141007349",
+    "G69*TRAIL MIX 12OZ",
+    "W04*24*EA*614141007350",
+    "G69*SPRING WATER 24PK",
+    "W03*70",
+]
+
+BASELINE_943_OUTPUT: dict = {
+    "transfer": {"reporting_code": "F", "transfer_order": "XFER7701",
+                 "ship_date": "2026-07-24", "ship_method": "MOTOR",
+                 "scac": "RDWY", "record_type": "XFER_SHIP"},
+    "warehouse": {"name": "CASCADE 3PL RENO", "id": "W31"},
+    "lines": [dict(line) for line in _XFER_LINES],
+    "summary": {"total_units": 64, "line_count": 2},
+}
+
+DEFECTS_943_OUTPUT: dict = json.loads(json.dumps(BASELINE_943_OUTPUT))
+DEFECTS_943_OUTPUT["transfer"].update(
+    {"transfer_order": "XFER7702", "ship_date": "2026-07-50"}
+)
+DEFECTS_943_OUTPUT["lines"][0]["uom"] = "ZZ"
+DEFECTS_943_OUTPUT["summary"]["total_units"] = 70
+
+SPEC944_ROWS: list[tuple[str, ...]] = [
+    ("R-001", "W1701", "", "receipt.reporting_code", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..2", ""),
+    ("R-002", "W1702", "", "receipt.receipt_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("R-003", "W1703", "", "receipt.receipt_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", ""),
+    ("R-004", "", "", "receipt.record_type", "CONSTANT", "", "", "", "",
+     "XFER_RECEIPT", "", "string", "", ""),
+    ("R-005", "N102", "N1[WH]", "warehouse.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("R-006", "N104", "N1[WH]", "warehouse.id", "CONDITIONAL",
+     "Map the warehouse code only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("R-007", "W0701", "W07", "lines[].qty_received", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("R-008", "W0702", "W07", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("R-009", "W0703", "W07", "lines[].upc", "DIRECT", "", "", "", "",
+     "", "", "string", "len:12..14", ""),
+    ("R-010", "G6901", "W07", "lines[].description", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..80", ""),
+    ("R-011", "W1401", "", "summary.total_received", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("R-012", "W07", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_944_ROWS = [*_WH_UOM]
+
+BASELINE_944 = [
+    "W17*F*20260726*REC5501",
+    "N1*WH*CASCADE 3PL RENO*92*W31",
+    "W07*40*EA*614141007349",
+    "G69*TRAIL MIX 12OZ",
+    "W07*24*EA*614141007350",
+    "G69*SPRING WATER 24PK",
+    "W14*64",
+]
+
+# Defects: W14 total lies (60 vs 64 actual), unknown UOM, invalid receipt
+# date, unreferenced G61 contact data.
+DEFECTS_944 = [
+    "W17*F*20260750*REC5502",
+    "G61*IC*JANE DOE",
+    "N1*WH*CASCADE 3PL RENO*92*W31",
+    "W07*40*EA*614141007349",
+    "G69*TRAIL MIX 12OZ",
+    "W07*24*ZZ*614141007350",
+    "G69*SPRING WATER 24PK",
+    "W14*60",
+]
+
+BASELINE_944_OUTPUT: dict = {
+    "receipt": {"reporting_code": "F", "receipt_date": "2026-07-26",
+                "receipt_number": "REC5501", "record_type": "XFER_RECEIPT"},
+    "warehouse": {"name": "CASCADE 3PL RENO", "id": "W31"},
+    "lines": [
+        {"qty_received": 40, "uom": "EACH", "upc": "614141007349",
+         "description": "TRAIL MIX 12OZ"},
+        {"qty_received": 24, "uom": "EACH", "upc": "614141007350",
+         "description": "SPRING WATER 24PK"},
+    ],
+    "summary": {"total_received": 64, "line_count": 2},
+}
+
+DEFECTS_944_OUTPUT: dict = json.loads(json.dumps(BASELINE_944_OUTPUT))
+DEFECTS_944_OUTPUT["receipt"].update(
+    {"receipt_date": "2026-07-50", "receipt_number": "REC5502"}
+)
+DEFECTS_944_OUTPUT["lines"][1]["uom"] = "ZZ"
+DEFECTS_944_OUTPUT["summary"]["total_received"] = 60
+
+SPEC947_ROWS: list[tuple[str, ...]] = [
+    ("J-001", "W1501", "", "adjustment.adjustment_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("J-002", "W1502", "", "adjustment.adjustment_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", ""),
+    ("J-003", "", "", "adjustment.record_type", "CONSTANT", "", "", "", "",
+     "INV_ADJUST", "", "string", "", ""),
+    ("J-004", "N102", "N1[WH]", "warehouse.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("J-005", "N104", "N1[WH]", "warehouse.id", "CONDITIONAL",
+     "Map the warehouse code only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("J-006", "W1901", "W19", "lines[].reason", "CODE_LIST", "", "", "", "",
+     "", "ADJ_REASON", "string", "", "The adjustment-reason showcase."),
+    ("J-007", "W1902", "W19", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Credit/debit quantity; negative = loss."),
+    ("J-008", "W1903", "W19", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("J-009", "W1904", "W19", "lines[].upc", "DIRECT", "", "", "", "",
+     "", "", "string", "len:12..14", ""),
+    ("J-010", "G6901", "W19", "lines[].description", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..80", ""),
+    ("J-011", "W19", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_947_ROWS = [
+    ("ADJ_REASON", "AD", "CYCLE_COUNT_ADJ", "Cycle-count adjustment"),
+    ("ADJ_REASON", "CC", "CYCLE_COUNT", "Cycle count"),
+    ("ADJ_REASON", "DA", "DAMAGED", "Damaged"),
+    ("ADJ_REASON", "EX", "EXPIRED", "Expired product"),
+    ("ADJ_REASON", "RE", "RETURN_TO_STOCK", "Return to stock"),
+    ("ADJ_REASON", "SH", "SHRINKAGE", "Shrinkage/theft"),
+    ("ADJ_REASON", "TR", "TRANSFER", "Transfer"),
+    *_WH_UOM,
+]
+
+BASELINE_947 = [
+    "W15*20260725*ADJ2201",
+    "N1*WH*CASCADE 3PL DENVER*92*W22",
+    "W19*DA*-5*EA*614141007349",
+    "G69*TRAIL MIX 12OZ",
+    "W19*CC*12*EA*614141007350",
+    "G69*SPRING WATER 24PK",
+    "W19*EX*-3*EA*614141007351",
+    "G69*GRANOLA BARS VARIETY",
+]
+
+# Defects: unknown adjustment reason XX, invalid adjustment date,
+# unreferenced G61 contact data.
+DEFECTS_947 = [
+    "W15*20260750*ADJ2202",
+    "G61*IC*JANE DOE",
+    "N1*WH*CASCADE 3PL DENVER*92*W22",
+    "W19*XX*-5*EA*614141007349",
+    "G69*TRAIL MIX 12OZ",
+    "W19*CC*12*EA*614141007350",
+    "G69*SPRING WATER 24PK",
+]
+
+BASELINE_947_OUTPUT: dict = {
+    "adjustment": {"adjustment_date": "2026-07-25", "adjustment_number": "ADJ2201",
+                   "record_type": "INV_ADJUST"},
+    "warehouse": {"name": "CASCADE 3PL DENVER", "id": "W22"},
+    "lines": [
+        {"reason": "DAMAGED", "qty": -5, "uom": "EACH",
+         "upc": "614141007349", "description": "TRAIL MIX 12OZ"},
+        {"reason": "CYCLE_COUNT", "qty": 12, "uom": "EACH",
+         "upc": "614141007350", "description": "SPRING WATER 24PK"},
+        {"reason": "EXPIRED", "qty": -3, "uom": "EACH",
+         "upc": "614141007351", "description": "GRANOLA BARS VARIETY"},
+    ],
+    "summary": {"line_count": 3},
+}
+
+DEFECTS_947_OUTPUT: dict = {
+    "adjustment": {"adjustment_date": "2026-07-50", "adjustment_number": "ADJ2202",
+                   "record_type": "INV_ADJUST"},
+    "warehouse": {"name": "CASCADE 3PL DENVER", "id": "W22"},
+    "lines": [
+        {"reason": "XX", "qty": -5, "uom": "EACH",
+         "upc": "614141007349", "description": "TRAIL MIX 12OZ"},
+        {"reason": "CYCLE_COUNT", "qty": 12, "uom": "EACH",
+         "upc": "614141007350", "description": "SPRING WATER 24PK"},
+    ],
+    "summary": {"line_count": 2},
+}
+
+#: (set code, GS code, spec rows, code lists, spec name,
+#:  [(source file, control#, segments), ...], {output file: data})
+WAREHOUSE_SETS = [
+    ("940", "OW", SPEC940_ROWS, CODE_LIST_940_ROWS,
+     "Synthetic 3PL ship order - reference example",
+     [("940_baseline.edi", "31", BASELINE_940), ("940_defects.edi", "32", DEFECTS_940)],
+     {"shiporder_baseline.json": BASELINE_940_OUTPUT,
+      "shiporder_defects.json": DEFECTS_940_OUTPUT}),
+    ("945", "SW", SPEC945_ROWS, CODE_LIST_945_ROWS,
+     "Synthetic 3PL ship advice - reference example",
+     [("945_baseline.edi", "33", BASELINE_945), ("945_defects.edi", "34", DEFECTS_945)],
+     {"shipadvice_baseline.json": BASELINE_945_OUTPUT,
+      "shipadvice_defects.json": DEFECTS_945_OUTPUT}),
+    ("943", "AR", SPEC943_ROWS, CODE_LIST_943_ROWS,
+     "Synthetic stock transfer shipment - reference example",
+     [("943_baseline.edi", "35", BASELINE_943), ("943_defects.edi", "36", DEFECTS_943)],
+     {"xfership_baseline.json": BASELINE_943_OUTPUT,
+      "xfership_defects.json": DEFECTS_943_OUTPUT}),
+    ("944", "RE", SPEC944_ROWS, CODE_LIST_944_ROWS,
+     "Synthetic stock transfer receipt - reference example",
+     [("944_baseline.edi", "37", BASELINE_944), ("944_defects.edi", "38", DEFECTS_944)],
+     {"xferreceipt_baseline.json": BASELINE_944_OUTPUT,
+      "xferreceipt_defects.json": DEFECTS_944_OUTPUT}),
+    ("947", "AW", SPEC947_ROWS, CODE_LIST_947_ROWS,
+     "Synthetic inventory adjustment - reference example",
+     [("947_baseline.edi", "39", BASELINE_947), ("947_defects.edi", "40", DEFECTS_947)],
+     {"invadjust_baseline.json": BASELINE_947_OUTPUT,
+      "invadjust_defects.json": DEFECTS_947_OUTPUT}),
+]
+
+
+def generate_warehouse_files() -> None:
+    for set_code, gs_code, rows, code_lists, spec_name, sources, outputs in WAREHOUSE_SETS:
+        meta = {
+            "Transaction Set": set_code,
+            "X12 Version": "004010",
+            "Spec Name": spec_name,
+            "Author": "EDI MapCheck project",
+            "Date": "2026-07-05",
+        }
+        generate_spec(
+            EXAMPLES / "specs" / f"{set_code}_reference_spec.xlsx",
+            rows, code_lists, meta,
+        )
+        for name, control, segments in sources:
+            path = EXAMPLES / "source" / name
+            path.write_text(build_interchange(segments, control, set_code, gs_code))
+            print(f"wrote {path.relative_to(REPO_ROOT)}")
+        for name, data in outputs.items():
+            path = EXAMPLES / "output" / name
+            path.write_text(json.dumps(data, indent=2) + "\n")
+            print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -1137,6 +1667,7 @@ def main() -> None:
         SPEC810_ROWS, CODE_LIST_810_ROWS, SPEC810_META,
     )
     generate_order_cycle_files()
+    generate_warehouse_files()
 
 
 if __name__ == "__main__":
