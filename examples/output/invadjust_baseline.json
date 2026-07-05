@@ -1,0 +1,37 @@
+{
+  "adjustment": {
+    "adjustment_date": "2026-07-25",
+    "adjustment_number": "ADJ2201",
+    "record_type": "INV_ADJUST"
+  },
+  "warehouse": {
+    "name": "CASCADE 3PL DENVER",
+    "id": "W22"
+  },
+  "lines": [
+    {
+      "reason": "DAMAGED",
+      "qty": -5,
+      "uom": "EACH",
+      "upc": "614141007349",
+      "description": "TRAIL MIX 12OZ"
+    },
+    {
+      "reason": "CYCLE_COUNT",
+      "qty": 12,
+      "uom": "EACH",
+      "upc": "614141007350",
+      "description": "SPRING WATER 24PK"
+    },
+    {
+      "reason": "EXPIRED",
+      "qty": -3,
+      "uom": "EACH",
+      "upc": "614141007351",
+      "description": "GRANOLA BARS VARIETY"
+    }
+  ],
+  "summary": {
+    "line_count": 3
+  }
+}

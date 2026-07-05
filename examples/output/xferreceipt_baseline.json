@@ -1,0 +1,30 @@
+{
+  "receipt": {
+    "reporting_code": "F",
+    "receipt_date": "2026-07-26",
+    "receipt_number": "REC5501",
+    "record_type": "XFER_RECEIPT"
+  },
+  "warehouse": {
+    "name": "CASCADE 3PL RENO",
+    "id": "W31"
+  },
+  "lines": [
+    {
+      "qty_received": 40,
+      "uom": "EACH",
+      "upc": "614141007349",
+      "description": "TRAIL MIX 12OZ"
+    },
+    {
+      "qty_received": 24,
+      "uom": "EACH",
+      "upc": "614141007350",
+      "description": "SPRING WATER 24PK"
+    }
+  ],
+  "summary": {
+    "total_received": 64,
+    "line_count": 2
+  }
+}

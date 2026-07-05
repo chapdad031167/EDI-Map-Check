@@ -1,0 +1,37 @@
+# X12 947 Warehouse Inventory Adjustment Advice (v004010).
+#
+# The adjustment-reason code list is the validation showcase here: W19 is
+# read as 01=adjustment reason code, 02=credit/debit quantity (signed),
+# 03=UOM, 04=UPC; W15 as 01=adjustment date, 02=adjustment number —
+# assumptions noted for amendment against a specific partner guide. No
+# transaction-level totals are commonly sent, so no reconciliation rules
+# ship by default.
+
+transaction:
+  set: "947"
+  name: Warehouse Inventory Adjustment Advice
+  functional_group: AW
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [W15, N9, G61, G62]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, PER]
+        max_repeats: 10
+
+  - area: detail
+    opens_area: [W19]
+    loops:
+      - id: W19
+        trigger: W19
+        qualifier: 1
+        max_repeats: 10000
+        segments: [G69, N9, QTY]
+
+output_pairing:
+  list_path: lines
+  loop: W19
