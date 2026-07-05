@@ -10,6 +10,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -262,9 +263,159 @@ def generate_source_files() -> None:
         print(f"wrote {path.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# Translated output files (the artifact under test)
+# --------------------------------------------------------------------------
+
+BASELINE_LINES = [
+    {"line_no": 1, "qty": 12, "uom": "EACH", "unit_price": 8.5,
+     "upc": "614141007349", "description": "TRAIL MIX 12OZ"},
+    {"line_no": 2, "qty": 6, "uom": "CASE", "unit_price": 24.0,
+     "upc": "614141007350", "description": "SPRING WATER 24PK"},
+    {"line_no": 3, "qty": 5, "uom": "DOZEN", "unit_price": 12.0,
+     "upc": "614141007351", "description": "GRANOLA BARS VARIETY"},
+]
+
+BASELINE_OUTPUT: dict = {
+    "order": {
+        "tx_purpose": "ORIGINAL",
+        "po_type": "STANDALONE",
+        "drop_ship_flag": "N",
+        "po_number": "PO4400021",
+        "release_number": "NONE",
+        "po_date": "2026-06-15",
+        "currency": "USD",
+        "department": "045",
+        "vendor_number": "VEND8821",
+        "promo_code": "SUMMER26",
+        "requested_delivery_date": "2026-07-01",
+        "cancel_after_date": "2026-08-01",
+        "record_type": "PO_INBOUND",
+        "allowance_code": "C310",
+        "allowance_amount": 25.0,
+    },
+    "ship_to": {
+        "name": "ALPINE OUTFITTERS STORE 118",
+        "id": "0118",
+        "address1": "4501 CASCADE AVE",
+        "city": "BOULDER",
+        "state": "CO",
+        "zip": "80301",
+    },
+    "bill_to": {"name": "ALPINE OUTFITTERS CORPORATE", "id": "0001"},
+    "lines": BASELINE_LINES,
+    "summary": {"line_count": 3, "total_amount": 306.0},
+}
+
+MINIMAL_OUTPUT: dict = {
+    "order": {
+        "tx_purpose": "ORIGINAL",
+        "po_type": "NEW_ORDER",
+        "drop_ship_flag": "N",
+        "po_number": "PO7700003",
+        "release_number": "NONE",
+        "po_date": "2026-06-20",
+        "record_type": "PO_INBOUND",
+    },
+    "ship_to": {"name": "RIVERBEND MARKET", "id": "0007"},
+    "lines": [
+        {"line_no": 1, "qty": 100, "uom": "EACH", "unit_price": 0.99,
+         "upc": "614141007352", "description": "NO2 PENCILS 10PK"},
+    ],
+    "summary": {"line_count": 1},
+}
+
+
+def _defective_baseline_output() -> dict:
+    """Baseline output with deliberately planted mapping defects.
+
+    Planted defects (validated against 850_baseline.edi):
+      1. po_number transposed                     -> value_mismatch
+      2. po_date in US format                     -> format
+      3. drop_ship_flag Y though BEG02 is SA      -> condition_logic
+      4. line 1 uom left untranslated ('EA')      -> code_translation
+      5. record_type constant missing             -> constant_default
+      6. allowance_amount implied decimal missed  -> value_mismatch (100x)
+      7. third line dropped                       -> count_mismatch + missing_output
+      8. extra field warehouse_code               -> unmapped_target warning
+      9. ship_to.state four characters            -> format (len:2..2)
+     10. release_number default not applied       -> missing_output
+     11. line 2 qty carried as a JSON string      -> format warning
+    """
+    out = json.loads(json.dumps(BASELINE_OUTPUT))  # deep copy
+    out["order"]["po_number"] = "PO4400012"
+    out["order"]["po_date"] = "06/15/2026"
+    out["order"]["drop_ship_flag"] = "Y"
+    out["lines"][0]["uom"] = "EA"
+    del out["order"]["record_type"]
+    out["order"]["allowance_amount"] = 2500
+    del out["lines"][2]
+    out["order"]["warehouse_code"] = "WH9"
+    out["ship_to"]["state"] = "COLO"
+    del out["order"]["release_number"]
+    out["lines"][1]["qty"] = "6"
+    return out
+
+
+def _naive_bad_source_output() -> dict:
+    """What a naive translator emits from 850_defects.edi.
+
+    It slices the invalid date into shape, passes the unknown UOM code
+    through, trusts the (wrong) CTT count, and still emits a hardcoded
+    bill_to that the source no longer sends.
+    """
+    out = json.loads(json.dumps(BASELINE_OUTPUT))
+    out["order"]["po_number"] = "PO4400022"
+    out["order"]["po_date"] = "2026-13-01"
+    out["lines"][1]["uom"] = "XX"
+    out["summary"]["line_count"] = 5
+    return out
+
+
+def _flat_value(value: object) -> str:
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    return str(value)
+
+
+def _to_flat(data: dict) -> str:
+    """Render a canonical output dict in the keyed flat reference format."""
+    lines = ["# EDI MapCheck keyed flat output"]
+    order = "|".join(f"{k}={_flat_value(v)}" for k, v in data["order"].items())
+    lines.append(f"H|{order}")
+    for role in (k for k in data if k not in ("order", "lines", "summary")):
+        fields = "|".join(f"{k}={_flat_value(v)}" for k, v in data[role].items())
+        lines.append(f"A|role={role}|{fields}")
+    for line in data.get("lines", []):
+        fields = "|".join(f"{k}={_flat_value(v)}" for k, v in line.items())
+        lines.append(f"D|{fields}")
+    summary = "|".join(f"{k}={_flat_value(v)}" for k, v in data["summary"].items())
+    lines.append(f"S|{summary}")
+    return "\n".join(lines) + "\n"
+
+
+def generate_output_files() -> None:
+    out_dir = EXAMPLES / "output"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    json_files = {
+        "po_baseline.json": BASELINE_OUTPUT,
+        "po_minimal.json": MINIMAL_OUTPUT,
+        "po_baseline_defects.json": _defective_baseline_output(),
+        "po_from_bad_source.json": _naive_bad_source_output(),
+    }
+    for name, data in json_files.items():
+        path = out_dir / name
+        path.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+    flat_path = out_dir / "po_baseline.flat"
+    flat_path.write_text(_to_flat(BASELINE_OUTPUT))
+    print(f"wrote {flat_path.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(EXAMPLES / "specs" / "850_reference_spec.xlsx")
     generate_source_files()
+    generate_output_files()
 
 
 if __name__ == "__main__":

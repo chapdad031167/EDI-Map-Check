@@ -1,0 +1,61 @@
+{
+  "order": {
+    "tx_purpose": "ORIGINAL",
+    "po_type": "STANDALONE",
+    "drop_ship_flag": "N",
+    "po_number": "PO4400022",
+    "release_number": "NONE",
+    "po_date": "2026-13-01",
+    "currency": "USD",
+    "department": "045",
+    "vendor_number": "VEND8821",
+    "promo_code": "SUMMER26",
+    "requested_delivery_date": "2026-07-01",
+    "cancel_after_date": "2026-08-01",
+    "record_type": "PO_INBOUND",
+    "allowance_code": "C310",
+    "allowance_amount": 25.0
+  },
+  "ship_to": {
+    "name": "ALPINE OUTFITTERS STORE 118",
+    "id": "0118",
+    "address1": "4501 CASCADE AVE",
+    "city": "BOULDER",
+    "state": "CO",
+    "zip": "80301"
+  },
+  "bill_to": {
+    "name": "ALPINE OUTFITTERS CORPORATE",
+    "id": "0001"
+  },
+  "lines": [
+    {
+      "line_no": 1,
+      "qty": 12,
+      "uom": "EACH",
+      "unit_price": 8.5,
+      "upc": "614141007349",
+      "description": "TRAIL MIX 12OZ"
+    },
+    {
+      "line_no": 2,
+      "qty": 6,
+      "uom": "XX",
+      "unit_price": 24.0,
+      "upc": "614141007350",
+      "description": "SPRING WATER 24PK"
+    },
+    {
+      "line_no": 3,
+      "qty": 5,
+      "uom": "DOZEN",
+      "unit_price": 12.0,
+      "upc": "614141007351",
+      "description": "GRANOLA BARS VARIETY"
+    }
+  ],
+  "summary": {
+    "line_count": 5,
+    "total_amount": 306.0
+  }
+}
