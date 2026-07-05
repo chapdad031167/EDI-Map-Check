@@ -751,6 +751,371 @@ def build_856(business_segments: list[str], control_number: str) -> str:
     return "~\n".join(segments) + "~\n"
 
 
+# --------------------------------------------------------------------------
+# Shared interchange builder for the order-cycle sets
+# --------------------------------------------------------------------------
+
+
+def build_interchange(
+    business_segments: list[str], control_number: str, st_code: str, gs_code: str
+) -> str:
+    """Wrap business segments in a full ISA/GS/ST...SE/GE/IEA interchange."""
+    icn = control_number.zfill(9)
+    segments = [
+        "ISA*00*          *00*          *ZZ*MAPCHECKSND    *ZZ*MAPCHECKRCV    "
+        f"*260715*1200*U*00401*{icn}*0*T*>",
+        f"GS*{gs_code}*MAPCHECKSND*MAPCHECKRCV*20260715*1200*{int(control_number)}*X*004010",
+        f"ST*{st_code}*{control_number.zfill(4)}",
+        *business_segments,
+        f"SE*{len(business_segments) + 2}*{control_number.zfill(4)}",
+        f"GE*1*{int(control_number)}",
+        f"IEA*1*{icn}",
+    ]
+    return "~\n".join(segments) + "~\n"
+
+
+# --------------------------------------------------------------------------
+# 855 Purchase Order Acknowledgment
+# --------------------------------------------------------------------------
+
+SPEC855_ROWS: list[tuple[str, ...]] = [
+    ("K-001", "BAK01", "", "order.purpose", "CODE_LIST", "", "", "", "",
+     "", "TX_PURPOSE", "string", "", ""),
+    ("K-002", "BAK02", "", "order.ack_type", "CODE_LIST", "", "", "", "",
+     "", "ACK_TYPE", "string", "", "Acknowledgment type."),
+    ("K-003", "BAK03", "", "order.po_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", "PO number being acknowledged."),
+    ("K-004", "BAK04", "", "order.po_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("K-005", "BAK08", "", "order.vendor_order_number", "CONDITIONAL",
+     "Map the vendor's order number when they send one.",
+     "EXISTS(BAK08)", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("K-006", "", "", "order.record_type", "CONSTANT", "", "", "", "",
+     "POA_INBOUND", "", "string", "", ""),
+    ("K-007", "N102", "N1[SE]", "vendor.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", "Selling party."),
+    ("K-008", "N104", "N1[SE]", "vendor.id", "CONDITIONAL",
+     "Map the vendor number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("K-009", "PO101", "PO1", "lines[].line_no", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("K-010", "PO102", "PO1", "lines[].qty_ordered", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Ordered quantity as echoed back."),
+    ("K-011", "PO103", "PO1", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("K-012", "PO104", "PO1", "lines[].unit_price", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2", ""),
+    ("K-013", "PO107", "PO1", "lines[].upc", "CONDITIONAL",
+     "Map the UPC only when the product ID qualifier is UP.",
+     "PO106 = 'UP'", "SOURCE", "SKIP", "", "", "string", "len:12..14", ""),
+    ("K-014", "ACK01", "PO1", "lines[].line_status", "CODE_LIST", "", "", "", "",
+     "", "ACK_STATUS", "string", "",
+     "First ACK's status; split lines reconcile via the definition rollup."),
+    ("K-015", "ACK02", "PO1", "lines[].qty_acknowledged", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "First ACK's quantity."),
+    ("K-016", "ACK03", "PO1", "lines[].ack_uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("K-017", "CTT01", "", "summary.line_count", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("K-018", "PO1", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_855_ROWS: list[tuple[str, str, str, str]] = [
+    ("TX_PURPOSE", "00", "ORIGINAL", "Original transmission"),
+    ("TX_PURPOSE", "01", "CANCELLATION", "Cancellation"),
+    ("TX_PURPOSE", "05", "REPLACE", "Replacement"),
+    ("ACK_TYPE", "AC", "ACKNOWLEDGE", "Acknowledge, no detail"),
+    ("ACK_TYPE", "AD", "ACK_WITH_DETAIL", "Acknowledge with detail, no change"),
+    ("ACK_TYPE", "AK", "ACK_WITH_CHANGE", "Acknowledge with detail and change"),
+    ("ACK_TYPE", "RD", "REJECT_WITH_DETAIL", "Reject with detail"),
+    ("ACK_TYPE", "RJ", "REJECTED", "Rejected, no detail"),
+    ("ACK_STATUS", "IA", "ACCEPTED", "Item accepted"),
+    ("ACK_STATUS", "IB", "BACKORDERED", "Item backordered"),
+    ("ACK_STATUS", "IQ", "QTY_CHANGED", "Item accepted, quantity changed"),
+    ("ACK_STATUS", "IR", "REJECTED", "Item rejected"),
+    ("ACK_STATUS", "DR", "DATE_RESCHEDULED", "Item accepted, date rescheduled"),
+    ("UOM", "EA", "EACH", "Each"),
+    ("UOM", "CA", "CASE", "Case"),
+    ("UOM", "DZ", "DOZEN", "Dozen"),
+]
+
+SPEC855_META = {
+    "Transaction Set": "855",
+    "X12 Version": "004010",
+    "Spec Name": "Synthetic retail POA - reference example",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-07-05",
+}
+
+BASELINE_855 = [
+    "BAK*00*AD*PO4400021*20260615****VN2088841",
+    "N1*SE*SUMMIT WHOLESALE FOODS*92*7731",
+    "PO1*1*12*EA*8.5**UP*614141007349",
+    "ACK*IA*12*EA",
+    "PO1*2*6*CA*24**UP*614141007350",
+    "ACK*IA*4*CA",
+    "ACK*IR*2*CA",
+    "PO1*3*5*DZ*12**UP*614141007351",
+    "ACK*IA*5*DZ",
+    "CTT*3",
+]
+
+# Deliberately defective 855. Planted defects:
+#   1. Line 2 orders 6 but the single ACK accounts for only 4 (2 vanish)
+#   2. Line 3's ACK uses unknown status code ZZ
+#   3. CTT01 says 5 lines; the file has 3
+#   4. BAK04 is not a valid date (day 35)
+#   5. ITD terms segment carries data no spec rule references
+DEFECTS_855 = [
+    "BAK*00*AD*PO4400022*20260635****VN2088842",
+    "ITD*01*3*2**30**60",
+    "N1*SE*SUMMIT WHOLESALE FOODS*92*7731",
+    "PO1*1*12*EA*8.5**UP*614141007349",
+    "ACK*IA*12*EA",
+    "PO1*2*6*CA*24**UP*614141007350",
+    "ACK*IA*4*CA",
+    "PO1*3*5*DZ*12**UP*614141007351",
+    "ACK*ZZ*5*DZ",
+    "CTT*5",
+]
+
+
+def _poa_line(
+    line_no: int, qty_ordered: int, uom: str, unit_price: float, upc: str,
+    line_status: str, qty_acknowledged: int,
+) -> dict:
+    return {
+        "line_no": line_no, "qty_ordered": qty_ordered, "uom": uom,
+        "unit_price": unit_price, "upc": upc, "line_status": line_status,
+        "qty_acknowledged": qty_acknowledged, "ack_uom": uom,
+    }
+
+
+BASELINE_855_OUTPUT: dict = {
+    "order": {
+        "purpose": "ORIGINAL",
+        "ack_type": "ACK_WITH_DETAIL",
+        "po_number": "PO4400021",
+        "po_date": "2026-06-15",
+        "vendor_order_number": "VN2088841",
+        "record_type": "POA_INBOUND",
+    },
+    "vendor": {"name": "SUMMIT WHOLESALE FOODS", "id": "7731"},
+    "lines": [
+        _poa_line(1, 12, "EACH", 8.5, "614141007349", "ACCEPTED", 12),
+        _poa_line(2, 6, "CASE", 24.0, "614141007350", "ACCEPTED", 4),
+        _poa_line(3, 5, "DOZEN", 12.0, "614141007351", "ACCEPTED", 5),
+    ],
+    "summary": {"line_count": 3},
+}
+
+DEFECTS_855_OUTPUT: dict = {
+    "order": {
+        "purpose": "ORIGINAL",
+        "ack_type": "ACK_WITH_DETAIL",
+        "po_number": "PO4400022",
+        "po_date": "2026-06-35",
+        "vendor_order_number": "VN2088842",
+        "record_type": "POA_INBOUND",
+    },
+    "vendor": {"name": "SUMMIT WHOLESALE FOODS", "id": "7731"},
+    "lines": [
+        _poa_line(1, 12, "EACH", 8.5, "614141007349", "ACCEPTED", 12),
+        _poa_line(2, 6, "CASE", 24.0, "614141007350", "ACCEPTED", 4),
+        _poa_line(3, 5, "DOZEN", 12.0, "614141007351", "ZZ", 5),
+    ],
+    "summary": {"line_count": 5},
+}
+
+
+# --------------------------------------------------------------------------
+# 810 Invoice
+# --------------------------------------------------------------------------
+
+SPEC810_ROWS: list[tuple[str, ...]] = [
+    ("V-001", "BIG01", "", "invoice.invoice_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("V-002", "BIG02", "", "invoice.invoice_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", ""),
+    ("V-003", "BIG03", "", "invoice.po_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("V-004", "BIG04", "", "invoice.po_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", ""),
+    ("V-005", "", "", "invoice.record_type", "CONSTANT", "", "", "", "",
+     "INVOICE_INBOUND", "", "string", "", ""),
+    ("V-006", "N102", "N1[RE]", "remit_to.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("V-007", "N104", "N1[RE]", "remit_to.id", "CONDITIONAL",
+     "Map the remit-to ID only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("V-008", "IT101", "IT1", "lines[].line_no", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("V-009", "IT102", "IT1", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Quantity invoiced."),
+    ("V-010", "IT103", "IT1", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("V-011", "IT104", "IT1", "lines[].unit_price", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2", ""),
+    ("V-012", "IT107", "IT1", "lines[].upc", "CONDITIONAL",
+     "Map the UPC only when the product ID qualifier is UP.",
+     "IT106 = 'UP'", "SOURCE", "SKIP", "", "", "string", "len:12..14", ""),
+    ("V-013", "PID05", "IT1", "lines[].description", "CONDITIONAL",
+     "Map the free-form description when the PID is free-form.",
+     "PID01 = 'F'", "SOURCE", "SKIP", "", "", "string", "len:1..80", ""),
+    ("V-014", "TDS01", "", "summary.invoice_total", "DIRECT", "", "", "", "",
+     "", "", "decimal", "implied:2;places:2", "TDS01 is X12 N2: implied 2 decimals."),
+    ("V-015", "SAC02", "SAC[C]", "summary.charge_code", "DIRECT", "", "", "", "",
+     "", "", "string", "len:4..4", "Summary-level charge (SAC01 = C)."),
+    ("V-016", "SAC05", "SAC[C]", "summary.charge_amount", "DIRECT", "", "", "", "",
+     "", "", "decimal", "implied:2;places:2", ""),
+    ("V-017", "SAC02", "SAC[A]", "summary.allowance_code", "DIRECT", "", "", "", "",
+     "", "", "string", "len:4..4", "Summary-level allowance (SAC01 = A)."),
+    ("V-018", "SAC05", "SAC[A]", "summary.allowance_amount", "DIRECT", "", "", "", "",
+     "", "", "decimal", "implied:2;places:2", ""),
+    ("V-019", "CTT01", "", "summary.line_count", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("V-020", "IT1", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_810_ROWS: list[tuple[str, str, str, str]] = [
+    ("UOM", "EA", "EACH", "Each"),
+    ("UOM", "CA", "CASE", "Case"),
+    ("UOM", "DZ", "DOZEN", "Dozen"),
+]
+
+SPEC810_META = {
+    "Transaction Set": "810",
+    "X12 Version": "004010",
+    "Spec Name": "Synthetic retail invoice - reference example",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-07-05",
+}
+
+# Invoice math: 12x8.50 + 6x24.00 + 5x12.00 = 306.00
+#               + 15.00 freight charge - 8.00 allowance = 313.00
+BASELINE_810 = [
+    "BIG*20260620*INV88214*20260615*PO4400021",
+    "N1*RE*SUMMIT WHOLESALE FOODS*92*7731",
+    "IT1*1*12*EA*8.5**UP*614141007349",
+    "PID*F****TRAIL MIX 12OZ",
+    "IT1*2*6*CA*24**UP*614141007350",
+    "PID*F****SPRING WATER 24PK",
+    "IT1*3*5*DZ*12**UP*614141007351",
+    "PID*F****GRANOLA BARS VARIETY",
+    "TDS*31300",
+    "SAC*C*D240***1500",
+    "SAC*A*C310***800",
+    "CTT*3",
+]
+
+# Deliberately defective 810. Planted defects:
+#   1. TDS says 321.00 — exactly the total with the 8.00 allowance missed
+#   2. Line 2 uses unknown UOM code XX
+#   3. CTT01 says 4 lines; the file has 3
+#   4. BIG01 is not a valid date (day 35)
+#   5. ITD terms segment carries data no spec rule references
+DEFECTS_810 = [
+    "BIG*20260635*INV88215*20260615*PO4400022",
+    "ITD*01*3*2**30**60",
+    "N1*RE*SUMMIT WHOLESALE FOODS*92*7731",
+    "IT1*1*12*EA*8.5**UP*614141007349",
+    "PID*F****TRAIL MIX 12OZ",
+    "IT1*2*6*XX*24**UP*614141007350",
+    "PID*F****SPRING WATER 24PK",
+    "IT1*3*5*DZ*12**UP*614141007351",
+    "PID*F****GRANOLA BARS VARIETY",
+    "TDS*32100",
+    "SAC*C*D240***1500",
+    "SAC*A*C310***800",
+    "CTT*4",
+]
+
+
+def _invoice_line(
+    line_no: int, qty: int, uom: str, unit_price: float, upc: str, description: str
+) -> dict:
+    return {
+        "line_no": line_no, "qty": qty, "uom": uom, "unit_price": unit_price,
+        "upc": upc, "description": description,
+    }
+
+
+BASELINE_810_OUTPUT: dict = {
+    "invoice": {
+        "invoice_date": "2026-06-20",
+        "invoice_number": "INV88214",
+        "po_date": "2026-06-15",
+        "po_number": "PO4400021",
+        "record_type": "INVOICE_INBOUND",
+    },
+    "remit_to": {"name": "SUMMIT WHOLESALE FOODS", "id": "7731"},
+    "lines": [
+        _invoice_line(1, 12, "EACH", 8.5, "614141007349", "TRAIL MIX 12OZ"),
+        _invoice_line(2, 6, "CASE", 24.0, "614141007350", "SPRING WATER 24PK"),
+        _invoice_line(3, 5, "DOZEN", 12.0, "614141007351", "GRANOLA BARS VARIETY"),
+    ],
+    "summary": {
+        "invoice_total": 313.0,
+        "charge_code": "D240",
+        "charge_amount": 15.0,
+        "allowance_code": "C310",
+        "allowance_amount": 8.0,
+        "line_count": 3,
+    },
+}
+
+DEFECTS_810_OUTPUT: dict = {
+    "invoice": {
+        "invoice_date": "2026-06-35",
+        "invoice_number": "INV88215",
+        "po_date": "2026-06-15",
+        "po_number": "PO4400022",
+        "record_type": "INVOICE_INBOUND",
+    },
+    "remit_to": {"name": "SUMMIT WHOLESALE FOODS", "id": "7731"},
+    "lines": [
+        _invoice_line(1, 12, "EACH", 8.5, "614141007349", "TRAIL MIX 12OZ"),
+        _invoice_line(2, 6, "XX", 24.0, "614141007350", "SPRING WATER 24PK"),
+        _invoice_line(3, 5, "DOZEN", 12.0, "614141007351", "GRANOLA BARS VARIETY"),
+    ],
+    "summary": {
+        "invoice_total": 321.0,
+        "charge_code": "D240",
+        "charge_amount": 15.0,
+        "allowance_code": "C310",
+        "allowance_amount": 8.0,
+        "line_count": 4,
+    },
+}
+
+
+def generate_order_cycle_files() -> None:
+    source_dir = EXAMPLES / "source"
+    out_dir = EXAMPLES / "output"
+    sources = {
+        "855_baseline.edi": build_interchange(BASELINE_855, "21", "855", "PR"),
+        "855_defects.edi": build_interchange(DEFECTS_855, "22", "855", "PR"),
+        "810_baseline.edi": build_interchange(BASELINE_810, "23", "810", "IN"),
+        "810_defects.edi": build_interchange(DEFECTS_810, "24", "810", "IN"),
+    }
+    for name, content in sources.items():
+        path = source_dir / name
+        path.write_text(content)
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+    outputs = {
+        "poa_baseline.json": BASELINE_855_OUTPUT,
+        "poa_defects.json": DEFECTS_855_OUTPUT,
+        "invoice_baseline.json": BASELINE_810_OUTPUT,
+        "invoice_defects.json": DEFECTS_810_OUTPUT,
+    }
+    for name, data in outputs.items():
+        path = out_dir / name
+        path.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -763,6 +1128,15 @@ def main() -> None:
         SPEC856_ROWS, CODE_LIST_856_ROWS, SPEC856_META,
     )
     generate_856_files()
+    generate_spec(
+        EXAMPLES / "specs" / "855_reference_spec.xlsx",
+        SPEC855_ROWS, CODE_LIST_855_ROWS, SPEC855_META,
+    )
+    generate_spec(
+        EXAMPLES / "specs" / "810_reference_spec.xlsx",
+        SPEC810_ROWS, CODE_LIST_810_ROWS, SPEC810_META,
+    )
+    generate_order_cycle_files()
 
 
 if __name__ == "__main__":

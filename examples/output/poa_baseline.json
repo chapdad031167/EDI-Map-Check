@@ -1,0 +1,49 @@
+{
+  "order": {
+    "purpose": "ORIGINAL",
+    "ack_type": "ACK_WITH_DETAIL",
+    "po_number": "PO4400021",
+    "po_date": "2026-06-15",
+    "vendor_order_number": "VN2088841",
+    "record_type": "POA_INBOUND"
+  },
+  "vendor": {
+    "name": "SUMMIT WHOLESALE FOODS",
+    "id": "7731"
+  },
+  "lines": [
+    {
+      "line_no": 1,
+      "qty_ordered": 12,
+      "uom": "EACH",
+      "unit_price": 8.5,
+      "upc": "614141007349",
+      "line_status": "ACCEPTED",
+      "qty_acknowledged": 12,
+      "ack_uom": "EACH"
+    },
+    {
+      "line_no": 2,
+      "qty_ordered": 6,
+      "uom": "CASE",
+      "unit_price": 24.0,
+      "upc": "614141007350",
+      "line_status": "ACCEPTED",
+      "qty_acknowledged": 4,
+      "ack_uom": "CASE"
+    },
+    {
+      "line_no": 3,
+      "qty_ordered": 5,
+      "uom": "DOZEN",
+      "unit_price": 12.0,
+      "upc": "614141007351",
+      "line_status": "ACCEPTED",
+      "qty_acknowledged": 5,
+      "ack_uom": "DOZEN"
+    }
+  ],
+  "summary": {
+    "line_count": 3
+  }
+}

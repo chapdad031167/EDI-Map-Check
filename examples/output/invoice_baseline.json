@@ -1,0 +1,47 @@
+{
+  "invoice": {
+    "invoice_date": "2026-06-20",
+    "invoice_number": "INV88214",
+    "po_date": "2026-06-15",
+    "po_number": "PO4400021",
+    "record_type": "INVOICE_INBOUND"
+  },
+  "remit_to": {
+    "name": "SUMMIT WHOLESALE FOODS",
+    "id": "7731"
+  },
+  "lines": [
+    {
+      "line_no": 1,
+      "qty": 12,
+      "uom": "EACH",
+      "unit_price": 8.5,
+      "upc": "614141007349",
+      "description": "TRAIL MIX 12OZ"
+    },
+    {
+      "line_no": 2,
+      "qty": 6,
+      "uom": "CASE",
+      "unit_price": 24.0,
+      "upc": "614141007350",
+      "description": "SPRING WATER 24PK"
+    },
+    {
+      "line_no": 3,
+      "qty": 5,
+      "uom": "DOZEN",
+      "unit_price": 12.0,
+      "upc": "614141007351",
+      "description": "GRANOLA BARS VARIETY"
+    }
+  ],
+  "summary": {
+    "invoice_total": 313.0,
+    "charge_code": "D240",
+    "charge_amount": 15.0,
+    "allowance_code": "C310",
+    "allowance_amount": 8.0,
+    "line_count": 3
+  }
+}
