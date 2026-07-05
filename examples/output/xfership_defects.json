@@ -1,0 +1,32 @@
+{
+  "transfer": {
+    "reporting_code": "F",
+    "transfer_order": "XFER7702",
+    "ship_date": "2026-07-50",
+    "ship_method": "MOTOR",
+    "scac": "RDWY",
+    "record_type": "XFER_SHIP"
+  },
+  "warehouse": {
+    "name": "CASCADE 3PL RENO",
+    "id": "W31"
+  },
+  "lines": [
+    {
+      "qty": 40,
+      "uom": "ZZ",
+      "upc": "614141007349",
+      "description": "TRAIL MIX 12OZ"
+    },
+    {
+      "qty": 24,
+      "uom": "EACH",
+      "upc": "614141007350",
+      "description": "SPRING WATER 24PK"
+    }
+  ],
+  "summary": {
+    "total_units": 70,
+    "line_count": 2
+  }
+}

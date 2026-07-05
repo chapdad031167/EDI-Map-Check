@@ -1,0 +1,41 @@
+{
+  "advice": {
+    "reporting_code": "F",
+    "order_number": "ORD8801",
+    "ship_date": "2026-07-23",
+    "ship_method": "MOTOR",
+    "scac": "RDWY",
+    "record_type": "SHIP_ADVICE"
+  },
+  "ship_to": {
+    "name": "ALPINE OUTFITTERS STORE 118",
+    "id": "0118"
+  },
+  "lines": [
+    {
+      "seq": 1,
+      "ship_status": "COMPLETE",
+      "qty_ordered": 24,
+      "qty_shipped": 24,
+      "uom": "EACH",
+      "upc": "614141007349",
+      "description": "TRAIL MIX 12OZ"
+    },
+    {
+      "seq": 2,
+      "ship_status": "PARTIAL",
+      "qty_ordered": 60,
+      "qty_shipped": 55,
+      "qty_difference": 5,
+      "uom": "EACH",
+      "upc": "614141007351",
+      "description": "GRANOLA BARS VARIETY"
+    }
+  ],
+  "summary": {
+    "total_shipped": 79,
+    "line_count": 2,
+    "total_weight": 310,
+    "weight_uom": "POUNDS"
+  }
+}
