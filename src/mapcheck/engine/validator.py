@@ -11,6 +11,7 @@ category 7).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from mapcheck.engine.formats import (
@@ -31,7 +32,8 @@ from mapcheck.spec.model import (
     RuleType,
     split_source_field,
 )
-from mapcheck.x12.model import Scope, Segment, Transaction850
+from mapcheck.transactions.schema import Operand
+from mapcheck.x12.model import Scope, Segment, TransactionDocument
 
 #: Root-cause category for a wrong value, by rule type.
 _MISMATCH_CATEGORY = {
@@ -54,7 +56,7 @@ class _Expected:
 
 def validate(
     spec: MappingSpec,
-    tx: Transaction850,
+    tx: TransactionDocument,
     output: CanonicalOutput,
     source_path: str = "",
 ) -> RunResult:
@@ -64,6 +66,8 @@ def validate(
         source_path=source_path,
         output_path=output.source_path,
         spec_name=spec.meta.get("Spec Name"),
+        transaction_set=tx.definition.set_code,
+        transaction_name=tx.definition.name,
     )
 
     for note in tx.control_notes:
@@ -75,6 +79,15 @@ def validate(
                 message=f"interchange control: {note}",
             )
         )
+    for note in tx.definition_notes:
+        result.findings.append(
+            Finding(
+                status=Status.WARNING,
+                category=Category.SOURCE_DATA,
+                source_ref="(structure)",
+                message=f"transaction structure: {note}",
+            )
+        )
 
     for rule in spec.rules:
         if rule.is_per_line:
@@ -83,23 +96,47 @@ def validate(
             result.findings.append(_evaluate_in_scope(rule, spec, tx, output, None))
 
     _check_line_counts(tx, output, result)
+    _check_reconciliation(tx, result)
     _check_unmapped_source(spec, tx, result)
     _check_unmapped_target(spec, output, result)
     return result
 
 
-def validate_files(spec_path: str, source_path: str, output_path: str) -> RunResult:
+def validate_files(
+    spec_path: str,
+    source_path: str,
+    output_path: str,
+    transaction: str | None = None,
+) -> RunResult:
     """Load the three artifacts and validate. Convenience for CLI/UI callers.
 
+    The transaction set is auto-detected from the source file's ST01 unless
+    ``transaction`` forces a specific registered definition. The spec's Meta
+    ``Transaction Set`` must agree with the source file.
+
     Raises ``SpecLoadError``, ``X12ParseError``, or ``OutputLoadError`` when
-    an input cannot be loaded.
+    an input cannot be loaded or the spec and source disagree.
     """
     from mapcheck.output.adapter import load_output
-    from mapcheck.spec.parser import load_spec
-    from mapcheck.x12.parser import parse_850
+    from mapcheck.spec.parser import SpecLoadError, load_spec
+    from mapcheck.transactions.registry import UnknownTransactionError, default_registry
+    from mapcheck.x12.parser import X12ParseError, parse_transaction
 
     spec = load_spec(spec_path)
-    tx = parse_850(source_path)
+    definition = None
+    if transaction is not None:
+        try:
+            definition = default_registry.get(transaction)
+        except UnknownTransactionError as exc:
+            raise X12ParseError(str(exc.args[0])) from exc
+    tx = parse_transaction(source_path, definition=definition)
+    if spec.transaction_set and spec.transaction_set != tx.definition.set_code:
+        raise SpecLoadError(
+            [
+                f"spec is for transaction set {spec.transaction_set} but the source "
+                f"file is a {tx.definition.set_code} ({tx.definition.name})"
+            ]
+        )
     output = load_output(output_path)
     return validate(spec, tx, output, source_path=str(source_path))
 
@@ -110,11 +147,13 @@ def validate_files(spec_path: str, source_path: str, output_path: str) -> RunRes
 
 
 def _evaluate_per_line(
-    rule: MappingRule, spec: MappingSpec, tx: Transaction850, output: CanonicalOutput
+    rule: MappingRule, spec: MappingSpec, tx: TransactionDocument, output: CanonicalOutput
 ) -> list[Finding]:
-    """Evaluate a lines[] rule once per PO1 loop / output line pair."""
+    """Evaluate a lines[] rule once per line-loop / output line pair."""
     assert rule.loop_context is not None
-    if rule.loop_context.segment_id != "PO1":
+    pairing = tx.definition.output_pairing
+    if pairing is None or rule.loop_context.segment_id != pairing.loop:
+        supported = pairing.loop if pairing else "(none declared)"
         return [
             Finding(
                 status=Status.NOT_TESTED,
@@ -123,15 +162,16 @@ def _evaluate_per_line(
                 source_ref=rule.source_ref(),
                 target=rule.target_field,
                 message=(
-                    f"repeating loop {rule.loop_context.segment_id!r} is not supported "
-                    "for per-line rules (MVP pairs lines[] with the PO1 loop)"
+                    f"repeating loop {rule.loop_context.segment_id!r} is not paired "
+                    f"with {rule.target_field.split('[')[0]}[] targets — the "
+                    f"{tx.definition.set_code} definition pairs lines[] with {supported}"
                 ),
             )
         ]
 
     scopes = tx.scopes(rule.loop_context)
     findings: list[Finding] = []
-    total = max(len(scopes), output.line_count())
+    total = max(len(scopes), output.line_count(pairing.list_path))
     for index in range(total):
         target = rule.target_field.replace("[]", f"[{index}]")
         actual = output.get(rule.target_field, line_index=index)
@@ -143,11 +183,11 @@ def _evaluate_per_line(
                         category=Category.COUNT_MISMATCH,
                         row_id=rule.row_id,
                         sheet_row=rule.sheet_row,
-                        source_ref=f"PO1 #{index + 1} (absent)",
+                        source_ref=f"{pairing.loop} #{index + 1} (absent)",
                         target=target,
                         actual=display(actual),
                         message=(
-                            f"output line {index + 1} has no matching PO1 loop "
+                            f"output line {index + 1} has no matching {pairing.loop} loop "
                             f"in the source (source has {len(scopes)})"
                         ),
                     )
@@ -162,7 +202,7 @@ def _evaluate_per_line(
 def _evaluate_in_scope(
     rule: MappingRule,
     spec: MappingSpec,
-    tx: Transaction850,
+    tx: TransactionDocument,
     output: CanonicalOutput,
     line_index: int | None,
     scope: Scope | None = None,
@@ -181,10 +221,11 @@ def _evaluate_in_scope(
         if line_index is None
         else rule.target_field.replace("[]", f"[{line_index}]")
     )
+    line_loop = tx.line_loop_id or "line"
     source_ref = (
         rule.source_ref()
         if line_index is None
-        else f"PO1 #{line_index + 1} {rule.source_field or ''}".strip()
+        else f"{line_loop} #{line_index + 1} {rule.source_field or ''}".strip()
     )
 
     def finding(
@@ -325,7 +366,7 @@ def _why(note: str) -> str:
 def _expected_for(
     rule: MappingRule,
     spec: MappingSpec,
-    tx: Transaction850,
+    tx: TransactionDocument,
     scope: Scope | None,
     fmt: FormatSpec,
 ) -> _Expected:
@@ -454,27 +495,90 @@ def _evaluate_condition(condition: Condition, scope: Scope | None) -> bool:
 # --------------------------------------------------------------------------
 
 
-def _check_line_counts(tx: Transaction850, output: CanonicalOutput, result: RunResult) -> None:
-    source_count = len(tx.po1_loops)
-    output_count = output.line_count()
+def _check_line_counts(tx: TransactionDocument, output: CanonicalOutput, result: RunResult) -> None:
+    pairing = tx.definition.output_pairing
+    if pairing is None:
+        return
+    source_count = len(tx.loops(pairing.loop))
+    output_count = output.line_count(pairing.list_path)
     if source_count != output_count:
         result.findings.append(
             Finding(
                 status=Status.FAIL,
                 category=Category.COUNT_MISMATCH,
-                source_ref="PO1 loops",
-                target="lines[]",
+                source_ref=f"{pairing.loop} loops",
+                target=f"{pairing.list_path}[]",
                 expected=str(source_count),
                 actual=str(output_count),
                 message=(
-                    f"source has {source_count} PO1 loop(s) but the output has "
+                    f"source has {source_count} {pairing.loop} loop(s) but the output has "
                     f"{output_count} line(s)"
                 ),
             )
         )
 
 
-def _referenced_elements(spec: MappingSpec, tx: Transaction850) -> set[tuple[int, int]]:
+def _resolve_operand(operand: Operand, tx: TransactionDocument) -> tuple[Any, str] | None:
+    """Resolve a reconciliation operand to ``(comparable value, display)``.
+
+    Returns None when the operand cannot be evaluated (element absent).
+    """
+    if operand.count is not None:
+        count = len(tx.loops(operand.count))
+        return count, f"count({operand.count})={count}"
+    assert operand.value is not None
+    seg_id, element = split_source_field(operand.value)
+    raw = tx.flat_scope().value(seg_id, element)
+    if raw is None:
+        return None
+    try:
+        number = Decimal(raw)
+    except InvalidOperation:
+        return raw, f"{operand.value}={raw!r}"
+    if operand.implied is not None:
+        number = number.scaleb(-operand.implied)
+    return number, f"{operand.value}={display(number)}"
+
+
+def _check_reconciliation(tx: TransactionDocument, result: RunResult) -> None:
+    """Run the definition's declarative source-side reconciliation rules.
+
+    Rules are silent when they pass or cannot be evaluated; a mismatch
+    emits a finding at the rule's declared severity.
+    """
+    for rule in tx.definition.reconciliation:
+        if rule.when_exists is not None:
+            seg_id, element = split_source_field(rule.when_exists)
+            if tx.flat_scope().value(seg_id, element) is None:
+                continue
+        left = _resolve_operand(rule.left, tx)
+        right = _resolve_operand(rule.right, tx)
+        if left is None or right is None:
+            continue
+        left_value, left_text = left
+        right_value, right_text = right
+        if isinstance(left_value, int):
+            left_value = Decimal(left_value)
+        if isinstance(right_value, int):
+            right_value = Decimal(right_value)
+        if left_value != right_value:
+            result.findings.append(
+                Finding(
+                    status=Status.FAIL if rule.severity == "error" else Status.WARNING,
+                    category=Category.COUNT_MISMATCH,
+                    source_ref=f"recon:{rule.id}",
+                    expected=left_text,
+                    actual=right_text,
+                    message=(
+                        (rule.description + " — " if rule.description else "")
+                        + f"source reconciliation failed: {left_text} != {right_text}"
+                    ),
+                )
+            )
+
+
+
+def _referenced_elements(spec: MappingSpec, tx: TransactionDocument) -> set[tuple[int, int]]:
     """(segment identity, element index) pairs any rule reads or qualifies on."""
     referenced: set[tuple[int, int]] = set()
 
@@ -496,7 +600,7 @@ def _referenced_elements(spec: MappingSpec, tx: Transaction850) -> set[tuple[int
     return referenced
 
 
-def _check_unmapped_source(spec: MappingSpec, tx: Transaction850, result: RunResult) -> None:
+def _check_unmapped_source(spec: MappingSpec, tx: TransactionDocument, result: RunResult) -> None:
     referenced = _referenced_elements(spec, tx)
     for label, segment in tx.business_segments():
         unreferenced = [

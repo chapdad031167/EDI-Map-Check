@@ -64,6 +64,8 @@ class RunResult:
     source_path: str
     output_path: str
     spec_name: str | None = None
+    transaction_set: str | None = None  # e.g. "850"
+    transaction_name: str | None = None  # e.g. "Purchase Order"
     findings: list[Finding] = field(default_factory=list)
     run_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
