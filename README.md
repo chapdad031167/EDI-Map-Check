@@ -104,8 +104,8 @@ mapcheck validate --help          # all options (--transaction, --verbose, --db,
 | Set | Name | Status | Notes |
 |-----|------|--------|-------|
 | 850 | Purchase Order | ✅ Supported | Reference spec + full synthetic test set |
-| 856 | Ship Notice/Manifest (ASN) | 🔜 Next | HL hierarchy support designed into the schema |
-| 855 / 810 | PO Ack / Invoice | Planned | Order cycle |
+| 856 | Ship Notice/Manifest (ASN) | ✅ Supported | Full HL hierarchy: standard, pick-and-pack, and palletized structures; orphan/nesting integrity; SN1 rollup reconciliation |
+| 855 / 810 | PO Ack / Invoice | 🔜 Next | Order cycle |
 | 940 / 945 / 943 / 944 / 947 | Warehouse suite | Planned | 3PL flows |
 | 846 / 812 / 867 | Inventory & product movement | Planned | |
 | 844 / 845 / 849 / 854 | Pharma contract & chargeback | Planned | Built from public X12 documentation |
@@ -114,9 +114,19 @@ mapcheck validate --help          # all options (--transaction, --verbose, --db,
 Each transaction is a YAML file under `src/mapcheck/transactions/definitions/`
 declaring its areas, segment dictionary, loops (including HL-style
 parent-child trees), envelope expectations, and declarative reconciliation
-rules (e.g. *CTT01 must equal the PO1 loop count*). The parser and engine are
-generic; adding a set means adding a definition file, a reference spec, and
-synthetic test data — no parser code.
+rules (e.g. *CTT01 must equal the PO1 loop count*, *CTT02 must equal the sum
+of item SN1 quantities*). The parser and engine are generic; adding a set
+means adding a definition file, a reference spec, and synthetic test data —
+no parser code.
+
+**856 HL addressing:** an item-level spec rule (Loop Context `HL[I]`) reads
+its own segments first, then its ancestors' — so `PRF01` resolves from the
+item's parent order and `MAN02` from its carton, with no extra spec syntax.
+Orphaned HL02 references, unknown level codes, and illegal nesting (an item
+directly under a shipment) are structural failures. Assumption noted for the
+reference spec: shipment-level TD1 lading quantity reconciles against the
+pack-loop count (cartons), while CTT02 covers the unit rollup — TD102 with a
+carton packaging code counts cartons, not units.
 
 ## The spec template
 

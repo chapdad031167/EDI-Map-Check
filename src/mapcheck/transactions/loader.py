@@ -161,15 +161,41 @@ def _parse_loop(node: Any, path: str, ctx: _Ctx) -> LoopDef | None:
 
 def _parse_operand(node: Any, path: str, ctx: _Ctx) -> Operand:
     if not isinstance(node, dict):
-        ctx.err(path, "expected a mapping like {value: CTT01} or {count: PO1}")
+        ctx.err(
+            path,
+            "expected a mapping like {value: CTT01}, {count: PO1}, "
+            "or {sum: {loop: 'HL[I]', value: SN102}}",
+        )
         return Operand()
-    keys = {k for k in ("value", "count") if k in node}
+    keys = {k for k in ("value", "count", "sum") if k in node}
     if len(keys) != 1:
-        ctx.err(path, "exactly one of 'value' or 'count' is required")
+        ctx.err(path, "exactly one of 'value', 'count', or 'sum' is required")
         return Operand()
+    sum_loop = sum_value = None
+    if "sum" in node:
+        sum_node = node["sum"]
+        if (
+            not isinstance(sum_node, dict)
+            or not isinstance(sum_node.get("loop"), str)
+            or not isinstance(sum_node.get("value"), str)
+        ):
+            ctx.err(f"{path}.sum", "expected {loop: 'HL[I]', value: SN102}")
+        else:
+            sum_loop = sum_node["loop"].upper()
+            sum_value = sum_node["value"].upper()
+    context = node.get("context")
+    if context is not None and not isinstance(context, str):
+        ctx.err(f"{path}.context", "expected a Loop Context string like HL[S]")
+        context = None
+    if context is not None and "value" not in node:
+        ctx.err(f"{path}.context", "context only applies to value operands")
+        context = None
     return Operand(
         value=str(node["value"]).upper() if "value" in node else None,
+        context=context.upper() if context else None,
         count=str(node["count"]).upper() if "count" in node else None,
+        sum_loop=sum_loop,
+        sum_value=sum_value,
         implied=ctx.int_at(node, path, "implied", default=None),
     )
 
@@ -189,18 +215,25 @@ def _parse_recon(node: Any, index: int, ctx: _Ctx) -> ReconRule | None:
     if severity not in ("warning", "error"):
         ctx.err(f"{path}.severity", f"expected 'warning' or 'error', got {severity!r}")
     when = node.get("when")
-    when_exists = None
+    when_exists = when_context = None
     if when is not None:
         if isinstance(when, dict) and isinstance(when.get("exists"), str):
             when_exists = when["exists"].upper()
+            raw_context = when.get("context")
+            if raw_context is not None:
+                if isinstance(raw_context, str):
+                    when_context = raw_context.upper()
+                else:
+                    ctx.err(f"{path}.when.context", "expected a Loop Context string")
         else:
-            ctx.err(f"{path}.when", "expected {exists: SEGnn}")
+            ctx.err(f"{path}.when", "expected {exists: SEGnn} with optional context")
     return ReconRule(
         id=rule_id,
         left=_parse_operand(node.get("left"), f"{path}.left", ctx),
         right=_parse_operand(node.get("right"), f"{path}.right", ctx),
         check="equals",
         when_exists=when_exists,
+        when_context=when_context,
         severity=severity if severity in ("warning", "error") else "warning",
         description=node.get("description", "") or "",
     )
@@ -293,10 +326,24 @@ def parse_definition(data: Any, source: str) -> TransactionDefinition:
         source=source,
     )
 
-    if pairing and definition.loop(pairing.loop) is None:
+    def _base_loop(reference: str) -> str:
+        return reference.split("[", 1)[0]
+
+    if pairing and definition.loop(_base_loop(pairing.loop)) is None:
         raise DefinitionError(
             source, [f"output_pairing.loop {pairing.loop!r} is not a declared loop"]
         )
+    for rule in recon:
+        for operand in (rule.left, rule.right):
+            for reference in (operand.count, operand.sum_loop):
+                if reference and definition.loop(_base_loop(reference)) is None:
+                    raise DefinitionError(
+                        source,
+                        [
+                            f"reconciliation rule {rule.id!r} references "
+                            f"undeclared loop {reference!r}"
+                        ],
+                    )
     trigger_seen: dict[str, str] = {}
     for loop in definition.all_loops():
         if loop.id in trigger_seen:
