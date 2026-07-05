@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Run tests
+        run: pytest
+      - name: Validate example set end-to-end
+        run: |
+          mapcheck validate \
+            --spec examples/specs/850_reference_spec.xlsx \
+            --source examples/source/850_baseline.edi \
+            --output examples/output/po_baseline.json \
+            --no-history --no-color
+          # the defective output must FAIL (exit 1)
+          if mapcheck validate \
+            --spec examples/specs/850_reference_spec.xlsx \
+            --source examples/source/850_baseline.edi \
+            --output examples/output/po_baseline_defects.json \
+            --no-history --no-color; then
+            echo "expected FAIL exit code for defective output" && exit 1
+          fi
