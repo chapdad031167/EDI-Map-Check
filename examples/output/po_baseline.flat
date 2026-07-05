@@ -1,0 +1,8 @@
+# EDI MapCheck keyed flat output
+H|tx_purpose=ORIGINAL|po_type=STANDALONE|drop_ship_flag=N|po_number=PO4400021|release_number=NONE|po_date=2026-06-15|currency=USD|department=045|vendor_number=VEND8821|promo_code=SUMMER26|requested_delivery_date=2026-07-01|cancel_after_date=2026-08-01|record_type=PO_INBOUND|allowance_code=C310|allowance_amount=25.00
+A|role=ship_to|name=ALPINE OUTFITTERS STORE 118|id=0118|address1=4501 CASCADE AVE|city=BOULDER|state=CO|zip=80301
+A|role=bill_to|name=ALPINE OUTFITTERS CORPORATE|id=0001
+D|line_no=1|qty=12|uom=EACH|unit_price=8.50|upc=614141007349|description=TRAIL MIX 12OZ
+D|line_no=2|qty=6|uom=CASE|unit_price=24.00|upc=614141007350|description=SPRING WATER 24PK
+D|line_no=3|qty=5|uom=DOZEN|unit_price=12.00|upc=614141007351|description=GRANOLA BARS VARIETY
+S|line_count=3|total_amount=306.00

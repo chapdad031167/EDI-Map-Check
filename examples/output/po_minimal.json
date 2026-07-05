@@ -1,0 +1,28 @@
+{
+  "order": {
+    "tx_purpose": "ORIGINAL",
+    "po_type": "NEW_ORDER",
+    "drop_ship_flag": "N",
+    "po_number": "PO7700003",
+    "release_number": "NONE",
+    "po_date": "2026-06-20",
+    "record_type": "PO_INBOUND"
+  },
+  "ship_to": {
+    "name": "RIVERBEND MARKET",
+    "id": "0007"
+  },
+  "lines": [
+    {
+      "line_no": 1,
+      "qty": 100,
+      "uom": "EACH",
+      "unit_price": 0.99,
+      "upc": "614141007352",
+      "description": "NO2 PENCILS 10PK"
+    }
+  ],
+  "summary": {
+    "line_count": 1
+  }
+}
