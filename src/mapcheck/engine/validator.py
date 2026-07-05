@@ -26,6 +26,7 @@ from mapcheck.engine.results import Category, Finding, RunResult, Status
 from mapcheck.output.adapter import MISSING, CanonicalOutput
 from mapcheck.spec.model import (
     Condition,
+    LoopContext,
     MappingRule,
     MappingSpec,
     OutcomeKind,
@@ -86,6 +87,15 @@ def validate(
                 category=Category.SOURCE_DATA,
                 source_ref="(structure)",
                 message=f"transaction structure: {note}",
+            )
+        )
+    for error in tx.hierarchy_errors:
+        result.findings.append(
+            Finding(
+                status=Status.FAIL,
+                category=Category.SOURCE_DATA,
+                source_ref="(hierarchy)",
+                message=f"hierarchical structure defect: {error}",
             )
         )
 
@@ -152,7 +162,8 @@ def _evaluate_per_line(
     """Evaluate a lines[] rule once per line-loop / output line pair."""
     assert rule.loop_context is not None
     pairing = tx.definition.output_pairing
-    if pairing is None or rule.loop_context.segment_id != pairing.loop:
+    pairing_context = LoopContext.parse(pairing.loop) if pairing else None
+    if pairing_context is None or rule.loop_context != pairing_context:
         supported = pairing.loop if pairing else "(none declared)"
         return [
             Finding(
@@ -162,7 +173,7 @@ def _evaluate_per_line(
                 source_ref=rule.source_ref(),
                 target=rule.target_field,
                 message=(
-                    f"repeating loop {rule.loop_context.segment_id!r} is not paired "
+                    f"loop context {rule.loop_context} is not paired "
                     f"with {rule.target_field.split('[')[0]}[] targets — the "
                     f"{tx.definition.set_code} definition pairs lines[] with {supported}"
                 ),
@@ -499,7 +510,7 @@ def _check_line_counts(tx: TransactionDocument, output: CanonicalOutput, result:
     pairing = tx.definition.output_pairing
     if pairing is None:
         return
-    source_count = len(tx.loops(pairing.loop))
+    source_count = len(tx.scopes(LoopContext.parse(pairing.loop)))
     output_count = output.line_count(pairing.list_path)
     if source_count != output_count:
         result.findings.append(
@@ -518,26 +529,66 @@ def _check_line_counts(tx: TransactionDocument, output: CanonicalOutput, result:
         )
 
 
+def _loop_occurrences(reference: str, tx: TransactionDocument) -> list[Scope]:
+    """Occurrences a loop reference (``PO1``, ``HL``, ``HL[I]``) selects.
+
+    Unlike :meth:`TransactionDocument.scopes`, hierarchical occurrences are
+    NOT ancestor-extended here — sums and counts must not double-read
+    parent data.
+    """
+    context = LoopContext.parse(reference)
+    return [
+        Scope(label=reference, segments=tuple(loop.segments))
+        for loop in tx.loops(context.segment_id)
+        if context.qualifier is None or loop.qualifier == context.qualifier
+    ]
+
+
+def _scoped_value(field: str, context: str | None, tx: TransactionDocument) -> str | None:
+    """Read ``SEGnn`` from the flat scope, or from a Loop Context string."""
+    seg_id, element = split_source_field(field)
+    if context is None:
+        return tx.flat_scope().value(seg_id, element)
+    scopes = tx.scopes(LoopContext.parse(context))
+    return scopes[0].value(seg_id, element) if scopes else None
+
+
 def _resolve_operand(operand: Operand, tx: TransactionDocument) -> tuple[Any, str] | None:
     """Resolve a reconciliation operand to ``(comparable value, display)``.
 
     Returns None when the operand cannot be evaluated (element absent).
     """
     if operand.count is not None:
-        count = len(tx.loops(operand.count))
+        count = len(_loop_occurrences(operand.count, tx))
         return count, f"count({operand.count})={count}"
+    if operand.sum_loop is not None:
+        assert operand.sum_value is not None
+        seg_id, element = split_source_field(operand.sum_value)
+        total = Decimal(0)
+        for scope in _loop_occurrences(operand.sum_loop, tx):
+            raw = scope.value(seg_id, element)
+            if raw is None:
+                continue  # a missing element contributes nothing — and skews the sum
+            try:
+                number = Decimal(raw)
+            except InvalidOperation:
+                continue
+            if operand.implied is not None:
+                number = number.scaleb(-operand.implied)
+            total += number
+        return total, f"sum({operand.sum_value} over {operand.sum_loop})={display(total)}"
     assert operand.value is not None
-    seg_id, element = split_source_field(operand.value)
-    raw = tx.flat_scope().value(seg_id, element)
+    raw = _scoped_value(operand.value, operand.context, tx)
     if raw is None:
         return None
+    label = f"{operand.value}@{operand.context}" if operand.context else operand.value
     try:
         number = Decimal(raw)
     except InvalidOperation:
-        return raw, f"{operand.value}={raw!r}"
+        return raw, f"{label}={raw!r}"
     if operand.implied is not None:
         number = number.scaleb(-operand.implied)
-    return number, f"{operand.value}={display(number)}"
+    return number, f"{label}={display(number)}"
 
 
 def _check_reconciliation(tx: TransactionDocument, result: RunResult) -> None:
@@ -548,8 +599,7 @@ def _check_reconciliation(tx: TransactionDocument, result: RunResult) -> None:
     """
     for rule in tx.definition.reconciliation:
         if rule.when_exists is not None:
-            seg_id, element = split_source_field(rule.when_exists)
-            if tx.flat_scope().value(seg_id, element) is None:
+            if _scoped_value(rule.when_exists, rule.when_context, tx) is None:
                 continue
         left = _resolve_operand(rule.left, tx)
         right = _resolve_operand(rule.right, tx)
@@ -586,10 +636,24 @@ def _referenced_elements(spec: MappingSpec, tx: TransactionDocument) -> set[tupl
         if segment is not None:
             referenced.add((id(segment), element))
 
+    # Hierarchical control elements (HL01/HL02/HL03) are read by the tree
+    # machinery itself; no spec rule needs to reference them.
+    for loop_def in tx.definition.all_loops():
+        if loop_def.hierarchy is None:
+            continue
+        for occurrence in tx.loops(loop_def.id):
+            for element in (
+                loop_def.hierarchy.id_element,
+                loop_def.hierarchy.parent_element,
+                loop_def.hierarchy.level_element,
+            ):
+                mark(occurrence.trigger, element)
+
     for rule in spec.rules:
         for scope in tx.scopes(rule.loop_context):
             if rule.loop_context is not None and rule.loop_context.qualifier is not None:
-                mark(scope.segments[0], 1)
+                context_loop = tx.definition.loop(rule.loop_context.segment_id)
+                mark(scope.segments[0], context_loop.qualifier if context_loop else 1)
             if rule.source_field and rule.rule_type is not RuleType.LOOP_COUNT:
                 seg_id, element = split_source_field(rule.source_field)
                 mark(scope.first(seg_id), element)
