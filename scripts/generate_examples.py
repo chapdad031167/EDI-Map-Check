@@ -2003,6 +2003,470 @@ def generate_inventory_files() -> None:
             print(f"wrote {path.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# Pharma contract & chargeback set: 844 / 845 / 849 / 854
+# --------------------------------------------------------------------------
+
+_PHARMA_PURPOSE = [
+    ("TX_PURPOSE", "00", "ORIGINAL", "Original transmission"),
+    ("TX_PURPOSE", "01", "CANCELLATION", "Cancellation"),
+    ("TX_PURPOSE", "05", "REPLACE", "Replacement"),
+]
+
+SPEC844_ROWS: list[tuple[str, ...]] = [
+    ("G-001", "BGN01", "", "request.purpose", "CODE_LIST", "", "", "", "",
+     "", "TX_PURPOSE", "string", "", ""),
+    ("G-002", "BGN02", "", "request.request_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..30", "Chargeback request number."),
+    ("G-003", "BGN03", "", "request.request_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("G-004", "REF02", "REF[CT]", "request.contract_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..30", "The contract the chargeback claims against."),
+    ("G-005", "AMT02", "AMT[TT]", "request.total_debit", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2", "Total debit requested."),
+    ("G-006", "", "", "request.record_type", "CONSTANT", "", "", "", "",
+     "CHARGEBACK_REQUEST", "", "string", "", ""),
+    ("G-007", "N102", "N1[MF]", "manufacturer.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("G-008", "N104", "N1[MF]", "manufacturer.id", "CONDITIONAL",
+     "Map the manufacturer number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("G-009", "N102", "N1[DS]", "distributor.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("G-010", "N104", "N1[DS]", "distributor.id", "CONDITIONAL",
+     "Map the distributor number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("G-011", "LIN03", "LIN", "lines[].ndc", "CONDITIONAL",
+     "Map the NDC only when the product ID qualifier is ND.",
+     "LIN02 = 'ND'", "SOURCE", "SKIP", "", "", "string", "len:10..11", ""),
+    ("G-012", "QTY02", "LIN>QTY[38]", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Units the chargeback covers."),
+    ("G-013", "QTY03", "LIN>QTY[38]", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("G-014", "CTP03", "LIN>CTP[WS]", "lines[].wac", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2",
+     "Acquisition (WAC) price; class-of-trade WS is the synthetic discriminator."),
+    ("G-015", "CTP03", "LIN>CTP[CT]", "lines[].contract_price", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2", "Contract price; class-of-trade CT."),
+    ("G-016", "AMT02", "LIN>AMT[1]", "lines[].debit_amount", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2",
+     "Line debit. (wac - contract) x qty arithmetic is a backlog check."),
+    ("G-017", "LIN", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_844_ROWS = [*_PHARMA_PURPOSE, *_WH_UOM]
+
+# Chargeback math: (5.85-4.10)x40 = 70.00; (12.30-9.80)x100 = 250.00; total 320.00
+BASELINE_844 = [
+    "BGN*00*CBR20260815001*20260815",
+    "REF*CT*CTR-2026-0142",
+    "AMT*TT*320.00",
+    "N1*MF*HELVETICA PHARMA*92*M501",
+    "N1*DS*GRANITE PHARMA DISTRIBUTION*92*D208",
+    "LIN**ND*00777310502",
+    "QTY*38*40*EA",
+    "CTP*WS**5.85",
+    "CTP*CT**4.10",
+    "AMT*1*70.00",
+    "LIN**ND*00777310617",
+    "QTY*38*100*EA",
+    "CTP*WS**12.30",
+    "CTP*CT**9.80",
+    "AMT*1*250.00",
+]
+
+# Defects: the request total claims 350.00 against lines summing 320.00,
+# the contract number REF is missing entirely (while the naive output
+# still carries a stale one), unknown UOM, invalid request date, and an
+# unreferenced PER contact.
+DEFECTS_844 = [
+    "BGN*00*CBR20260815002*20260845",
+    "AMT*TT*350.00",
+    "PER*IC*JANE DOE",
+    "N1*MF*HELVETICA PHARMA*92*M501",
+    "N1*DS*GRANITE PHARMA DISTRIBUTION*92*D208",
+    "LIN**ND*00777310502",
+    "QTY*38*40*ZZ",
+    "CTP*WS**5.85",
+    "CTP*CT**4.10",
+    "AMT*1*70.00",
+    "LIN**ND*00777310617",
+    "QTY*38*100*EA",
+    "CTP*WS**12.30",
+    "CTP*CT**9.80",
+    "AMT*1*250.00",
+]
+
+
+def _cbk_line(ndc: str, qty: int, wac: float, contract: float, debit: float) -> dict:
+    return {"ndc": ndc, "qty": qty, "uom": "EACH", "wac": wac,
+            "contract_price": contract, "debit_amount": debit}
+
+
+BASELINE_844_OUTPUT: dict = {
+    "request": {"purpose": "ORIGINAL", "request_number": "CBR20260815001",
+                "request_date": "2026-08-15", "contract_number": "CTR-2026-0142",
+                "total_debit": 320.0, "record_type": "CHARGEBACK_REQUEST"},
+    "manufacturer": {"name": "HELVETICA PHARMA", "id": "M501"},
+    "distributor": {"name": "GRANITE PHARMA DISTRIBUTION", "id": "D208"},
+    "lines": [
+        _cbk_line("00777310502", 40, 5.85, 4.10, 70.0),
+        _cbk_line("00777310617", 100, 12.30, 9.80, 250.0),
+    ],
+    "summary": {"line_count": 2},
+}
+
+DEFECTS_844_OUTPUT: dict = json.loads(json.dumps(BASELINE_844_OUTPUT))
+DEFECTS_844_OUTPUT["request"].update(
+    {"request_number": "CBR20260815002", "request_date": "2026-08-45",
+     "total_debit": 350.0}
+)  # contract_number kept although the source never sent one -> unexpected
+DEFECTS_844_OUTPUT["lines"][0]["uom"] = "ZZ"
+
+SPEC845_ROWS: list[tuple[str, ...]] = [
+    ("H-001", "BGN01", "", "auth.purpose", "CODE_LIST", "", "", "", "",
+     "", "TX_PURPOSE", "string", "", ""),
+    ("H-002", "BGN02", "", "auth.authorization_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..30", ""),
+    ("H-003", "BGN03", "", "auth.authorization_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("H-004", "REF02", "REF[CT]", "auth.contract_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..30", ""),
+    ("H-005", "DTM02", "DTM[007]", "auth.effective_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", "Start of the authorization window."),
+    ("H-006", "DTM02", "DTM[036]", "auth.expiration_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", "End of the authorization window."),
+    ("H-007", "", "", "auth.record_type", "CONSTANT", "", "", "", "",
+     "PRICE_AUTH", "", "string", "", ""),
+    ("H-008", "N102", "N1[MF]", "manufacturer.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("H-009", "N104", "N1[MF]", "manufacturer.id", "CONDITIONAL",
+     "Map the manufacturer number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("H-010", "N102", "N1[DS]", "distributor.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("H-011", "N104", "N1[DS]", "distributor.id", "CONDITIONAL",
+     "Map the distributor number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("H-012", "LIN03", "LIN", "lines[].ndc", "CONDITIONAL",
+     "Map the NDC only when the product ID qualifier is ND.",
+     "LIN02 = 'ND'", "SOURCE", "SKIP", "", "", "string", "len:10..11", ""),
+    ("H-013", "CTP03", "LIN>CTP[CT]", "lines[].authorized_price", "DIRECT",
+     "", "", "", "", "", "", "decimal", "places:2", ""),
+    ("H-014", "LIN", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_845_ROWS = [*_PHARMA_PURPOSE]
+
+BASELINE_845 = [
+    "BGN*00*PA20260701088*20260701",
+    "REF*CT*CTR-2026-0142",
+    "DTM*007*20260701",
+    "DTM*036*20261231",
+    "N1*MF*HELVETICA PHARMA*92*M501",
+    "N1*DS*GRANITE PHARMA DISTRIBUTION*92*D208",
+    "LIN**ND*00777310502",
+    "CTP*CT**4.10",
+    "LIN**ND*00777310617",
+    "CTP*CT**9.80",
+]
+
+# Defects: the authorization window is inverted (effective 2027-01-01,
+# expires 2026-06-30 — the expired-authorization classic), invalid
+# authorization date, a line missing its contract price, and an
+# unreferenced PER contact.
+DEFECTS_845 = [
+    "BGN*00*PA20260701089*20260745",
+    "REF*CT*CTR-2026-0142",
+    "DTM*007*20270101",
+    "DTM*036*20260630",
+    "PER*IC*JANE DOE",
+    "N1*MF*HELVETICA PHARMA*92*M501",
+    "N1*DS*GRANITE PHARMA DISTRIBUTION*92*D208",
+    "LIN**ND*00777310502",
+    "CTP*CT**4.10",
+    "LIN**ND*00777310617",
+]
+
+BASELINE_845_OUTPUT: dict = {
+    "auth": {"purpose": "ORIGINAL", "authorization_number": "PA20260701088",
+             "authorization_date": "2026-07-01", "contract_number": "CTR-2026-0142",
+             "effective_date": "2026-07-01", "expiration_date": "2026-12-31",
+             "record_type": "PRICE_AUTH"},
+    "manufacturer": {"name": "HELVETICA PHARMA", "id": "M501"},
+    "distributor": {"name": "GRANITE PHARMA DISTRIBUTION", "id": "D208"},
+    "lines": [
+        {"ndc": "00777310502", "authorized_price": 4.10},
+        {"ndc": "00777310617", "authorized_price": 9.80},
+    ],
+    "summary": {"line_count": 2},
+}
+
+DEFECTS_845_OUTPUT: dict = {
+    "auth": {"purpose": "ORIGINAL", "authorization_number": "PA20260701089",
+             "authorization_date": "2026-07-45", "contract_number": "CTR-2026-0142",
+             "effective_date": "2027-01-01", "expiration_date": "2026-06-30",
+             "record_type": "PRICE_AUTH"},
+    "manufacturer": {"name": "HELVETICA PHARMA", "id": "M501"},
+    "distributor": {"name": "GRANITE PHARMA DISTRIBUTION", "id": "D208"},
+    "lines": [
+        {"ndc": "00777310502", "authorized_price": 4.10},
+        {"ndc": "00777310617"},
+    ],
+    "summary": {"line_count": 2},
+}
+
+SPEC849_ROWS: list[tuple[str, ...]] = [
+    ("E-001", "BGN01", "", "response.purpose", "CODE_LIST", "", "", "", "",
+     "", "TX_PURPOSE", "string", "", ""),
+    ("E-002", "BGN02", "", "response.response_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..30", ""),
+    ("E-003", "BGN03", "", "response.response_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("E-004", "REF02", "REF[CT]", "response.contract_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..30", ""),
+    ("E-005", "REF02", "REF[TN]", "response.original_request_number", "DIRECT",
+     "", "", "", "", "", "", "string", "len:1..30",
+     "Links back to the 844; cross-transaction pairing is a future feature."),
+    ("E-006", "AMT02", "AMT[TT]", "response.total_approved", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2", ""),
+    ("E-007", "", "", "response.record_type", "CONSTANT", "", "", "", "",
+     "CHARGEBACK_RESPONSE", "", "string", "", ""),
+    ("E-008", "N102", "N1[MF]", "manufacturer.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("E-009", "N104", "N1[MF]", "manufacturer.id", "CONDITIONAL",
+     "Map the manufacturer number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("E-010", "LIN03", "LIN", "lines[].ndc", "CONDITIONAL",
+     "Map the NDC only when the product ID qualifier is ND.",
+     "LIN02 = 'ND'", "SOURCE", "SKIP", "", "", "string", "len:10..11", ""),
+    ("E-011", "QTY02", "LIN>QTY[38]", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("E-012", "QTY03", "LIN>QTY[38]", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("E-013", "AMT02", "LIN>AMT[1]", "lines[].approved_amount", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2", ""),
+    ("E-014", "LQ02", "LIN>LQ[RS]", "lines[].line_status", "CODE_LIST", "", "", "", "",
+     "", "RESP_STATUS", "string", "", "The LQ whose list qualifier is RS."),
+    ("E-015", "LIN", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_849_ROWS = [
+    *_PHARMA_PURPOSE,
+    *_WH_UOM,
+    ("RESP_STATUS", "AP", "APPROVED", "Approved in full"),
+    ("RESP_STATUS", "PA", "PARTIAL_APPROVAL", "Partially approved"),
+    ("RESP_STATUS", "DE", "DENIED", "Denied"),
+    ("RESP_STATUS", "PR", "PENDING_REVIEW", "Pending review"),
+]
+
+BASELINE_849 = [
+    "BGN*00*CBR20260815001R*20260822",
+    "REF*CT*CTR-2026-0142",
+    "REF*TN*CBR20260815001",
+    "AMT*TT*270.00",
+    "N1*MF*HELVETICA PHARMA*92*M501",
+    "LIN**ND*00777310502",
+    "QTY*38*40*EA",
+    "AMT*1*70.00",
+    "LQ*RS*AP",
+    "LIN**ND*00777310617",
+    "QTY*38*100*EA",
+    "AMT*1*200.00",
+    "LQ*RS*PA",
+]
+
+# Defects: unknown response status ZZ, the approved total (300.00)
+# disagrees with the line sum (270.00), invalid response date, and an
+# unreferenced PER contact.
+DEFECTS_849 = [
+    "BGN*00*CBR20260815002R*20260845",
+    "REF*CT*CTR-2026-0142",
+    "REF*TN*CBR20260815002",
+    "AMT*TT*300.00",
+    "PER*IC*JANE DOE",
+    "N1*MF*HELVETICA PHARMA*92*M501",
+    "LIN**ND*00777310502",
+    "QTY*38*40*EA",
+    "AMT*1*70.00",
+    "LQ*RS*ZZ",
+    "LIN**ND*00777310617",
+    "QTY*38*100*EA",
+    "AMT*1*200.00",
+    "LQ*RS*PA",
+]
+
+BASELINE_849_OUTPUT: dict = {
+    "response": {"purpose": "ORIGINAL", "response_number": "CBR20260815001R",
+                 "response_date": "2026-08-22", "contract_number": "CTR-2026-0142",
+                 "original_request_number": "CBR20260815001",
+                 "total_approved": 270.0, "record_type": "CHARGEBACK_RESPONSE"},
+    "manufacturer": {"name": "HELVETICA PHARMA", "id": "M501"},
+    "lines": [
+        {"ndc": "00777310502", "qty": 40, "uom": "EACH",
+         "approved_amount": 70.0, "line_status": "APPROVED"},
+        {"ndc": "00777310617", "qty": 100, "uom": "EACH",
+         "approved_amount": 200.0, "line_status": "PARTIAL_APPROVAL"},
+    ],
+    "summary": {"line_count": 2},
+}
+
+DEFECTS_849_OUTPUT: dict = json.loads(json.dumps(BASELINE_849_OUTPUT))
+DEFECTS_849_OUTPUT["response"].update(
+    {"response_number": "CBR20260815002R", "response_date": "2026-08-45",
+     "original_request_number": "CBR20260815002", "total_approved": 300.0}
+)
+DEFECTS_849_OUTPUT["lines"][0]["line_status"] = "ZZ"
+
+SPEC854_ROWS: list[tuple[str, ...]] = [
+    ("F-001", "BGN01", "", "discrepancy.purpose", "CODE_LIST", "", "", "", "",
+     "", "TX_PURPOSE", "string", "", ""),
+    ("F-002", "BGN02", "", "discrepancy.report_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..30", ""),
+    ("F-003", "BGN03", "", "discrepancy.report_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("F-004", "REF02", "REF[BM]", "discrepancy.bol_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..30", ""),
+    ("F-005", "", "", "discrepancy.record_type", "CONSTANT", "", "", "", "",
+     "DISCREPANCY", "", "string", "", ""),
+    ("F-006", "N102", "N1[ST]", "ship_to.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("F-007", "N104", "N1[ST]", "ship_to.id", "CONDITIONAL",
+     "Map the location number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("F-008", "N102", "N1[CA]", "carrier.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("F-009", "N104", "N1[CA]", "carrier.scac", "CONDITIONAL",
+     "Map the SCAC only when the carrier ID qualifier is 2.",
+     "N103 = '2'", "SOURCE", "SKIP", "", "", "string", "len:2..4", ""),
+    ("F-010", "LIN03", "LIN", "lines[].upc", "CONDITIONAL",
+     "Map the UPC only when the product ID qualifier is UP.",
+     "LIN02 = 'UP'", "SOURCE", "SKIP", "", "", "string", "len:12..14", ""),
+    ("F-011", "QTY02", "LIN>QTY[38]", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Discrepancy quantity."),
+    ("F-012", "QTY03", "LIN>QTY[38]", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("F-013", "LQ02", "LIN>LQ[DR]", "lines[].reason", "CODE_LIST", "", "", "", "",
+     "", "DISCREPANCY", "string", "", "The LQ whose list qualifier is DR."),
+    ("F-014", "CTT01", "", "summary.line_count", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("F-015", "LIN", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_854_ROWS = [
+    *_PHARMA_PURPOSE,
+    *_WH_UOM,
+    ("DISCREPANCY", "SH", "SHORTAGE", "Quantity short"),
+    ("DISCREPANCY", "OV", "OVERAGE", "Quantity over"),
+    ("DISCREPANCY", "DA", "DAMAGED", "Damaged"),
+    ("DISCREPANCY", "WI", "WRONG_ITEM", "Wrong item"),
+    ("DISCREPANCY", "NO", "NOT_ORDERED", "Not ordered"),
+    ("DISCREPANCY", "LT", "LATE_DELIVERY", "Late delivery"),
+]
+
+BASELINE_854 = [
+    "BGN*00*DSC20260818004*20260818",
+    "REF*BM*BOL8802214",
+    "N1*ST*ALPINE OUTFITTERS DC 12*92*0012",
+    "N1*CA*ROADWAY EXPRESS*2*RDWY",
+    "LIN**UP*614141007349",
+    "QTY*38*4*EA",
+    "LQ*DR*SH",
+    "LIN**UP*614141007350",
+    "QTY*38*2*EA",
+    "LQ*DR*DA",
+    "CTT*2",
+]
+
+# Defects: unknown discrepancy reason XX, CTT count lie (4 vs 2 lines),
+# invalid report date, and an unreferenced PER contact.
+DEFECTS_854 = [
+    "BGN*00*DSC20260818005*20260845",
+    "REF*BM*BOL8802290",
+    "PER*IC*JANE DOE",
+    "N1*ST*ALPINE OUTFITTERS DC 12*92*0012",
+    "N1*CA*ROADWAY EXPRESS*2*RDWY",
+    "LIN**UP*614141007349",
+    "QTY*38*4*EA",
+    "LQ*DR*XX",
+    "LIN**UP*614141007350",
+    "QTY*38*2*EA",
+    "LQ*DR*DA",
+    "CTT*4",
+]
+
+BASELINE_854_OUTPUT: dict = {
+    "discrepancy": {"purpose": "ORIGINAL", "report_number": "DSC20260818004",
+                    "report_date": "2026-08-18", "bol_number": "BOL8802214",
+                    "record_type": "DISCREPANCY"},
+    "ship_to": {"name": "ALPINE OUTFITTERS DC 12", "id": "0012"},
+    "carrier": {"name": "ROADWAY EXPRESS", "scac": "RDWY"},
+    "lines": [
+        {"upc": "614141007349", "qty": 4, "uom": "EACH", "reason": "SHORTAGE"},
+        {"upc": "614141007350", "qty": 2, "uom": "EACH", "reason": "DAMAGED"},
+    ],
+    "summary": {"line_count": 2},
+}
+
+DEFECTS_854_OUTPUT: dict = json.loads(json.dumps(BASELINE_854_OUTPUT))
+DEFECTS_854_OUTPUT["discrepancy"].update(
+    {"report_number": "DSC20260818005", "report_date": "2026-08-45",
+     "bol_number": "BOL8802290"}
+)
+DEFECTS_854_OUTPUT["lines"][0]["reason"] = "XX"
+DEFECTS_854_OUTPUT["summary"]["line_count"] = 4
+
+PHARMA_SETS = [
+    ("844", "CF", SPEC844_ROWS, CODE_LIST_844_ROWS,
+     "Synthetic chargeback request - reference example",
+     [("844_baseline.edi", "51", BASELINE_844), ("844_defects.edi", "52", DEFECTS_844)],
+     {"chargeback_baseline.json": BASELINE_844_OUTPUT,
+      "chargeback_defects.json": DEFECTS_844_OUTPUT}),
+    ("845", "PA", SPEC845_ROWS, CODE_LIST_845_ROWS,
+     "Synthetic price authorization - reference example",
+     [("845_baseline.edi", "53", BASELINE_845), ("845_defects.edi", "54", DEFECTS_845)],
+     {"priceauth_baseline.json": BASELINE_845_OUTPUT,
+      "priceauth_defects.json": DEFECTS_845_OUTPUT}),
+    ("849", "CF", SPEC849_ROWS, CODE_LIST_849_ROWS,
+     "Synthetic chargeback response - reference example",
+     [("849_baseline.edi", "55", BASELINE_849), ("849_defects.edi", "56", DEFECTS_849)],
+     {"cbresponse_baseline.json": BASELINE_849_OUTPUT,
+      "cbresponse_defects.json": DEFECTS_849_OUTPUT}),
+    ("854", "AB", SPEC854_ROWS, CODE_LIST_854_ROWS,
+     "Synthetic delivery discrepancy - reference example",
+     [("854_baseline.edi", "57", BASELINE_854), ("854_defects.edi", "58", DEFECTS_854)],
+     {"discrepancy_baseline.json": BASELINE_854_OUTPUT,
+      "discrepancy_defects.json": DEFECTS_854_OUTPUT}),
+]
+
+
+def generate_pharma_files() -> None:
+    for set_code, gs_code, rows, code_lists, spec_name, sources, outputs in PHARMA_SETS:
+        meta = {
+            "Transaction Set": set_code,
+            "X12 Version": "004010",
+            "Spec Name": spec_name,
+            "Author": "EDI MapCheck project",
+            "Date": "2026-07-06",
+        }
+        generate_spec(
+            EXAMPLES / "specs" / f"{set_code}_reference_spec.xlsx",
+            rows, code_lists, meta,
+        )
+        for name, control, segments in sources:
+            path = EXAMPLES / "source" / name
+            path.write_text(build_interchange(segments, control, set_code, gs_code))
+            print(f"wrote {path.relative_to(REPO_ROOT)}")
+        for name, data in outputs.items():
+            path = EXAMPLES / "output" / name
+            path.write_text(json.dumps(data, indent=2) + "\n")
+            print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -2026,6 +2490,7 @@ def main() -> None:
     generate_order_cycle_files()
     generate_warehouse_files()
     generate_inventory_files()
+    generate_pharma_files()
 
 
 if __name__ == "__main__":
