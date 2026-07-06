@@ -115,8 +115,11 @@ mapcheck validate --help          # all options (--transaction, --verbose, --db,
 | 846 | Inventory Inquiry/Advice | ✅ Supported | Multi-qualifier QTY buckets (QA/QO/QC) via path addressing `LIN>QTY[QA]` |
 | 812 | Credit/Debit Adjustment | ✅ Supported | Signed amounts; header total reconciles as a signed sum of line amounts |
 | 867 | Product Transfer and Resale | ✅ Supported | Pharma trace/rebate flow: PTD lines, resale price, header-total quantity rollup |
-| 844 / 845 / 849 / 854 | Pharma contract & chargeback | 🔜 Next | Built from public X12 documentation |
-| 997 | Functional Acknowledgment | Planned | |
+| 844 | Product Transfer Account Adjustment | ✅ Supported | Chargeback request: contract number + debit-amount rollup; line-level (WAC − contract) × qty math is backlogged |
+| 845 | Price Authorization Acknowledgment | ✅ Supported | Contract pricing; authorization date-window check (`not_after`) |
+| 849 | Response to 844 | ✅ Supported | Approval status code list; approved total vs line sum. 844⇄849 pairing is a future cross-transaction feature |
+| 854 | Shipment Delivery Discrepancy | ✅ Supported | Discrepancy reason code list |
+| 997 | Functional Acknowledgment | 🔜 Next | |
 
 Each transaction is a YAML file under `src/mapcheck/transactions/definitions/`
 declaring its areas, segment dictionary, loops (including HL-style
@@ -134,6 +137,15 @@ directly under a shipment) are structural failures. Assumption noted for the
 reference spec: shipment-level TD1 lading quantity reconciles against the
 pack-loop count (cartons), while CTT02 covers the unit rollup — TD102 with a
 carton packaging code counts cartons, not units.
+
+**Pharma set (844/845/849/854):** public documentation on these is thin, so
+the reference definitions use minimal synthetic conventions built from
+standard X12 segments — GS01 codes, BGN element usage, the CTP
+class-of-trade WS/CT discriminator for WAC vs contract price, and the LQ
+list qualifiers (RS response status, DR discrepancy reason) are all
+explicitly flagged in each definition file's header for amendment against a
+real partner guide. Everything in the synthetic files (NDCs included) is
+fabricated.
 
 **Warehouse suite (940/945/943/944/947):** built as a family from public 4010
 companion guides. The 945 detail is LX-wrapped (`W12` shipped-item segments)
