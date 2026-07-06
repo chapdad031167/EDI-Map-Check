@@ -1,0 +1,53 @@
+# X12 844 Product Transfer Account Adjustment (v004010) — the chargeback
+# request: a distributor bills the manufacturer for the gap between
+# acquisition cost and the contract price on covered sales.
+#
+# Public documentation for the 844 is thin, so this reference uses a
+# minimal synthetic convention built from standard X12 segments — flagged
+# for amendment against a real partner guide:
+#   * GS01 assumed CF
+#   * BGN read as 01=purpose, 02=request number, 03=date
+#   * header REF[CT] carries the contract number; AMT[TT] the request total
+#   * per line: LIN (ND = NDC), QTY[38] units, CTP class-of-trade WS/CT
+#     discriminates acquisition (WAC) vs contract price in CTP03, and
+#     AMT[1] carries the line debit amount
+# Line-level arithmetic (debit = (WAC - contract) x qty) is a documented
+# backlog item; the request total reconciles against the line debits.
+
+transaction:
+  set: "844"
+  name: Product Transfer Account Adjustment
+  functional_group: CF
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [BGN, CUR, REF, DTM, AMT, PER]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, REF, PER]
+        max_repeats: 10
+
+  - area: detail
+    opens_area: [LIN]
+    loops:
+      - id: LIN
+        trigger: LIN
+        qualifier: 1
+        max_repeats: 100000
+        segments: [QTY, CTP, AMT, REF, PID, DTM]
+
+output_pairing:
+  list_path: lines
+  loop: LIN
+
+reconciliation:
+  - id: request-total
+    description: the AMT TT request total must equal the sum of line debit amounts
+    left: { value: AMT02, context: "AMT[TT]" }
+    right: { sum: { loop: LIN, value: AMT02 } }
+    check: equals
+    when: { exists: AMT02, context: "AMT[TT]" }
+    severity: warning

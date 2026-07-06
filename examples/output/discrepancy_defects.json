@@ -1,0 +1,34 @@
+{
+  "discrepancy": {
+    "purpose": "ORIGINAL",
+    "report_number": "DSC20260818005",
+    "report_date": "2026-08-45",
+    "bol_number": "BOL8802290",
+    "record_type": "DISCREPANCY"
+  },
+  "ship_to": {
+    "name": "ALPINE OUTFITTERS DC 12",
+    "id": "0012"
+  },
+  "carrier": {
+    "name": "ROADWAY EXPRESS",
+    "scac": "RDWY"
+  },
+  "lines": [
+    {
+      "upc": "614141007349",
+      "qty": 4,
+      "uom": "EACH",
+      "reason": "XX"
+    },
+    {
+      "upc": "614141007350",
+      "qty": 2,
+      "uom": "EACH",
+      "reason": "DAMAGED"
+    }
+  ],
+  "summary": {
+    "line_count": 4
+  }
+}

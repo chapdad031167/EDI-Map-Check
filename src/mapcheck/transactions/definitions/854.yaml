@@ -1,0 +1,51 @@
+# X12 854 Shipment Delivery Discrepancy Information (v004010) — what
+# actually arrived versus what the paperwork said.
+#
+# Synthetic reference convention (amend per partner guide):
+#   * GS01 assumed AB
+#   * BGN read as 01=purpose, 02=discrepancy report number, 03=date
+#   * header REF[BM] bill of lading; N1 ST (ship-to) and CA (carrier)
+#   * per line: LIN (UP), QTY[38] discrepancy quantity, LQ (qualifier
+#     DR) discrepancy reason code — the reason-code list is the showcase
+
+transaction:
+  set: "854"
+  name: Shipment Delivery Discrepancy Information
+  functional_group: AB
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [BGN, REF, DTM, PER]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, REF, PER]
+        max_repeats: 10
+
+  - area: detail
+    opens_area: [LIN]
+    loops:
+      - id: LIN
+        trigger: LIN
+        qualifier: 1
+        max_repeats: 100000
+        segments: [QTY, LQ, REF, PID, DTM]
+
+  - area: summary
+    opens_area: [CTT]
+    segments: [CTT]
+
+output_pairing:
+  list_path: lines
+  loop: LIN
+
+reconciliation:
+  - id: ctt-line-count
+    description: CTT01 must equal the LIN loop count
+    left: { value: CTT01 }
+    right: { count: LIN }
+    check: equals
+    when: { exists: CTT01 }
+    severity: warning
