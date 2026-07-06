@@ -1,0 +1,47 @@
+# X12 812 Credit/Debit Adjustment (v004010) — transaction definition.
+#
+# Element-usage assumptions (noted for amendment against a specific
+# partner guide): BCD is read as 01=date, 02=adjustment number,
+# 03=transaction handling code, 04=total amount, 05=credit/debit flag;
+# CDD as 01=adjustment reason code, 02=credit/debit flag, 03=assigned
+# line id, 04=amount. Amounts are SIGNED in the reference data (credits
+# negative, debits positive), so the header total reconciles as a plain
+# signed sum of the line amounts.
+
+transaction:
+  set: "812"
+  name: Credit/Debit Adjustment
+  functional_group: CD
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [BCD, CUR, REF, DTM, PER, ITD]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, REF, PER]
+        max_repeats: 10
+
+  - area: detail
+    opens_area: [CDD]
+    loops:
+      - id: CDD
+        trigger: CDD
+        qualifier: 1
+        max_repeats: 10000
+        segments: [LIN, PID, REF, DTM, QTY, AMT]
+
+output_pairing:
+  list_path: lines
+  loop: CDD
+
+reconciliation:
+  - id: bcd-total-foots
+    description: the BCD total amount must equal the signed sum of CDD line amounts
+    left: { value: BCD04 }
+    right: { sum: { loop: CDD, value: CDD04 } }
+    check: equals
+    when: { exists: BCD04 }
+    severity: warning

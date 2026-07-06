@@ -1,0 +1,60 @@
+# X12 867 Product Transfer and Resale Report (v004010) — the pharma
+# trace/rebate transaction.
+#
+# PTD opens each transfer line; quantities use the same path addressing
+# as the 846 (PTD>QTY[38]) and CTP carries the resale price (mapped when
+# CTP02 = RES). Assumptions noted for amendment against a partner guide:
+# QTY qualifier 38 is read as the transferred quantity; some partners
+# send a header-level total QTY (qualifier TO), reconciled against the
+# line sum when present. Line-level party (N1) loops inside PTD are a
+# future extension; the reference keeps parties at the header.
+
+transaction:
+  set: "867"
+  name: Product Transfer and Resale Report
+  functional_group: PT
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [BPT, CUR, DTM, REF, PER, QTY]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, REF, PER]
+        max_repeats: 10
+
+  - area: detail
+    opens_area: [PTD]
+    loops:
+      - id: PTD
+        trigger: PTD
+        qualifier: 1
+        max_repeats: 100000
+        segments: [LIN, UIT, CTP, QTY, AMT, PID, REF, DTM, MAN]
+
+  - area: summary
+    opens_area: [CTT]
+    segments: [CTT]
+
+output_pairing:
+  list_path: lines
+  loop: PTD
+
+reconciliation:
+  - id: ctt-line-count
+    description: CTT01 must equal the PTD loop count
+    left: { value: CTT01 }
+    right: { count: PTD }
+    check: equals
+    when: { exists: CTT01 }
+    severity: warning
+
+  - id: total-qty
+    description: the header total quantity (QTY TO), when sent, must equal the sum of PTD line quantities
+    left: { value: QTY02, context: "QTY[TO]" }
+    right: { sum: { loop: PTD, value: QTY02 } }
+    check: equals
+    when: { exists: QTY02, context: "QTY[TO]" }
+    severity: warning
