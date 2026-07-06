@@ -661,13 +661,13 @@ def _check_reconciliation(tx: TransactionDocument, result: RunResult) -> None:
             left_value = Decimal(left_value)
         if isinstance(right_value, int):
             right_value = Decimal(right_value)
-        if rule.check == "not_after":
-            # ordering check (e.g. effective date <= expiration date);
-            # CCYYMMDD values compare correctly as numbers
+        if rule.check in ("not_after", "not_greater"):
+            # ordering checks: dates (CCYYMMDD compares correctly as a
+            # number) or counts/amounts; same math, different wording
             if not (isinstance(left_value, Decimal) and isinstance(right_value, Decimal)):
                 continue
             violated = left_value > right_value
-            relation = "must not be after"
+            relation = "must not be after" if rule.check == "not_after" else "must not exceed"
         else:
             violated = left_value != right_value
             relation = "!="
