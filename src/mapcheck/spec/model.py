@@ -97,7 +97,10 @@ class Condition:
         return self.raw
 
 
-_CONTEXT_RE = re.compile(r"^([A-Z][A-Z0-9]{1,2})(?:\[([^\]]+)\])?$")
+_CONTEXT_RE = re.compile(
+    r"^([A-Z][A-Z0-9]{1,2})(?:\[([^\]]+)\])?"  # base loop/segment, optional qualifier
+    r"(?:>([A-Z][A-Z0-9]{1,2})\[([^\]]+)\])?$"  # optional qualified segment within it
+)
 
 
 @dataclass(frozen=True)
@@ -107,10 +110,19 @@ class LoopContext:
     ``qualifier`` matches element 01 of the context segment (``N1[ST]``,
     ``REF[DP]``, ``DTM[002]``). A bare id (``PO1``) means *each* occurrence
     — the rule is evaluated once per loop instance.
+
+    A path form narrows to a qualified segment *within* the loop:
+    ``LIN>QTY[QA]`` pairs per-line on the LIN loop but resolves source
+    fields from the QTY segment whose QTY01 is ``QA`` — how an 846 maps
+    available/on-order/committed quantities to distinct fields. The
+    sub-segment's qualifier always matches its element 01, and the rule's
+    source/condition fields see only the narrowed segment(s).
     """
 
     segment_id: str
     qualifier: str | None = None
+    sub_segment_id: str | None = None
+    sub_qualifier: str | None = None
 
     @classmethod
     def parse(cls, text: str) -> "LoopContext":
@@ -118,12 +130,27 @@ class LoopContext:
         m = _CONTEXT_RE.match(text.strip())
         if not m:
             raise ValueError(
-                f"invalid loop context {text!r} (expected e.g. 'PO1', 'N1[ST]', 'REF[DP]')"
+                f"invalid loop context {text!r} "
+                "(expected e.g. 'PO1', 'N1[ST]', 'REF[DP]', or 'LIN>QTY[QA]')"
             )
-        return cls(segment_id=m.group(1), qualifier=m.group(2))
+        return cls(
+            segment_id=m.group(1),
+            qualifier=m.group(2),
+            sub_segment_id=m.group(3),
+            sub_qualifier=m.group(4),
+        )
+
+    def base(self) -> "LoopContext":
+        """The context without its sub-segment path (for loop pairing)."""
+        if self.sub_segment_id is None:
+            return self
+        return LoopContext(segment_id=self.segment_id, qualifier=self.qualifier)
 
     def __str__(self) -> str:
-        return f"{self.segment_id}[{self.qualifier}]" if self.qualifier else self.segment_id
+        text = f"{self.segment_id}[{self.qualifier}]" if self.qualifier else self.segment_id
+        if self.sub_segment_id is not None:
+            text += f">{self.sub_segment_id}[{self.sub_qualifier}]"
+        return text
 
 
 _SOURCE_FIELD_RE = re.compile(r"^([A-Z][A-Z0-9]{1,2})(\d{2})$")
