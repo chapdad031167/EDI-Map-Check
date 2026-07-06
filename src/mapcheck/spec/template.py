@@ -62,11 +62,14 @@ _INSTRUCTIONS = """EDI MapCheck — spec template quick reference
 
 SOURCE FIELD    Plain segment+element notation: BEG03, N104, PO102.
 LOOP CONTEXT    Which occurrence the source field comes from:
-                  (blank)   header/summary area, first occurrence
-                  PO1       each occurrence of the PO1 loop (per-line rule;
-                            target must use lines[] notation)
-                  N1[ST]    the N1 loop whose N101 = ST
-                  REF[DP]   the REF segment whose REF01 = DP
+                  (blank)      header/summary area, first occurrence
+                  PO1          each occurrence of the PO1 loop (per-line
+                               rule; target must use lines[] notation)
+                  N1[ST]       the N1 loop whose N101 = ST
+                  REF[DP]      the REF segment whose REF01 = DP
+                  LIN>QTY[QA]  per-line on the LIN loop, but the source
+                               field reads the QTY whose QTY01 = QA (for
+                               repeating qualified segments in a loop)
                 The [qualifier] always matches element 01 of that segment.
 TARGET FIELD    Dot path into the output: order.po_number, ship_to.name,
                 lines[].qty, summary.line_count.

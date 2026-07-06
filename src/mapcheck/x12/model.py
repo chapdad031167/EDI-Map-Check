@@ -180,11 +180,26 @@ class TransactionDocument:
           segment, one single-segment scope apiece; the qualifier always
           matches element 01.
 
+        A path context (``LIN>QTY[QA]``) yields one scope per base
+        occurrence — kept even when empty, so per-line index pairing holds —
+        narrowed to the sub-segments whose element 01 matches.
+
         Returns an empty list when nothing matches (the caller decides
         whether that means NOT TESTED, a failed condition, or a defect).
         """
         if context is None:
             return [self.flat_scope()]
+
+        def narrow(segments: tuple[Segment, ...]) -> tuple[Segment, ...]:
+            if context.sub_segment_id is None:
+                return segments
+            return tuple(
+                seg
+                for seg in segments
+                if seg.seg_id == context.sub_segment_id
+                and seg.element(1) == context.sub_qualifier
+            )
+
         loop_def = self.definition.loop(context.segment_id)
         if loop_def is not None:
             matches = [
@@ -197,11 +212,15 @@ class TransactionDocument:
                 if loop_def.is_hierarchical:
                     for ancestor in loop.ancestors():
                         segments.extend(ancestor.segments)
-                return tuple(segments)
+                return narrow(tuple(segments))
 
             return [
                 Scope(label=str(context), segments=scope_segments(loop)) for loop in matches
             ]
+        if context.sub_segment_id is not None:
+            # a path only makes sense inside a loop; a plain flat segment
+            # has no interior to narrow into
+            return []
         return [
             Scope(label=str(context), segments=(seg,))
             for seg in self.flat_scope().segments
