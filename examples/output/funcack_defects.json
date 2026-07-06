@@ -1,0 +1,26 @@
+{
+  "ack": {
+    "functional_group": "PO",
+    "group_control": 1045,
+    "group_status": "ACCEPTED_WITH_ERRORS",
+    "sets_included": 2,
+    "sets_received": 2,
+    "sets_accepted": 3,
+    "record_type": "FUNC_ACK"
+  },
+  "lines": [
+    {
+      "transaction_set": "850",
+      "control_number": "0003",
+      "status": "Z"
+    },
+    {
+      "transaction_set": "850",
+      "control_number": "0004",
+      "status": "ACCEPTED"
+    }
+  ],
+  "summary": {
+    "ack_count": 2
+  }
+}

@@ -79,6 +79,22 @@ Root causes: missing_output: 7, format: 3, value_mismatch: 2, condition_logic: 1
 
 Exit code is `0` on PASS, `1` on FAIL — drop it straight into CI.
 
+The transaction set is auto-detected, so any of the 17 supported sets works
+the same way. An 856 ASN with a corrupted HL tree, for instance:
+
+```bash
+mapcheck validate \
+  --spec examples/specs/856_reference_spec.xlsx \
+  --source examples/source/856_defects.edi \
+  --output examples/output/asn_defects.json
+```
+
+```text
+FAIL  -  (hierarchy)  hierarchical structure defect: HL at line 26:
+         parent id '9' does not reference an earlier hierarchical loop (orphan)
+WARNING  recon:ctt02-unit-sum  CTT02=999 != sum(SN102 over HL[I])=96
+```
+
 ### Streamlit UI
 
 ```bash
@@ -119,7 +135,9 @@ mapcheck validate --help          # all options (--transaction, --verbose, --db,
 | 845 | Price Authorization Acknowledgment | ✅ Supported | Contract pricing; authorization date-window check (`not_after`) |
 | 849 | Response to 844 | ✅ Supported | Approval status code list; approved total vs line sum. 844⇄849 pairing is a future cross-transaction feature |
 | 854 | Shipment Delivery Discrepancy | ✅ Supported | Discrepancy reason code list |
-| 997 | Functional Acknowledgment | 🔜 Next | |
+| 997 | Functional Acknowledgment | ✅ Supported | AK1/AK2/AK9; acknowledgment code lists; AK9 count sanity (accepted ≤ received ≤ included) |
+
+**All 17 roadmap transaction sets are supported.**
 
 Each transaction is a YAML file under `src/mapcheck/transactions/definitions/`
 declaring its areas, segment dictionary, loops (including HL-style
