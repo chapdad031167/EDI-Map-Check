@@ -84,6 +84,10 @@ EXAMPLE_SCENARIOS = {
         "849_reference_spec.xlsx", "849_baseline.edi", "cbresponse_baseline.json"),
     "854 delivery discrepancy (reason codes)": (
         "854_reference_spec.xlsx", "854_baseline.edi", "discrepancy_baseline.json"),
+    "997 functional acknowledgment (all PASS)": (
+        "997_reference_spec.xlsx", "997_baseline.edi", "funcack_baseline.json"),
+    "997 defective ack (impossible counts)": (
+        "997_reference_spec.xlsx", "997_defects.edi", "funcack_defects.json"),
 }
 
 _STATUS_COLORS = {
