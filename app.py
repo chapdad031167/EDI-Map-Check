@@ -181,8 +181,8 @@ def main() -> None:
     st.title("EDI MapCheck")
     st.markdown(
         "Vendor-neutral validation for EDI mapping work: upload a **mapping spec**, "
-        "an **X12 850 source**, and the **translated output** — get a field-level "
-        "pass/fail report."
+        "an **X12 source file**, and the **translated output** — get a field-level "
+        "pass/fail report. The transaction set is auto-detected from ST01."
     )
 
     with st.sidebar:
