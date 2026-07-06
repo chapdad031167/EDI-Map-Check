@@ -1,0 +1,46 @@
+# X12 997 Functional Acknowledgment (v004010) — the receipt for a
+# functional group: AK1 names the group being acknowledged, one AK2 loop
+# per transaction set responds with its AK5 status, and AK9 closes with
+# the group-level verdict and counts.
+#
+# The AK9 counts must be internally sane: accepted (AK904) cannot exceed
+# received (AK903), which cannot exceed included (AK902). AK3/AK4 error
+# detail segments parse as AK2 loop members; mapping them is left to
+# partner-specific specs.
+
+transaction:
+  set: "997"
+  name: Functional Acknowledgment
+  functional_group: FA
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [AK1, AK9]
+    loops:
+      - id: AK2
+        trigger: AK2
+        qualifier: 1
+        max_repeats: 999999
+        segments: [AK3, AK4, AK5]
+
+output_pairing:
+  list_path: lines
+  loop: AK2
+
+reconciliation:
+  - id: accepted-lte-received
+    description: AK9 accepted count cannot exceed the received count
+    left: { value: AK904 }
+    right: { value: AK903 }
+    check: not_greater
+    when: { exists: AK904 }
+    severity: warning
+
+  - id: received-lte-included
+    description: AK9 received count cannot exceed the included count
+    left: { value: AK903 }
+    right: { value: AK902 }
+    check: not_greater
+    when: { exists: AK903 }
+    severity: warning
