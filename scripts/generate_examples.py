@@ -2467,6 +2467,118 @@ def generate_pharma_files() -> None:
             print(f"wrote {path.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# 997 Functional Acknowledgment
+# --------------------------------------------------------------------------
+
+SPEC997_ROWS: list[tuple[str, ...]] = [
+    ("Z-001", "AK101", "", "ack.functional_group", "DIRECT", "", "", "", "",
+     "", "", "string", "len:2..2", "Functional ID of the acknowledged group."),
+    ("Z-002", "AK102", "", "ack.group_control", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Group control number being acknowledged."),
+    ("Z-003", "AK901", "", "ack.group_status", "CODE_LIST", "", "", "", "",
+     "", "ACK_CODE", "string", "", ""),
+    ("Z-004", "AK902", "", "ack.sets_included", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("Z-005", "AK903", "", "ack.sets_received", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("Z-006", "AK904", "", "ack.sets_accepted", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("Z-007", "", "", "ack.record_type", "CONSTANT", "", "", "", "",
+     "FUNC_ACK", "", "string", "", ""),
+    ("Z-008", "AK201", "AK2", "lines[].transaction_set", "DIRECT", "", "", "", "",
+     "", "", "string", "len:3..3", ""),
+    ("Z-009", "AK202", "AK2", "lines[].control_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:4..9", "String: control numbers keep leading zeros."),
+    ("Z-010", "AK501", "AK2", "lines[].status", "CODE_LIST", "", "", "", "",
+     "", "ACK_CODE", "string", "", ""),
+    ("Z-011", "AK2", "", "summary.ack_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_997_ROWS = [
+    ("ACK_CODE", "A", "ACCEPTED", "Accepted"),
+    ("ACK_CODE", "E", "ACCEPTED_WITH_ERRORS", "Accepted with errors noted"),
+    ("ACK_CODE", "P", "PARTIALLY_ACCEPTED", "Partially accepted"),
+    ("ACK_CODE", "R", "REJECTED", "Rejected"),
+]
+
+SPEC997_META = {
+    "Transaction Set": "997",
+    "X12 Version": "004010",
+    "Spec Name": "Synthetic functional acknowledgment - reference example",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-07-06",
+}
+
+BASELINE_997 = [
+    "AK1*PO*1044",
+    "AK2*850*0001",
+    "AK5*A",
+    "AK2*850*0002",
+    "AK5*R",
+    "AK9*P*2*2*1",
+]
+
+# Defects: unknown acknowledgment code Z, AK9 claims 3 accepted of 2
+# received (impossible), and AK3/AK4 error detail no spec rule maps.
+DEFECTS_997 = [
+    "AK1*PO*1045",
+    "AK2*850*0003",
+    "AK3*REF*3**8",
+    "AK4*2**1",
+    "AK5*Z",
+    "AK2*850*0004",
+    "AK5*A",
+    "AK9*E*2*2*3",
+]
+
+BASELINE_997_OUTPUT: dict = {
+    "ack": {"functional_group": "PO", "group_control": 1044,
+            "group_status": "PARTIALLY_ACCEPTED", "sets_included": 2,
+            "sets_received": 2, "sets_accepted": 1, "record_type": "FUNC_ACK"},
+    "lines": [
+        {"transaction_set": "850", "control_number": "0001", "status": "ACCEPTED"},
+        {"transaction_set": "850", "control_number": "0002", "status": "REJECTED"},
+    ],
+    "summary": {"ack_count": 2},
+}
+
+DEFECTS_997_OUTPUT: dict = {
+    "ack": {"functional_group": "PO", "group_control": 1045,
+            "group_status": "ACCEPTED_WITH_ERRORS", "sets_included": 2,
+            "sets_received": 2, "sets_accepted": 3, "record_type": "FUNC_ACK"},
+    "lines": [
+        {"transaction_set": "850", "control_number": "0003", "status": "Z"},
+        {"transaction_set": "850", "control_number": "0004", "status": "ACCEPTED"},
+    ],
+    "summary": {"ack_count": 2},
+}
+
+
+def generate_997_files() -> None:
+    generate_spec(
+        EXAMPLES / "specs" / "997_reference_spec.xlsx",
+        SPEC997_ROWS, CODE_LIST_997_ROWS, SPEC997_META,
+    )
+    sources = {
+        "997_baseline.edi": build_interchange(BASELINE_997, "61", "997", "FA"),
+        "997_defects.edi": build_interchange(DEFECTS_997, "62", "997", "FA"),
+    }
+    for name, content in sources.items():
+        path = EXAMPLES / "source" / name
+        path.write_text(content)
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+    outputs = {
+        "funcack_baseline.json": BASELINE_997_OUTPUT,
+        "funcack_defects.json": DEFECTS_997_OUTPUT,
+    }
+    for name, data in outputs.items():
+        path = EXAMPLES / "output" / name
+        path.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -2491,6 +2603,7 @@ def main() -> None:
     generate_warehouse_files()
     generate_inventory_files()
     generate_pharma_files()
+    generate_997_files()
 
 
 if __name__ == "__main__":
