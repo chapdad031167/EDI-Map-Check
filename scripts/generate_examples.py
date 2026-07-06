@@ -1646,6 +1646,363 @@ def generate_warehouse_files() -> None:
             print(f"wrote {path.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# Inventory & product movement: 846 / 812 / 867
+# --------------------------------------------------------------------------
+
+SPEC846_ROWS: list[tuple[str, ...]] = [
+    ("Q-001", "BIA01", "", "inquiry.purpose", "CODE_LIST", "", "", "", "",
+     "", "TX_PURPOSE", "string", "", ""),
+    ("Q-002", "BIA02", "", "inquiry.report_type", "DIRECT", "", "", "", "",
+     "", "", "string", "len:2..2", "Passed through; partner-specific values."),
+    ("Q-003", "BIA03", "", "inquiry.reference_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..30", ""),
+    ("Q-004", "BIA04", "", "inquiry.report_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("Q-005", "", "", "inquiry.record_type", "CONSTANT", "", "", "", "",
+     "INV_ADVICE", "", "string", "", ""),
+    ("Q-006", "N102", "N1[SE]", "seller.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("Q-007", "N104", "N1[SE]", "seller.id", "CONDITIONAL",
+     "Map the seller number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("Q-008", "LIN01", "LIN", "lines[].line_no", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("Q-009", "LIN03", "LIN", "lines[].upc", "CONDITIONAL",
+     "Map the UPC only when the product ID qualifier is UP.",
+     "LIN02 = 'UP'", "SOURCE", "SKIP", "", "", "string", "len:12..14", ""),
+    ("Q-010", "PID05", "LIN", "lines[].description", "CONDITIONAL",
+     "Map the free-form description when the PID is free-form.",
+     "PID01 = 'F'", "SOURCE", "SKIP", "", "", "string", "len:1..80", ""),
+    ("Q-011", "QTY02", "LIN>QTY[QA]", "lines[].qty_available", "DIRECT",
+     "", "", "", "", "", "", "integer", "",
+     "Path context: the QTY whose qualifier is QA (available)."),
+    ("Q-012", "QTY03", "LIN>QTY[QA]", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", "UOM sent on the available-quantity segment."),
+    ("Q-013", "QTY02", "LIN>QTY[QO]", "lines[].qty_on_order", "DIRECT",
+     "", "", "", "", "", "", "integer", "", "QO = on order."),
+    ("Q-014", "QTY02", "LIN>QTY[QC]", "lines[].qty_committed", "DIRECT",
+     "", "", "", "", "", "", "integer", "", "QC = committed."),
+    ("Q-015", "CTT01", "", "summary.line_count", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("Q-016", "LIN", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_846_ROWS = [
+    ("TX_PURPOSE", "00", "ORIGINAL", "Original transmission"),
+    ("TX_PURPOSE", "05", "REPLACE", "Replacement"),
+    *_WH_UOM,
+]
+
+BASELINE_846 = [
+    "BIA*00*DD*INV20260801*20260801",
+    "N1*SE*SUMMIT WHOLESALE FOODS*92*7731",
+    "LIN*1*UP*614141007349",
+    "PID*F****TRAIL MIX 12OZ",
+    "QTY*QA*500*EA",
+    "QTY*QO*200",
+    "QTY*QC*50",
+    "LIN*2*UP*614141007350",
+    "PID*F****SPRING WATER 24PK",
+    "QTY*QA*1200*EA",
+    "QTY*QO*0",
+    "QTY*QC*75",
+    "CTT*2",
+]
+
+# Defects: invalid report date, unknown UOM on the available bucket, a
+# mystery ZZ quantity bucket no rule references, a line missing its
+# committed quantity, and a CTT count lie.
+DEFECTS_846 = [
+    "BIA*00*DD*INV20260802*20260835",
+    "N1*SE*SUMMIT WHOLESALE FOODS*92*7731",
+    "LIN*1*UP*614141007349",
+    "PID*F****TRAIL MIX 12OZ",
+    "QTY*QA*500*ZZ",
+    "QTY*QO*200",
+    "QTY*ZZ*10",
+    "LIN*2*UP*614141007350",
+    "PID*F****SPRING WATER 24PK",
+    "QTY*QA*1200*EA",
+    "QTY*QO*0",
+    "QTY*QC*75",
+    "CTT*5",
+]
+
+
+def _inv_line(line_no: int, upc: str, description: str, qa: int, qo: int, qc: int | None) -> dict:
+    line = {"line_no": line_no, "upc": upc, "description": description,
+            "qty_available": qa, "uom": "EACH", "qty_on_order": qo}
+    if qc is not None:
+        line["qty_committed"] = qc
+    return line
+
+
+BASELINE_846_OUTPUT: dict = {
+    "inquiry": {"purpose": "ORIGINAL", "report_type": "DD",
+                "reference_number": "INV20260801", "report_date": "2026-08-01",
+                "record_type": "INV_ADVICE"},
+    "seller": {"name": "SUMMIT WHOLESALE FOODS", "id": "7731"},
+    "lines": [
+        _inv_line(1, "614141007349", "TRAIL MIX 12OZ", 500, 200, 50),
+        _inv_line(2, "614141007350", "SPRING WATER 24PK", 1200, 0, 75),
+    ],
+    "summary": {"line_count": 2},
+}
+
+DEFECTS_846_OUTPUT: dict = {
+    "inquiry": {"purpose": "ORIGINAL", "report_type": "DD",
+                "reference_number": "INV20260802", "report_date": "2026-08-35",
+                "record_type": "INV_ADVICE"},
+    "seller": {"name": "SUMMIT WHOLESALE FOODS", "id": "7731"},
+    "lines": [
+        _inv_line(1, "614141007349", "TRAIL MIX 12OZ", 500, 200, None),
+        _inv_line(2, "614141007350", "SPRING WATER 24PK", 1200, 0, 75),
+    ],
+    "summary": {"line_count": 5},
+}
+
+SPEC812_ROWS: list[tuple[str, ...]] = [
+    ("C-001", "BCD01", "", "adjustment.adjustment_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("C-002", "BCD02", "", "adjustment.adjustment_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", ""),
+    ("C-003", "BCD03", "", "adjustment.handling_code", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..2", "Passed through; partner-specific values."),
+    ("C-004", "BCD04", "", "adjustment.total_amount", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2", "Signed net total (credits negative)."),
+    ("C-005", "BCD05", "", "adjustment.cd_flag", "CODE_LIST", "", "", "", "",
+     "", "CD_FLAG", "string", "", ""),
+    ("C-006", "", "", "adjustment.record_type", "CONSTANT", "", "", "", "",
+     "ADJ_INBOUND", "", "string", "", ""),
+    ("C-007", "N102", "N1[VN]", "vendor.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("C-008", "N104", "N1[VN]", "vendor.id", "CONDITIONAL",
+     "Map the vendor number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("C-009", "CDD01", "CDD", "lines[].reason", "CODE_LIST", "", "", "", "",
+     "", "ADJ_REASON_812", "string", "", ""),
+    ("C-010", "CDD02", "CDD", "lines[].cd_flag", "CODE_LIST", "", "", "", "",
+     "", "CD_FLAG", "string", "", ""),
+    ("C-011", "CDD03", "CDD", "lines[].line_id", "DIRECT", "", "", "", "",
+     "", "", "string", "", ""),
+    ("C-012", "CDD04", "CDD", "lines[].amount", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2", "Signed (credits negative, debits positive)."),
+    ("C-013", "CDD", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_812_ROWS = [
+    ("CD_FLAG", "C", "CREDIT", "Credit"),
+    ("CD_FLAG", "D", "DEBIT", "Debit"),
+    ("ADJ_REASON_812", "01", "PRICING_ERROR", "Pricing error"),
+    ("ADJ_REASON_812", "06", "QUANTITY_CONTESTED", "Quantity contested"),
+    ("ADJ_REASON_812", "59", "ITEM_NOT_RECEIVED", "Item not received"),
+]
+
+# Signed math: -25.00 credit + 40.00 debit = 15.00 net debit.
+BASELINE_812 = [
+    "BCD*20260805*CDA9001*I*15.00*D",
+    "N1*VN*SUMMIT WHOLESALE FOODS*92*7731",
+    "CDD*01*C*1*-25.00",
+    "CDD*06*D*2*40.00",
+]
+
+# Defects: the credit line was keyed positive while the header still
+# carries the intended net total, so the recon gap (65.00 vs 15.00) is
+# exactly twice the mis-signed credit — the classic backwards-key
+# signature; unknown reason code 99; invalid date; unreferenced ITD.
+DEFECTS_812 = [
+    "BCD*20260835*CDA9002*I*15.00*D",
+    "ITD*01*3*2**30**60",
+    "N1*VN*SUMMIT WHOLESALE FOODS*92*7731",
+    "CDD*99*C*1*25.00",
+    "CDD*06*D*2*40.00",
+]
+
+BASELINE_812_OUTPUT: dict = {
+    "adjustment": {"adjustment_date": "2026-08-05", "adjustment_number": "CDA9001",
+                   "handling_code": "I", "total_amount": 15.0, "cd_flag": "DEBIT",
+                   "record_type": "ADJ_INBOUND"},
+    "vendor": {"name": "SUMMIT WHOLESALE FOODS", "id": "7731"},
+    "lines": [
+        {"reason": "PRICING_ERROR", "cd_flag": "CREDIT", "line_id": "1", "amount": -25.0},
+        {"reason": "QUANTITY_CONTESTED", "cd_flag": "DEBIT", "line_id": "2", "amount": 40.0},
+    ],
+    "summary": {"line_count": 2},
+}
+
+DEFECTS_812_OUTPUT: dict = {
+    "adjustment": {"adjustment_date": "2026-08-35", "adjustment_number": "CDA9002",
+                   "handling_code": "I", "total_amount": 15.0, "cd_flag": "DEBIT",
+                   "record_type": "ADJ_INBOUND"},
+    "vendor": {"name": "SUMMIT WHOLESALE FOODS", "id": "7731"},
+    "lines": [
+        {"reason": "99", "cd_flag": "CREDIT", "line_id": "1", "amount": 25.0},
+        {"reason": "QUANTITY_CONTESTED", "cd_flag": "DEBIT", "line_id": "2", "amount": 40.0},
+    ],
+    "summary": {"line_count": 2},
+}
+
+SPEC867_ROWS: list[tuple[str, ...]] = [
+    ("P-001", "BPT01", "", "report.purpose", "CODE_LIST", "", "", "", "",
+     "", "TX_PURPOSE", "string", "", ""),
+    ("P-002", "BPT02", "", "report.report_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..30", ""),
+    ("P-003", "BPT03", "", "report.report_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", ""),
+    ("P-004", "BPT04", "", "report.report_type", "DIRECT", "", "", "", "",
+     "", "", "string", "len:2..2", "Passed through; partner-specific values."),
+    ("P-005", "QTY02", "QTY[TO]", "report.total_quantity", "CONDITIONAL",
+     "Map the header total quantity when the partner sends one.",
+     "EXISTS(QTY02)", "SOURCE", "SKIP", "", "", "integer", "", ""),
+    ("P-006", "", "", "report.record_type", "CONSTANT", "", "", "", "",
+     "XFER_REPORT", "", "string", "", ""),
+    ("P-007", "N102", "N1[DS]", "distributor.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("P-008", "N104", "N1[DS]", "distributor.id", "CONDITIONAL",
+     "Map the distributor number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("P-009", "N102", "N1[ST]", "ship_to.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", ""),
+    ("P-010", "N104", "N1[ST]", "ship_to.id", "CONDITIONAL",
+     "Map the ship-to number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("P-011", "PTD01", "PTD", "lines[].transfer_type", "DIRECT", "", "", "", "",
+     "", "", "string", "len:2..2", "Passed through; partner-specific values."),
+    ("P-012", "LIN03", "PTD", "lines[].upc", "CONDITIONAL",
+     "Map the UPC only when the product ID qualifier is UP.",
+     "LIN02 = 'UP'", "SOURCE", "SKIP", "", "", "string", "len:12..14", ""),
+    ("P-013", "PID05", "PTD", "lines[].description", "CONDITIONAL",
+     "Map the free-form description when the PID is free-form.",
+     "PID01 = 'F'", "SOURCE", "SKIP", "", "", "string", "len:1..80", ""),
+    ("P-014", "QTY02", "PTD>QTY[38]", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Assumed quantity qualifier 38; amend per guide."),
+    ("P-015", "QTY03", "PTD>QTY[38]", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", ""),
+    ("P-016", "CTP03", "PTD", "lines[].resale_price", "CONDITIONAL",
+     "Map the resale price when the price qualifier is RES.",
+     "CTP02 = 'RES'", "SOURCE", "SKIP", "", "", "decimal", "places:2", ""),
+    ("P-017", "CTT01", "", "summary.line_count", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("P-018", "PTD", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+]
+
+CODE_LIST_867_ROWS = [
+    ("TX_PURPOSE", "00", "ORIGINAL", "Original transmission"),
+    ("TX_PURPOSE", "05", "REPLACE", "Replacement"),
+    *_WH_UOM,
+]
+
+BASELINE_867 = [
+    "BPT*00*RPT20260810*20260810*DD",
+    "QTY*TO*175",
+    "N1*DS*SUMMIT WHOLESALE FOODS*92*7731",
+    "N1*ST*RIVERBEND MARKET*92*0007",
+    "PTD*BD",
+    "LIN**UP*614141007349",
+    "PID*F****TRAIL MIX 12OZ",
+    "QTY*38*100*EA",
+    "CTP**RES*8.99",
+    "PTD*BD",
+    "LIN**UP*614141007350",
+    "PID*F****SPRING WATER 24PK",
+    "QTY*38*75*EA",
+    "CTP**RES*12.49",
+    "CTT*2",
+]
+
+# Defects: header total quantity lies (200 vs 175 line sum), CTT lies,
+# unknown UOM on line 2, invalid report date, an unreferenced header REF.
+DEFECTS_867 = [
+    "BPT*00*RPT20260811*20260835*DD",
+    "QTY*TO*200",
+    "REF*ZZ*MYSTERY",
+    "N1*DS*SUMMIT WHOLESALE FOODS*92*7731",
+    "N1*ST*RIVERBEND MARKET*92*0007",
+    "PTD*BD",
+    "LIN**UP*614141007349",
+    "PID*F****TRAIL MIX 12OZ",
+    "QTY*38*100*EA",
+    "CTP**RES*8.99",
+    "PTD*BD",
+    "LIN**UP*614141007350",
+    "PID*F****SPRING WATER 24PK",
+    "QTY*38*75*ZZ",
+    "CTP**RES*12.49",
+    "CTT*3",
+]
+
+
+def _xfer_report_line(upc: str, description: str, qty: int, price: float) -> dict:
+    return {"transfer_type": "BD", "upc": upc, "description": description,
+            "qty": qty, "uom": "EACH", "resale_price": price}
+
+
+BASELINE_867_OUTPUT: dict = {
+    "report": {"purpose": "ORIGINAL", "report_number": "RPT20260810",
+               "report_date": "2026-08-10", "report_type": "DD",
+               "total_quantity": 175, "record_type": "XFER_REPORT"},
+    "distributor": {"name": "SUMMIT WHOLESALE FOODS", "id": "7731"},
+    "ship_to": {"name": "RIVERBEND MARKET", "id": "0007"},
+    "lines": [
+        _xfer_report_line("614141007349", "TRAIL MIX 12OZ", 100, 8.99),
+        _xfer_report_line("614141007350", "SPRING WATER 24PK", 75, 12.49),
+    ],
+    "summary": {"line_count": 2},
+}
+
+DEFECTS_867_OUTPUT: dict = json.loads(json.dumps(BASELINE_867_OUTPUT))
+DEFECTS_867_OUTPUT["report"].update(
+    {"report_number": "RPT20260811", "report_date": "2026-08-35", "total_quantity": 200}
+)
+DEFECTS_867_OUTPUT["lines"][1]["uom"] = "ZZ"
+DEFECTS_867_OUTPUT["summary"]["line_count"] = 3
+
+INVENTORY_SETS = [
+    ("846", "IB", SPEC846_ROWS, CODE_LIST_846_ROWS,
+     "Synthetic inventory advice - reference example",
+     [("846_baseline.edi", "41", BASELINE_846), ("846_defects.edi", "42", DEFECTS_846)],
+     {"invinquiry_baseline.json": BASELINE_846_OUTPUT,
+      "invinquiry_defects.json": DEFECTS_846_OUTPUT}),
+    ("812", "CD", SPEC812_ROWS, CODE_LIST_812_ROWS,
+     "Synthetic credit/debit adjustment - reference example",
+     [("812_baseline.edi", "43", BASELINE_812), ("812_defects.edi", "44", DEFECTS_812)],
+     {"creditdebit_baseline.json": BASELINE_812_OUTPUT,
+      "creditdebit_defects.json": DEFECTS_812_OUTPUT}),
+    ("867", "PT", SPEC867_ROWS, CODE_LIST_867_ROWS,
+     "Synthetic product transfer report - reference example",
+     [("867_baseline.edi", "45", BASELINE_867), ("867_defects.edi", "46", DEFECTS_867)],
+     {"xferreport_baseline.json": BASELINE_867_OUTPUT,
+      "xferreport_defects.json": DEFECTS_867_OUTPUT}),
+]
+
+
+def generate_inventory_files() -> None:
+    for set_code, gs_code, rows, code_lists, spec_name, sources, outputs in INVENTORY_SETS:
+        meta = {
+            "Transaction Set": set_code,
+            "X12 Version": "004010",
+            "Spec Name": spec_name,
+            "Author": "EDI MapCheck project",
+            "Date": "2026-07-06",
+        }
+        generate_spec(
+            EXAMPLES / "specs" / f"{set_code}_reference_spec.xlsx",
+            rows, code_lists, meta,
+        )
+        for name, control, segments in sources:
+            path = EXAMPLES / "source" / name
+            path.write_text(build_interchange(segments, control, set_code, gs_code))
+            print(f"wrote {path.relative_to(REPO_ROOT)}")
+        for name, data in outputs.items():
+            path = EXAMPLES / "output" / name
+            path.write_text(json.dumps(data, indent=2) + "\n")
+            print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -1668,6 +2025,7 @@ def main() -> None:
     )
     generate_order_cycle_files()
     generate_warehouse_files()
+    generate_inventory_files()
 
 
 if __name__ == "__main__":

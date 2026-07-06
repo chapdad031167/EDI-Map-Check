@@ -1,0 +1,36 @@
+{
+  "inquiry": {
+    "purpose": "ORIGINAL",
+    "report_type": "DD",
+    "reference_number": "INV20260801",
+    "report_date": "2026-08-01",
+    "record_type": "INV_ADVICE"
+  },
+  "seller": {
+    "name": "SUMMIT WHOLESALE FOODS",
+    "id": "7731"
+  },
+  "lines": [
+    {
+      "line_no": 1,
+      "upc": "614141007349",
+      "description": "TRAIL MIX 12OZ",
+      "qty_available": 500,
+      "uom": "EACH",
+      "qty_on_order": 200,
+      "qty_committed": 50
+    },
+    {
+      "line_no": 2,
+      "upc": "614141007350",
+      "description": "SPRING WATER 24PK",
+      "qty_available": 1200,
+      "uom": "EACH",
+      "qty_on_order": 0,
+      "qty_committed": 75
+    }
+  ],
+  "summary": {
+    "line_count": 2
+  }
+}

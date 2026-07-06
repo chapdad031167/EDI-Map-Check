@@ -112,8 +112,10 @@ mapcheck validate --help          # all options (--transaction, --verbose, --db,
 | 943 | Warehouse Stock Transfer Shipment | ✅ Supported | Transfer pair (ship side); W03 total vs line sums |
 | 944 | Warehouse Stock Transfer Receipt | ✅ Supported | Transfer pair (receipt side); W14 total vs line sums |
 | 947 | Warehouse Inventory Adjustment | ✅ Supported | W19 adjustment-reason code list; signed adjustment quantities |
-| 846 / 812 / 867 | Inventory & product movement | 🔜 Next | |
-| 844 / 845 / 849 / 854 | Pharma contract & chargeback | Planned | Built from public X12 documentation |
+| 846 | Inventory Inquiry/Advice | ✅ Supported | Multi-qualifier QTY buckets (QA/QO/QC) via path addressing `LIN>QTY[QA]` |
+| 812 | Credit/Debit Adjustment | ✅ Supported | Signed amounts; header total reconciles as a signed sum of line amounts |
+| 867 | Product Transfer and Resale | ✅ Supported | Pharma trace/rebate flow: PTD lines, resale price, header-total quantity rollup |
+| 844 / 845 / 849 / 854 | Pharma contract & chargeback | 🔜 Next | Built from public X12 documentation |
 | 997 | Functional Acknowledgment | Planned | |
 
 Each transaction is a YAML file under `src/mapcheck/transactions/definitions/`
