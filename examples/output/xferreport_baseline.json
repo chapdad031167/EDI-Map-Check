@@ -1,0 +1,39 @@
+{
+  "report": {
+    "purpose": "ORIGINAL",
+    "report_number": "RPT20260810",
+    "report_date": "2026-08-10",
+    "report_type": "DD",
+    "total_quantity": 175,
+    "record_type": "XFER_REPORT"
+  },
+  "distributor": {
+    "name": "SUMMIT WHOLESALE FOODS",
+    "id": "7731"
+  },
+  "ship_to": {
+    "name": "RIVERBEND MARKET",
+    "id": "0007"
+  },
+  "lines": [
+    {
+      "transfer_type": "BD",
+      "upc": "614141007349",
+      "description": "TRAIL MIX 12OZ",
+      "qty": 100,
+      "uom": "EACH",
+      "resale_price": 8.99
+    },
+    {
+      "transfer_type": "BD",
+      "upc": "614141007350",
+      "description": "SPRING WATER 24PK",
+      "qty": 75,
+      "uom": "EACH",
+      "resale_price": 12.49
+    }
+  ],
+  "summary": {
+    "line_count": 2
+  }
+}

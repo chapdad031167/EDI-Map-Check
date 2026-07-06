@@ -1,0 +1,31 @@
+{
+  "adjustment": {
+    "adjustment_date": "2026-08-05",
+    "adjustment_number": "CDA9001",
+    "handling_code": "I",
+    "total_amount": 15.0,
+    "cd_flag": "DEBIT",
+    "record_type": "ADJ_INBOUND"
+  },
+  "vendor": {
+    "name": "SUMMIT WHOLESALE FOODS",
+    "id": "7731"
+  },
+  "lines": [
+    {
+      "reason": "PRICING_ERROR",
+      "cd_flag": "CREDIT",
+      "line_id": "1",
+      "amount": -25.0
+    },
+    {
+      "reason": "QUANTITY_CONTESTED",
+      "cd_flag": "DEBIT",
+      "line_id": "2",
+      "amount": 40.0
+    }
+  ],
+  "summary": {
+    "line_count": 2
+  }
+}

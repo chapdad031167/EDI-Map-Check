@@ -60,6 +60,18 @@ EXAMPLE_SCENARIOS = {
         "947_reference_spec.xlsx", "947_baseline.edi", "invadjust_baseline.json"),
     "947 defective adjustment (unknown reason)": (
         "947_reference_spec.xlsx", "947_defects.edi", "invadjust_defects.json"),
+    "846 inventory advice (QA/QO/QC buckets)": (
+        "846_reference_spec.xlsx", "846_baseline.edi", "invinquiry_baseline.json"),
+    "846 defective advice (mystery bucket)": (
+        "846_reference_spec.xlsx", "846_defects.edi", "invinquiry_defects.json"),
+    "812 credit/debit (signed math)": (
+        "812_reference_spec.xlsx", "812_baseline.edi", "creditdebit_baseline.json"),
+    "812 defective adjustment (backwards-keyed credit)": (
+        "812_reference_spec.xlsx", "812_defects.edi", "creditdebit_defects.json"),
+    "867 product transfer report (pharma)": (
+        "867_reference_spec.xlsx", "867_baseline.edi", "xferreport_baseline.json"),
+    "867 defective report (total lies)": (
+        "867_reference_spec.xlsx", "867_defects.edi", "xferreport_defects.json"),
 }
 
 _STATUS_COLORS = {
