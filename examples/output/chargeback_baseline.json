@@ -1,0 +1,39 @@
+{
+  "request": {
+    "purpose": "ORIGINAL",
+    "request_number": "CBR20260815001",
+    "request_date": "2026-08-15",
+    "contract_number": "CTR-2026-0142",
+    "total_debit": 320.0,
+    "record_type": "CHARGEBACK_REQUEST"
+  },
+  "manufacturer": {
+    "name": "HELVETICA PHARMA",
+    "id": "M501"
+  },
+  "distributor": {
+    "name": "GRANITE PHARMA DISTRIBUTION",
+    "id": "D208"
+  },
+  "lines": [
+    {
+      "ndc": "00777310502",
+      "qty": 40,
+      "uom": "EACH",
+      "wac": 5.85,
+      "contract_price": 4.1,
+      "debit_amount": 70.0
+    },
+    {
+      "ndc": "00777310617",
+      "qty": 100,
+      "uom": "EACH",
+      "wac": 12.3,
+      "contract_price": 9.8,
+      "debit_amount": 250.0
+    }
+  ],
+  "summary": {
+    "line_count": 2
+  }
+}

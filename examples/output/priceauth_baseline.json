@@ -1,0 +1,32 @@
+{
+  "auth": {
+    "purpose": "ORIGINAL",
+    "authorization_number": "PA20260701088",
+    "authorization_date": "2026-07-01",
+    "contract_number": "CTR-2026-0142",
+    "effective_date": "2026-07-01",
+    "expiration_date": "2026-12-31",
+    "record_type": "PRICE_AUTH"
+  },
+  "manufacturer": {
+    "name": "HELVETICA PHARMA",
+    "id": "M501"
+  },
+  "distributor": {
+    "name": "GRANITE PHARMA DISTRIBUTION",
+    "id": "D208"
+  },
+  "lines": [
+    {
+      "ndc": "00777310502",
+      "authorized_price": 4.1
+    },
+    {
+      "ndc": "00777310617",
+      "authorized_price": 9.8
+    }
+  ],
+  "summary": {
+    "line_count": 2
+  }
+}

@@ -1,0 +1,49 @@
+# X12 849 Response to Product Transfer Account Adjustment (v004010) —
+# the manufacturer's answer to an 844 chargeback request.
+#
+# Synthetic reference convention (amend per partner guide):
+#   * GS01 assumed CF (shared with the 844 request)
+#   * BGN read as 01=purpose, 02=response number, 03=date
+#   * header REF[CT] contract number, REF[TN] the original 844 request
+#     number (cross-transaction 844<->849 pairing is a future feature —
+#     the reference field is mapped now so the report shows the link)
+#   * AMT[TT] approved total; per line: LIN (ND), QTY[38], AMT[1]
+#     approved amount, LQ (qualifier RS) response status code
+
+transaction:
+  set: "849"
+  name: Response to Product Transfer Account Adjustment
+  functional_group: CF
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [BGN, CUR, REF, DTM, AMT, PER]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, REF, PER]
+        max_repeats: 10
+
+  - area: detail
+    opens_area: [LIN]
+    loops:
+      - id: LIN
+        trigger: LIN
+        qualifier: 1
+        max_repeats: 100000
+        segments: [QTY, CTP, AMT, LQ, REF, PID, DTM]
+
+output_pairing:
+  list_path: lines
+  loop: LIN
+
+reconciliation:
+  - id: approved-total
+    description: the AMT TT approved total must equal the sum of line approved amounts
+    left: { value: AMT02, context: "AMT[TT]" }
+    right: { sum: { loop: LIN, value: AMT02 } }
+    check: equals
+    when: { exists: AMT02, context: "AMT[TT]" }
+    severity: warning

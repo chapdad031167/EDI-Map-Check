@@ -1,0 +1,49 @@
+# X12 845 Price Authorization Acknowledgment/Status (v004010) — the
+# contract/pricing side of the chargeback flow: which items are
+# authorized at which contract price, over which date window.
+#
+# Synthetic reference convention (amend per partner guide):
+#   * GS01 assumed PA
+#   * BGN read as 01=purpose, 02=authorization number, 03=date
+#   * header REF[CT] carries the contract number
+#   * DTM[007] = effective date, DTM[036] = expiration date — the
+#     auth-window check is the date-range showcase (check: not_after)
+#   * per line: LIN (ND = NDC), CTP[CT] authorized contract price
+
+transaction:
+  set: "845"
+  name: Price Authorization Acknowledgment/Status
+  functional_group: PA
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [BGN, CUR, REF, DTM, PER]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, REF, PER]
+        max_repeats: 10
+
+  - area: detail
+    opens_area: [LIN]
+    loops:
+      - id: LIN
+        trigger: LIN
+        qualifier: 1
+        max_repeats: 100000
+        segments: [CTP, QTY, REF, PID, DTM]
+
+output_pairing:
+  list_path: lines
+  loop: LIN
+
+reconciliation:
+  - id: auth-window-sane
+    description: the authorization effective date must not be after its expiration date
+    left: { value: DTM02, context: "DTM[007]" }
+    right: { value: DTM02, context: "DTM[036]" }
+    check: not_after
+    when: { exists: DTM02, context: "DTM[036]" }
+    severity: warning

@@ -72,6 +72,18 @@ EXAMPLE_SCENARIOS = {
         "867_reference_spec.xlsx", "867_baseline.edi", "xferreport_baseline.json"),
     "867 defective report (total lies)": (
         "867_reference_spec.xlsx", "867_defects.edi", "xferreport_defects.json"),
+    "844 chargeback request (contract math)": (
+        "844_reference_spec.xlsx", "844_baseline.edi", "chargeback_baseline.json"),
+    "844 defective chargeback (disputed total)": (
+        "844_reference_spec.xlsx", "844_defects.edi", "chargeback_defects.json"),
+    "845 price authorization (date window)": (
+        "845_reference_spec.xlsx", "845_baseline.edi", "priceauth_baseline.json"),
+    "845 defective authorization (inverted window)": (
+        "845_reference_spec.xlsx", "845_defects.edi", "priceauth_defects.json"),
+    "849 chargeback response (approval statuses)": (
+        "849_reference_spec.xlsx", "849_baseline.edi", "cbresponse_baseline.json"),
+    "854 delivery discrepancy (reason codes)": (
+        "854_reference_spec.xlsx", "854_baseline.edi", "discrepancy_baseline.json"),
 }
 
 _STATUS_COLORS = {
@@ -169,8 +181,8 @@ def main() -> None:
     st.title("EDI MapCheck")
     st.markdown(
         "Vendor-neutral validation for EDI mapping work: upload a **mapping spec**, "
-        "an **X12 850 source**, and the **translated output** — get a field-level "
-        "pass/fail report."
+        "an **X12 source file**, and the **translated output** — get a field-level "
+        "pass/fail report. The transaction set is auto-detected from ST01."
     )
 
     with st.sidebar:
