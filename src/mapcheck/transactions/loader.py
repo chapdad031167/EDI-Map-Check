@@ -250,8 +250,12 @@ def _parse_recon(node: Any, index: int, ctx: _Ctx) -> ReconRule | None:
     if not rule_id:
         return None
     check = node.get("check", "equals")
-    if check != "equals":
-        ctx.err(f"{path}.check", f"unsupported check {check!r} (only 'equals' so far)")
+    if check not in ("equals", "not_after"):
+        ctx.err(
+            f"{path}.check",
+            f"unsupported check {check!r} (expected 'equals' or 'not_after')",
+        )
+        check = "equals"
     severity = node.get("severity", "warning")
     if severity not in ("warning", "error"):
         ctx.err(f"{path}.severity", f"expected 'warning' or 'error', got {severity!r}")
@@ -272,7 +276,7 @@ def _parse_recon(node: Any, index: int, ctx: _Ctx) -> ReconRule | None:
         id=rule_id,
         left=_parse_operand(node.get("left"), f"{path}.left", ctx),
         right=_parse_operand(node.get("right"), f"{path}.right", ctx),
-        check="equals",
+        check=check,
         when_exists=when_exists,
         when_context=when_context,
         severity=severity if severity in ("warning", "error") else "warning",
