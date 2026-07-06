@@ -1,0 +1,50 @@
+# X12 846 Inventory Inquiry/Advice (v004010) — transaction definition.
+#
+# Each LIN item loop carries several QTY segments distinguished by their
+# qualifier (QA available, QO on order, QC committed). Spec rules address
+# a specific bucket with a path Loop Context: source QTY02 with context
+# LIN>QTY[QA] maps the available quantity; LIN>QTY[QO] the on-order one.
+# A QTY whose qualifier no rule references is flagged as unmapped source
+# data — a mystery inventory bucket is worth a look.
+
+transaction:
+  set: "846"
+  name: Inventory Inquiry/Advice
+  functional_group: IB
+  version: "004010"
+
+structure:
+  - area: header
+    segments: [BIA, CUR, DTM, REF, PER]
+    loops:
+      - id: N1
+        trigger: N1
+        qualifier: 1
+        segments: [N2, N3, N4, REF, PER]
+        max_repeats: 10
+
+  - area: detail
+    opens_area: [LIN]
+    loops:
+      - id: LIN
+        trigger: LIN
+        qualifier: 1
+        max_repeats: 100000
+        segments: [PID, MEA, DTM, QTY, UIT, REF, MAN, SLN]
+
+  - area: summary
+    opens_area: [CTT]
+    segments: [CTT]
+
+output_pairing:
+  list_path: lines
+  loop: LIN
+
+reconciliation:
+  - id: ctt-line-count
+    description: CTT01 must equal the LIN loop count
+    left: { value: CTT01 }
+    right: { count: LIN }
+    check: equals
+    when: { exists: CTT01 }
+    severity: warning
