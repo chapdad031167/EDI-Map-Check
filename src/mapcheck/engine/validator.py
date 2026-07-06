@@ -163,7 +163,8 @@ def _evaluate_per_line(
     assert rule.loop_context is not None
     pairing = tx.definition.output_pairing
     pairing_context = LoopContext.parse(pairing.loop) if pairing else None
-    if pairing_context is None or rule.loop_context != pairing_context:
+    # A path context (LIN>QTY[QA]) still pairs per-line on its base loop.
+    if pairing_context is None or rule.loop_context.base() != pairing_context:
         supported = pairing.loop if pairing else "(none declared)"
         return [
             Finding(
@@ -708,10 +709,17 @@ def _referenced_elements(spec: MappingSpec, tx: TransactionDocument) -> set[tupl
                 mark(segment, element)
 
     for rule in spec.rules:
-        for scope in tx.scopes(rule.loop_context):
-            if rule.loop_context is not None and rule.loop_context.qualifier is not None:
-                context_loop = tx.definition.loop(rule.loop_context.segment_id)
-                mark(scope.segments[0], context_loop.qualifier if context_loop else 1)
+        context = rule.loop_context
+        for scope in tx.scopes(context):
+            if context is not None and scope.segments:
+                if context.sub_qualifier is not None:
+                    # path contexts: the narrowed segments' element 01 is
+                    # the qualifier the rule selects on
+                    for segment in scope.segments:
+                        mark(segment, 1)
+                elif context.qualifier is not None:
+                    context_loop = tx.definition.loop(context.segment_id)
+                    mark(scope.segments[0], context_loop.qualifier if context_loop else 1)
             if rule.source_field and rule.rule_type is not RuleType.LOOP_COUNT:
                 mark_all(scope, rule.source_field)
             if rule.condition is not None:
