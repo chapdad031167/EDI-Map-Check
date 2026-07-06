@@ -661,7 +661,17 @@ def _check_reconciliation(tx: TransactionDocument, result: RunResult) -> None:
             left_value = Decimal(left_value)
         if isinstance(right_value, int):
             right_value = Decimal(right_value)
-        if left_value != right_value:
+        if rule.check == "not_after":
+            # ordering check (e.g. effective date <= expiration date);
+            # CCYYMMDD values compare correctly as numbers
+            if not (isinstance(left_value, Decimal) and isinstance(right_value, Decimal)):
+                continue
+            violated = left_value > right_value
+            relation = "must not be after"
+        else:
+            violated = left_value != right_value
+            relation = "!="
+        if violated:
             result.findings.append(
                 Finding(
                     status=Status.FAIL if rule.severity == "error" else Status.WARNING,
@@ -671,7 +681,7 @@ def _check_reconciliation(tx: TransactionDocument, result: RunResult) -> None:
                     actual=right_text,
                     message=(
                         (rule.description + " — " if rule.description else "")
-                        + f"source reconciliation failed: {left_text} != {right_text}"
+                        + f"source reconciliation failed: {left_text} {relation} {right_text}"
                     ),
                 )
             )
