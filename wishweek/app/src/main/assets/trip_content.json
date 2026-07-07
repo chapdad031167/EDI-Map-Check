@@ -4,7 +4,7 @@
     "tripStart": "2026-11-30",
     "tripEnd": "2026-12-06",
     "timezone": "America/New_York",
-    "version": 1
+    "version": 5
   },
   "placeholders": {
     "WISH_COORDINATOR_NAME": "Miya Shultz, Mission Logistics Specialist",
@@ -26,14 +26,41 @@
     "HS_MUPPETS_STATUS": null,
     "BLUEY_HOURS": null,
     "HOLIDAY_EVENT_DATES": null,
-    "SOUVENIR_BUDGET": null,
+    "SOUVENIR_BUDGET": "500",
     "EXPENSE_CARD_AMOUNT": null
   },
   "family": [
-    { "name": "Ashton", "role": "wish_kid", "age": 6, "heightInches": 47, "loves": ["dinosaurs", "T-Rex", "Yoshi"] },
-    { "name": "Aedan", "role": "big_brother", "age": 8, "heightInches": 52, "loves": ["One Piece", "soccer", "thrill rides"] },
-    { "name": "Jason", "role": "dad", "notes": "T2 diabetic: Omnipod 5, Dexcom G7, Fiasp. RNY bypass." },
-    { "name": "Stephanie", "role": "mom" }
+    {
+      "name": "Ashton",
+      "role": "wish_kid",
+      "age": 6,
+      "heightInches": 47,
+      "loves": [
+        "dinosaurs",
+        "T-Rex",
+        "Yoshi"
+      ]
+    },
+    {
+      "name": "Aedan",
+      "role": "big_brother",
+      "age": 8,
+      "heightInches": 52,
+      "loves": [
+        "One Piece",
+        "soccer",
+        "thrill rides"
+      ]
+    },
+    {
+      "name": "Jason",
+      "role": "dad",
+      "notes": "T2 diabetic: Omnipod 5, Dexcom G7, Fiasp. RNY bypass."
+    },
+    {
+      "name": "Stephanie",
+      "role": "mom"
+    }
   ],
   "days": [
     {
@@ -42,9 +69,26 @@
       "emoji": "🚗",
       "park": "Give Kids the World Village",
       "events": [
-        { "time": "AM", "title": "Travel to Orlando", "location": "{{TRAVEL_MODE}}", "notes": "{{FLIGHT_DETAILS}} {{RENTAL_CAR_CONF}}", "mustDo": true },
-        { "time": "PM", "title": "GKTW check-in", "location": "210 S Bass Rd, Kissimmee FL", "notes": "Get buttons, week's party schedule, wish-pass instructions. Ask about {{WISH_PASS_PROCESS}}.", "mustDo": true },
-        { "time": "Evening", "title": "Explore the Village", "location": "GKTW", "notes": "Ice Cream Palace, carousel, keep it light. Early night." }
+        {
+          "time": "AM",
+          "title": "Travel to Orlando",
+          "location": "{{TRAVEL_MODE}}",
+          "notes": "{{FLIGHT_DETAILS}} {{RENTAL_CAR_CONF}}",
+          "mustDo": true
+        },
+        {
+          "time": "PM",
+          "title": "GKTW check-in",
+          "location": "210 S Bass Rd, Kissimmee FL",
+          "notes": "Get buttons, week's party schedule, wish-pass instructions. Ask about {{WISH_PASS_PROCESS}}.",
+          "mustDo": true
+        },
+        {
+          "time": "Evening",
+          "title": "Explore the Village",
+          "location": "GKTW",
+          "notes": "Ice Cream Palace, carousel, keep it light. Early night."
+        }
       ],
       "planB": "If travel runs late: dinner at the Village, skip exploring, protect bedtime. The week is long."
     },
@@ -54,12 +98,44 @@
       "emoji": "🏰",
       "park": "Magic Kingdom",
       "events": [
-        { "time": "Morning", "title": "Rope-drop-ish arrival", "location": "Magic Kingdom", "notes": "Confirm this is NOT a party night: {{MK_PARTY_NIGHTS}}", "mustDo": true },
-        { "time": "AM", "title": "Pirates of the Caribbean", "location": "Adventureland", "notes": "One Piece-adjacent pirates for Aedan", "heightMin": 0 },
-        { "time": "AM", "title": "Jungle Cruise", "location": "Adventureland", "heightMin": 0 },
-        { "time": "Midday", "title": "Big Thunder Mountain", "location": "Frontierland", "heightMin": 40 },
-        { "time": "Afternoon", "title": "BREAK: return to Village or quiet spot", "notes": "Non-negotiable.", "mustDo": true },
-        { "time": "Evening", "title": "Seven Dwarfs Mine Train + castle holiday lights", "location": "Fantasyland", "heightMin": 38 }
+        {
+          "time": "Morning",
+          "title": "Rope-drop-ish arrival",
+          "location": "Magic Kingdom",
+          "notes": "Confirm this is NOT a party night: {{MK_PARTY_NIGHTS}}",
+          "mustDo": true
+        },
+        {
+          "time": "AM",
+          "title": "Pirates of the Caribbean",
+          "location": "Adventureland",
+          "notes": "One Piece-adjacent pirates for Aedan",
+          "heightMin": 0
+        },
+        {
+          "time": "AM",
+          "title": "Jungle Cruise",
+          "location": "Adventureland",
+          "heightMin": 0
+        },
+        {
+          "time": "Midday",
+          "title": "Big Thunder Mountain",
+          "location": "Frontierland",
+          "heightMin": 40
+        },
+        {
+          "time": "Afternoon",
+          "title": "BREAK: return to Village or quiet spot",
+          "notes": "Non-negotiable.",
+          "mustDo": true
+        },
+        {
+          "time": "Evening",
+          "title": "Seven Dwarfs Mine Train + castle holiday lights",
+          "location": "Fantasyland",
+          "heightMin": 38
+        }
       ],
       "planB": "Wiped-out version: Fantasyland only (Dumbo, Pooh, Mine Train), lunch, castle photo, leave by 2pm."
     },
@@ -69,13 +145,52 @@
       "emoji": "🦖",
       "park": "Islands of Adventure",
       "events": [
-        { "time": "Morning", "title": "Jurassic Park Discovery Center", "location": "Jurassic Park", "notes": "Hatching raptor egg. Ease him in.", "mustDo": true },
-        { "time": "AM", "title": "Raptor Encounter", "location": "Jurassic Park", "notes": "PHOTO OF THE TRIP. Prep Ashton: big and snorty, thrilling not scary.", "mustDo": true },
-        { "time": "AM", "title": "Pteranodon Flyers", "location": "Camp Jurassic", "heightMin": 36, "heightMax": 56, "notes": "Ashton + one parent" },
-        { "time": "Midday", "title": "Camp Jurassic playground", "location": "Jurassic Park", "notes": "Budget a full hour minimum." },
-        { "time": "Afternoon", "title": "Jurassic Park River Adventure", "heightMin": 42, "notes": "Ashton clears at 47. T-Rex finale + splash. Ponchos + spare socks.", "mustDo": true },
-        { "time": "Afternoon", "title": "PARENT SWAP: VelociCoaster (Aedan) / more Camp Jurassic (Ashton)", "heightMin": 51, "notes": "Aedan clears at 52. His call." },
-        { "time": "Late", "title": "Seuss Landing wind-down", "location": "Seuss Landing" }
+        {
+          "time": "Morning",
+          "title": "Jurassic Park Discovery Center",
+          "location": "Jurassic Park",
+          "notes": "Hatching raptor egg. Ease him in.",
+          "mustDo": true
+        },
+        {
+          "time": "AM",
+          "title": "Raptor Encounter",
+          "location": "Jurassic Park",
+          "notes": "PHOTO OF THE TRIP. Prep Ashton: big and snorty, thrilling not scary.",
+          "mustDo": true
+        },
+        {
+          "time": "AM",
+          "title": "Pteranodon Flyers",
+          "location": "Camp Jurassic",
+          "heightMin": 36,
+          "heightMax": 56,
+          "notes": "Ashton + one parent"
+        },
+        {
+          "time": "Midday",
+          "title": "Camp Jurassic playground",
+          "location": "Jurassic Park",
+          "notes": "Budget a full hour minimum."
+        },
+        {
+          "time": "Afternoon",
+          "title": "Jurassic Park River Adventure",
+          "heightMin": 42,
+          "notes": "Ashton clears at 47. T-Rex finale + splash. Ponchos + spare socks.",
+          "mustDo": true
+        },
+        {
+          "time": "Afternoon",
+          "title": "PARENT SWAP: VelociCoaster (Aedan) / more Camp Jurassic (Ashton)",
+          "heightMin": 51,
+          "notes": "Aedan clears at 52. His call."
+        },
+        {
+          "time": "Late",
+          "title": "Seuss Landing wind-down",
+          "location": "Seuss Landing"
+        }
       ],
       "planB": "Rain: Discovery Center + Spider-Man (40 in) + indoor Seuss rides. Raptor Encounter runs in light rain, check times."
     },
@@ -85,11 +200,36 @@
       "emoji": "🍦",
       "park": "Give Kids the World Village",
       "events": [
-        { "time": "Morning", "title": "Ice cream for breakfast", "location": "Ice Cream Palace", "mustDo": true },
-        { "time": "AM", "title": "Castle of Miracles: Ashton's star", "location": "Castle of Miracles", "notes": "His star goes in the ceiling FOREVER.", "mustDo": true },
-        { "time": "Midday", "title": "Park of Dreams pool + carousel + mini golf", "location": "GKTW" },
-        { "time": "Evening", "title": "T-REX Cafe dinner", "location": "Disney Springs", "notes": "Reservation: {{TREX_RESERVATION}}. Build-A-Dino budget approved. Chocolate Extinction dessert, split 4 ways.", "mustDo": true },
-        { "time": "Night", "title": "GKTW party night", "notes": "{{GKTW_PARTY_SCHEDULE}}" }
+        {
+          "time": "Morning",
+          "title": "Ice cream for breakfast",
+          "location": "Ice Cream Palace",
+          "mustDo": true
+        },
+        {
+          "time": "AM",
+          "title": "Castle of Miracles: Ashton's star",
+          "location": "Castle of Miracles",
+          "notes": "His star goes in the ceiling FOREVER.",
+          "mustDo": true
+        },
+        {
+          "time": "Midday",
+          "title": "Park of Dreams pool + carousel + mini golf",
+          "location": "GKTW"
+        },
+        {
+          "time": "Evening",
+          "title": "T-REX Cafe dinner",
+          "location": "Disney Springs",
+          "notes": "Reservation: {{TREX_RESERVATION}}. Build-A-Dino budget approved. Chocolate Extinction dessert, split 4 ways.",
+          "mustDo": true
+        },
+        {
+          "time": "Night",
+          "title": "GKTW party night",
+          "notes": "{{GKTW_PARTY_SCHEDULE}}"
+        }
       ],
       "planB": "This IS the plan B day. If the boys are somehow bouncing off walls, add Disney Springs playtime before dinner."
     },
@@ -99,11 +239,32 @@
       "emoji": "⚡",
       "park": "Universal Studios Florida",
       "events": [
-        { "time": "Morning", "title": "Minion Land", "location": "USF entrance area" },
-        { "time": "AM", "title": "Despicable Me Minion Mayhem", "heightMin": 40 },
-        { "time": "Midday", "title": "Diagon Alley + Gringotts", "heightMin": 42, "notes": "Both boys clear 42. Wand shop show for the win." },
-        { "time": "Afternoon", "title": "BREAK", "mustDo": true },
-        { "time": "Late", "title": "E.T. Adventure + Men in Black", "heightMin": 42 }
+        {
+          "time": "Morning",
+          "title": "Minion Land",
+          "location": "USF entrance area"
+        },
+        {
+          "time": "AM",
+          "title": "Despicable Me Minion Mayhem",
+          "heightMin": 40
+        },
+        {
+          "time": "Midday",
+          "title": "Diagon Alley + Gringotts",
+          "heightMin": 42,
+          "notes": "Both boys clear 42. Wand shop show for the win."
+        },
+        {
+          "time": "Afternoon",
+          "title": "BREAK",
+          "mustDo": true
+        },
+        {
+          "time": "Late",
+          "title": "E.T. Adventure + Men in Black",
+          "heightMin": 42
+        }
       ],
       "planB": "Half-day version: Minion Land + Diagon Alley only, out by 1pm, pool at Village."
     },
@@ -113,10 +274,28 @@
       "emoji": "🎬",
       "park": "Hollywood Studios",
       "events": [
-        { "time": "Morning", "title": "Toy Story Land: Slinky Dog + Saucers", "heightMin": 38, "mustDo": true },
-        { "time": "AM", "title": "Rise of the Resistance", "heightMin": 40, "notes": "Both boys clear. Use wish access." },
-        { "time": "Midday", "title": "Millennium Falcon", "heightMin": 38 },
-        { "time": "Afternoon", "title": "OPTION: hop to Animal Kingdom (Safaris, Lion King, Bluey {{BLUEY_HOURS}}) or EPCOT ({{HOLIDAY_EVENT_DATES}})", "notes": "AK note: DinoLand is construction walls. Prep Ashton BEFORE entering." }
+        {
+          "time": "Morning",
+          "title": "Toy Story Land: Slinky Dog + Saucers",
+          "heightMin": 38,
+          "mustDo": true
+        },
+        {
+          "time": "AM",
+          "title": "Rise of the Resistance",
+          "heightMin": 40,
+          "notes": "Both boys clear. Use wish access."
+        },
+        {
+          "time": "Midday",
+          "title": "Millennium Falcon",
+          "heightMin": 38
+        },
+        {
+          "time": "Afternoon",
+          "title": "OPTION: hop to Animal Kingdom (Safaris, Lion King, Bluey {{BLUEY_HOURS}}) or EPCOT ({{HOLIDAY_EVENT_DATES}})",
+          "notes": "AK note: DinoLand is construction walls. Prep Ashton BEFORE entering."
+        }
       ],
       "planB": "No hop. Stay at HS, do Muppets corner ({{HS_MUPPETS_STATUS}}), leave early, last Village pool night."
     },
@@ -126,9 +305,22 @@
       "emoji": "🏠",
       "park": "Give Kids the World Village",
       "events": [
-        { "time": "Morning", "title": "Slow breakfast + one last carousel ride", "location": "GKTW" },
-        { "time": "AM", "title": "Visit Ashton's star one more time", "location": "Castle of Miracles", "mustDo": true },
-        { "time": "Midday", "title": "Travel home", "notes": "{{TRAVEL_MODE}} {{FLIGHT_DETAILS}}" }
+        {
+          "time": "Morning",
+          "title": "Slow breakfast + one last carousel ride",
+          "location": "GKTW"
+        },
+        {
+          "time": "AM",
+          "title": "Visit Ashton's star one more time",
+          "location": "Castle of Miracles",
+          "mustDo": true
+        },
+        {
+          "time": "Midday",
+          "title": "Travel home",
+          "notes": "{{TRAVEL_MODE}} {{FLIGHT_DETAILS}}"
+        }
       ],
       "planB": "If flying later in the day: Village pool morning, pack the night before."
     }
@@ -138,31 +330,70 @@
       "id": "packing_clothes",
       "name": "Packing: Clothes",
       "resetDaily": false,
-      "items": ["Hoodies (50s mornings)", "T-shirts + shorts (70s afternoons)", "Pants per person per day", "Two pairs broken-in sneakers each", "Ponchos x4", "Swimsuits", "Sunscreen (yes, December)", "Refillable water bottles x4"]
+      "items": [
+        "Hoodies (50s mornings)",
+        "T-shirts + shorts (70s afternoons)",
+        "Pants per person per day",
+        "Two pairs broken-in sneakers each",
+        "Ponchos x4",
+        "Swimsuits",
+        "Sunscreen (yes, December)",
+        "Refillable water bottles x4"
+      ]
     },
     {
       "id": "diabetes_kit",
       "name": "Diabetes Kit (Jason)",
       "resetDaily": false,
-      "items": ["Fiasp in insulated case (Frio/hard case + ice pack)", "Backup Omnipod pods (2+ extra)", "Dexcom G7 sensor + overpatches", "Glucose tabs + juice boxes", "Metformin + Mounjaro (fridge at Village)", "RNY snacks: jerky, cheese, nuts", "Battery brick (Dexcom eats battery)", "If flying: ALL supplies carry-on, request TSA pat-down for pump"]
+      "items": [
+        "Fiasp in insulated case (Frio/hard case + ice pack)",
+        "Backup Omnipod pods (2+ extra)",
+        "Dexcom G7 sensor + overpatches",
+        "Glucose tabs + juice boxes",
+        "Metformin + Mounjaro (fridge at Village)",
+        "RNY snacks: jerky, cheese, nuts",
+        "Battery brick (Dexcom eats battery)",
+        "If flying: ALL supplies carry-on, request TSA pat-down for pump"
+      ]
     },
     {
       "id": "ashton_comfort",
       "name": "Ashton Comfort Kit",
       "resetDaily": false,
-      "items": ["Headphones (loud queues)", "Favorite small dino", "Sunglasses", "Photo of Pippin", "Med list + oncology contact card", "Autograph book + fat marker"]
+      "items": [
+        "Headphones (loud queues)",
+        "Favorite small dino",
+        "Sunglasses",
+        "Photo of Pippin",
+        "Med list + oncology contact card",
+        "Autograph book + fat marker"
+      ]
     },
     {
       "id": "daily_park_bag",
       "name": "Daily Park Bag",
       "resetDaily": true,
-      "items": ["GKTW buttons on every shirt", "Tickets/passes + phones charged", "Diabetes kit", "Snacks + water bottles filled", "Ponchos", "Battery brick", "Ashton comfort kit", "Expense card + backup card + ID"]
+      "items": [
+        "GKTW buttons on every shirt",
+        "Tickets/passes + phones charged",
+        "Diabetes kit",
+        "Snacks + water bottles filled",
+        "Ponchos",
+        "Battery brick",
+        "Ashton comfort kit",
+        "Expense card + backup card + ID"
+      ]
     },
     {
       "id": "leaving_room",
       "name": "Leaving-the-Room Check",
       "resetDaily": true,
-      "items": ["Insulin back in fridge or cooler packed", "Chargers unplugged and packed", "Room key x2", "Kids have shoes on the correct feet"]
+      "items": [
+        "Insulin back in fridge or cooler packed",
+        "Chargers unplugged and packed",
+        "Room key x2",
+        "Kids have shoes on the correct feet"
+      ]
     }
   ],
   "infoSections": [
@@ -228,23 +459,55 @@
       "id": "budget",
       "title": "Budget",
       "blocks": [
-        "Covered: meals, gas (expense card {{EXPENSE_CARD_AMOUNT}}), Village food, tickets, lodging, travel.",
-        "Out of pocket: souvenirs, Build-A-Dino (~$35-45, approved), park photos.",
-        "Souvenir budget: {{SOUVENIR_BUDGET}} per kid, announced day 1."
+        "Covered by MAW: meals, gas (expense card {{EXPENSE_CARD_AMOUNT}}), Village food, tickets, lodging, travel, AND spending money.",
+        "Souvenir envelopes ($500/kid) are MAW-funded spending money, not family out-of-pocket.",
+        "Build-A-Dino (~$35-45) comes out of Ashton's envelope, pre-approved.",
+        "Out of pocket: only extras beyond the spending money (unlikely)."
       ]
     }
   ],
   "emergency": {
     "contacts": [
-      { "label": "Miya Shultz (MAW Coordinator)", "phoneToken": "WISH_COORDINATOR_PHONE" },
-      { "label": "GKTW Front Desk", "phoneToken": "GKTW_FRONT_DESK" },
-      { "label": "NCH Neuro-Oncology Nurse Navigator", "phoneToken": "ONCOLOGY_PHONE" },
-      { "label": "Nearest ER", "phoneToken": "NEAREST_ER" },
-      { "label": "Poison Control", "phoneToken": "POISON_CONTROL" }
+      {
+        "label": "Miya Shultz (MAW Coordinator)",
+        "phoneToken": "WISH_COORDINATOR_PHONE"
+      },
+      {
+        "label": "GKTW Front Desk",
+        "phoneToken": "GKTW_FRONT_DESK"
+      },
+      {
+        "label": "NCH Neuro-Oncology Nurse Navigator",
+        "phoneToken": "ONCOLOGY_PHONE"
+      },
+      {
+        "label": "Nearest ER",
+        "phoneToken": "NEAREST_ER"
+      },
+      {
+        "label": "Poison Control",
+        "phoneToken": "POISON_CONTROL"
+      }
     ],
     "medicalCards": [
-      { "person": "Ashton", "fields": ["History: parent-entered in app", "Current meds: parent-entered", "Allergies: parent-entered"] },
-      { "person": "Jason", "fields": ["Type 2 diabetes", "Omnipod 5 pump + Dexcom G7 CGM", "Fiasp insulin, Metformin, Mounjaro weekly", "RNY gastric bypass", "If found confused/unresponsive: check CGM, give fast sugar if low, call 911"] }
+      {
+        "person": "Ashton",
+        "fields": [
+          "History: parent-entered in app",
+          "Current meds: parent-entered",
+          "Allergies: parent-entered"
+        ]
+      },
+      {
+        "person": "Jason",
+        "fields": [
+          "Type 2 diabetes",
+          "Omnipod 5 pump + Dexcom G7 CGM",
+          "Fiasp insulin, Metformin, Mounjaro weekly",
+          "RNY gastric bypass",
+          "If found confused/unresponsive: check CGM, give fast sugar if low, call 911"
+        ]
+      }
     ]
   },
   "kidMode": {
@@ -267,5 +530,60 @@
       "Today's bounty: maximum fun. Wanted: dead tired by 8pm."
     ],
     "roarSound": "assets/sounds/trex_roar.mp3"
+  },
+  "reminders": [
+    {
+      "id": "lunch",
+      "type": "parkDaysOnly",
+      "time": "11:30",
+      "label": "Lunch time. Beat the noon rush, protein first.",
+      "enabledDefault": true
+    },
+    {
+      "id": "snack_pm1",
+      "type": "parkDaysOnly",
+      "time": "14:00",
+      "label": "Eat the damn snack. Check Dexcom.",
+      "enabledDefault": true
+    },
+    {
+      "id": "snack_pm2",
+      "type": "parkDaysOnly",
+      "time": "16:30",
+      "label": "Second snack + water check for everyone.",
+      "enabledDefault": true
+    },
+    {
+      "id": "tuckin_journal",
+      "type": "daily",
+      "time": "19:30",
+      "label": "Tuck-in journal: best thing today?",
+      "enabledDefault": true
+    }
+  ],
+  "budget": {
+    "currency": "USD",
+    "wholeDollarsOnly": true,
+    "envelopes": [
+      {
+        "kid": "Ashton",
+        "startAmountToken": "SOUVENIR_BUDGET"
+      },
+      {
+        "kid": "Aedan",
+        "startAmountToken": "SOUVENIR_BUDGET"
+      }
+    ],
+    "preApproved": [
+      "Build-A-Dino at T-REX Cafe (~$35-45, comes out of Ashton's envelope, already blessed)"
+    ],
+    "fundingSource": "Make-A-Wish spending money"
+  },
+  "journalPrompts": {
+    "default": "Best thing today?",
+    "2026-11-30": "First look at the Village. What did you notice?",
+    "2026-12-02": "DINO DAY. Scale of 1 to ROAR, how was it?",
+    "2026-12-03": "Ashton's star is in the castle forever. How did that feel?",
+    "2026-12-06": "One word for the whole week?"
   }
 }
