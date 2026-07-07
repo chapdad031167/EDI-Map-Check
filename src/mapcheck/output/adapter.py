@@ -180,13 +180,23 @@ def _load_flat(path: Path) -> CanonicalOutput:
 
 
 def load_output(path: str | Path) -> CanonicalOutput:
-    """Load an output file, picking the adapter by extension.
+    """Load an output file, picking the adapter by extension/content.
 
-    ``.json`` loads as JSON; anything else as keyed flat.
+    ``.json`` loads as JSON; ``.xml`` as SAP ORDERS05 IDoc XML; a file
+    whose first line is an ``EDI_DC40`` control record as ORDERS05 IDoc
+    flat; anything else as keyed flat.
     """
+    from mapcheck.output import orders05
+
     path = Path(path)
     if not path.exists():
         raise OutputLoadError(f"output file not found: {path}")
     if path.suffix.lower() == ".json":
         return _load_json(path)
+    if path.suffix.lower() == ".xml":
+        return orders05.load_orders05_xml(path)
+    with path.open(encoding="utf-8") as fh:
+        first_line = fh.readline()
+    if orders05.is_idoc_flat(first_line):
+        return orders05.load_orders05_flat(path)
     return _load_flat(path)
