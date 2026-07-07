@@ -4,7 +4,7 @@
     "tripStart": "2026-11-30",
     "tripEnd": "2026-12-06",
     "timezone": "America/New_York",
-    "version": 5
+    "version": 6
   },
   "placeholders": {
     "WISH_COORDINATOR_NAME": "Miya Shultz, Mission Logistics Specialist",
@@ -492,20 +492,41 @@
     "medicalCards": [
       {
         "person": "Ashton",
+        "editable": true,
         "fields": [
           "History: parent-entered in app",
           "Current meds: parent-entered",
-          "Allergies: parent-entered"
+          "Allergies: parent-entered",
+          "Oncology: NCH Neuro-Oncology Nurse Navigator 614-722-8892"
+        ]
+      },
+      {
+        "person": "Aedan",
+        "editable": true,
+        "fields": [
+          "Allergies: parent-entered",
+          "Meds: parent-entered",
+          "Notes: parent-entered"
         ]
       },
       {
         "person": "Jason",
+        "editable": true,
         "fields": [
           "Type 2 diabetes",
           "Omnipod 5 pump + Dexcom G7 CGM",
           "Fiasp insulin, Metformin, Mounjaro weekly",
           "RNY gastric bypass",
           "If found confused/unresponsive: check CGM, give fast sugar if low, call 911"
+        ]
+      },
+      {
+        "person": "Stephanie",
+        "editable": true,
+        "fields": [
+          "Allergies: parent-entered",
+          "Meds: parent-entered",
+          "Emergency notes: parent-entered"
         ]
       }
     ]
@@ -543,14 +564,14 @@
       "id": "snack_pm1",
       "type": "parkDaysOnly",
       "time": "14:00",
-      "label": "Eat the damn snack. Check Dexcom.",
+      "label": "SNACK ATTACK! 🦖 Fuel up, everyone. (Dad: Dexcom check)",
       "enabledDefault": true
     },
     {
       "id": "snack_pm2",
       "type": "parkDaysOnly",
       "time": "16:30",
-      "label": "Second snack + water check for everyone.",
+      "label": "Round 2: snacks + water bottles for the whole crew.",
       "enabledDefault": true
     },
     {
@@ -577,7 +598,9 @@
     "preApproved": [
       "Build-A-Dino at T-REX Cafe (~$35-45, comes out of Ashton's envelope, already blessed)"
     ],
-    "fundingSource": "Make-A-Wish spending money"
+    "fundingSource": "Make-A-Wish spending money",
+    "showOverallTotal": true,
+    "amountsEditableInApp": true
   },
   "journalPrompts": {
     "default": "Best thing today?",

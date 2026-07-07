@@ -13,17 +13,20 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
@@ -34,19 +37,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.datastore.preferences.core.Preferences
+import com.chapman.wishweek.data.MedicalCard
 import com.chapman.wishweek.data.PrefsStore
 import com.chapman.wishweek.data.Tokens
 import com.chapman.wishweek.data.TripContent
 import com.chapman.wishweek.ui.components.prettyTokenName
-import com.chapman.wishweek.ui.theme.WishAmberContainer
 import com.chapman.wishweek.ui.theme.WishRed
 import kotlinx.coroutines.launch
-
-private val ASHTON_FIELDS = listOf(
-    "history" to "Medical history",
-    "meds" to "Current meds",
-    "allergies" to "Allergies"
-)
 
 @Composable
 fun EmergencyScreen(
@@ -59,7 +56,7 @@ fun EmergencyScreen(
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
             Text(
@@ -68,7 +65,7 @@ fun EmergencyScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        items(content.emergency.contacts) { contact ->
+        items(content.emergency.contacts, key = { it.phoneToken }) { contact ->
             val number = Tokens.resolve(contact.phoneToken, content.placeholders, overrides)
             if (number != null) {
                 Button(
@@ -91,78 +88,109 @@ fun EmergencyScreen(
                     )
                 }
             } else {
-                Card(colors = CardDefaults.cardColors(containerColor = WishAmberContainer)) {
-                    Row(
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                    Text(
+                        text = "🔶 ${contact.label}: number pending (${prettyTokenName(contact.phoneToken)}). Fill it in from Settings.",
+                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "🔶 ${contact.label}: number pending (${prettyTokenName(contact.phoneToken)}). Fill it in from Settings.",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
+                            .padding(16.dp)
+                    )
                 }
             }
         }
-        items(content.emergency.medicalCards) { card ->
-            Card {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        text = "${card.person}'s medical card",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = WishRed
-                    )
-                    card.fields.forEach { field ->
-                        if (!field.contains("parent-entered", ignoreCase = true)) {
-                            Text(text = "• $field", style = MaterialTheme.typography.bodyLarge)
-                        }
-                    }
-                    if (card.person.equals("Ashton", ignoreCase = true)) {
-                        Text(
-                            text = "Parent-entered details (saved on this phone only):",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        ASHTON_FIELDS.forEach { (fieldKey, label) ->
-                            MedicalField(person = card.person, fieldKey = fieldKey, label = label, prefs = prefs)
-                        }
-                    }
-                }
-            }
+        items(content.emergency.medicalCards, key = { it.person }) { card ->
+            MedicalCardView(card = card, prefs = prefs)
         }
     }
 }
 
+/**
+ * A medical card seeded from the JSON. Every line is parent-editable in-app;
+ * edits persist in DataStore as a whole-card override and survive updates.
+ */
 @Composable
-private fun MedicalField(
-    person: String,
-    fieldKey: String,
-    label: String,
-    prefs: Preferences
-) {
+private fun MedicalCardView(card: MedicalCard, prefs: Preferences) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val saved = prefs[PrefsStore.medicalKey(person, fieldKey)] ?: ""
-    var text by rememberSaveable(fieldKey) { mutableStateOf(saved) }
-    // Adopt persisted value once DataStore loads after first composition.
-    var seeded by rememberSaveable(fieldKey) { mutableStateOf(false) }
-    LaunchedEffect(saved) {
-        if (!seeded && saved.isNotBlank() && text.isBlank()) text = saved
-        seeded = true
+
+    val override = PrefsStore.medicalCardOverride(prefs, card.person)
+    // One-time courtesy migration from the v1.x Ashton free-text fields.
+    val legacyExtras = if (override == null && card.person.equals("Ashton", ignoreCase = true)) {
+        listOf("history" to "History", "meds" to "Current meds", "allergies" to "Allergies")
+            .mapNotNull { (key, label) ->
+                prefs[PrefsStore.medicalKey(card.person, key)]
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { "$label: $it" }
+            }
+    } else emptyList()
+    val effective = override ?: (card.fields + legacyExtras)
+
+    var editing by rememberSaveable(card.person) { mutableStateOf(false) }
+    var draft by rememberSaveable(card.person, editing) { mutableStateOf(effective) }
+
+    Card {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "🩺 ${card.person}",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                if (override != null && !editing) {
+                    TextButton(onClick = {
+                        scope.launch { PrefsStore.setMedicalCard(context, card.person, null) }
+                    }) { Text("Reset") }
+                }
+                if (card.editable) {
+                    TextButton(onClick = {
+                        if (editing) {
+                            val cleaned = draft.map { it.trim() }.filter { it.isNotBlank() }
+                            scope.launch { PrefsStore.setMedicalCard(context, card.person, cleaned) }
+                        }
+                        editing = !editing
+                    }) {
+                        Text(if (editing) "Save" else "Edit")
+                    }
+                }
+            }
+            if (!editing) {
+                effective.forEach { field ->
+                    Text(text = "• $field", style = MaterialTheme.typography.bodyLarge)
+                }
+            } else {
+                draft.forEachIndexed { index, line ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = line,
+                            onValueChange = { new ->
+                                draft = draft.toMutableList().also { it[index] = new }
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(onClick = {
+                            draft = draft.toMutableList().also { it.removeAt(index) }
+                        }) {
+                            Icon(Icons.Filled.Clear, contentDescription = "Remove line")
+                        }
+                    }
+                }
+                TextButton(onClick = { draft = draft + "" }) {
+                    Icon(Icons.Filled.Add, contentDescription = null)
+                    Spacer(modifier = Modifier.padding(start = 4.dp))
+                    Text("Add a line")
+                }
+            }
+            Text(
+                text = "Stays on this phone only.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
-    OutlinedTextField(
-        value = text,
-        onValueChange = { new ->
-            text = new
-            scope.launch { PrefsStore.setMedical(context, person, fieldKey, new) }
-        },
-        modifier = Modifier.fillMaxWidth(),
-        label = { Text(label) },
-        minLines = 1
-    )
 }

@@ -1,5 +1,6 @@
 package com.chapman.wishweek.ui.screens
 
+import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -51,9 +53,12 @@ fun BudgetScreen(
     val scope = rememberCoroutineScope()
     val purchases = PrefsStore.purchases(prefs)
 
+    // In-app edited amounts win over the SOUVENIR_BUDGET token; editing a
+    // start amount recomputes remaining and never touches the purchase list.
     val startAmounts = content.budget.envelopes.associate { env ->
-        env.kid to BudgetLogic.parseStartAmount(
-            Tokens.resolve(env.startAmountToken, content.placeholders, overrides)
+        env.kid to BudgetLogic.effectiveStart(
+            Tokens.resolve(env.startAmountToken, content.placeholders, overrides),
+            PrefsStore.budgetStartOverride(prefs, env.kid)
         )
     }
     val trackerReady = startAmounts.values.all { it != null }
@@ -61,6 +66,7 @@ fun BudgetScreen(
     var pickedKid by rememberSaveable { mutableStateOf("") }
     var amountText by rememberSaveable { mutableStateOf("") }
     var note by rememberSaveable { mutableStateOf("") }
+    var editingStartFor by rememberSaveable { mutableStateOf<String?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
@@ -78,6 +84,35 @@ fun BudgetScreen(
                 }
             }
         }
+        if (content.budget.showOverallTotal && trackerReady) {
+            item {
+                val starts = startAmounts.mapValues { it.value ?: 0 }
+                val overall by animateIntAsState(
+                    targetValue = BudgetLogic.overallRemaining(starts, purchases),
+                    label = "overallRemaining"
+                )
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(text = "Overall remaining", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            text = "$$overall",
+                            style = MaterialTheme.typography.displaySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = content.budget.fundingSource,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 content.budget.envelopes.forEach { env ->
@@ -90,16 +125,32 @@ fun BudgetScreen(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(text = env.kid, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                text = if (start == null) "🔶" else "$" + BudgetLogic.remaining(start, purchases, env.kid),
-                                style = MaterialTheme.typography.headlineMedium,
-                                color = WishGreen
-                            )
+                            if (start == null) {
+                                Text(
+                                    text = "🔶",
+                                    style = MaterialTheme.typography.headlineMedium
+                                )
+                            } else {
+                                val remaining by animateIntAsState(
+                                    targetValue = BudgetLogic.remaining(start, purchases, env.kid),
+                                    label = "remaining_${env.kid}"
+                                )
+                                Text(
+                                    text = "$$remaining",
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    color = WishGreen
+                                )
+                            }
                             Text(
                                 text = if (start == null) "pending" else "of $$start left",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            if (content.budget.amountsEditableInApp) {
+                                TextButton(onClick = { editingStartFor = env.kid }) {
+                                    Text("Edit amount")
+                                }
+                            }
                         }
                     }
                 }
@@ -227,7 +278,7 @@ fun BudgetScreen(
                     )
                 }
             }
-            items(purchases.reversed()) { p ->
+            items(purchases.reversed(), key = { it.at }) { p ->
                 Card {
                     Row(
                         modifier = Modifier
@@ -251,6 +302,56 @@ fun BudgetScreen(
             }
         }
     }
+
+    editingStartFor?.let { kid ->
+        StartAmountDialog(
+            kid = kid,
+            current = startAmounts[kid],
+            onDismiss = { editingStartFor = null },
+            onSave = { amount ->
+                editingStartFor = null
+                scope.launch { PrefsStore.setBudgetStart(context, kid, amount) }
+            }
+        )
+    }
+}
+
+@Composable
+private fun StartAmountDialog(
+    kid: String,
+    current: Int?,
+    onDismiss: () -> Unit,
+    onSave: (Int?) -> Unit
+) {
+    var text by rememberSaveable(kid) { mutableStateOf(current?.toString() ?: "") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("$kid's starting amount") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { new -> text = new.filter { it.isDigit() }.take(5) },
+                    label = { Text("Whole dollars") },
+                    singleLine = true
+                )
+                Text(
+                    text = "Purchases already logged are kept; the remaining balance just recomputes.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onSave(text.toIntOrNull()) },
+                enabled = text.toIntOrNull() != null
+            ) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 @Composable

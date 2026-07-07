@@ -78,6 +78,32 @@ object PrefsStore {
     // Budget tracker
     val PURCHASES = stringPreferencesKey("budget_purchases")
 
+    /** Per-kid starting-amount override, editable in-app on top of the token. */
+    fun budgetStartKey(kid: String) = stringPreferencesKey("budget_start_${kid.lowercase()}")
+
+    fun budgetStartOverride(prefs: Preferences, kid: String): Int? =
+        prefs[budgetStartKey(kid)]?.toIntOrNull()
+
+    suspend fun setBudgetStart(context: Context, kid: String, amount: Int?) {
+        context.dataStore.edit { prefs ->
+            if (amount == null) prefs.remove(budgetStartKey(kid))
+            else prefs[budgetStartKey(kid)] = amount.toString()
+        }
+    }
+
+    /** Whole medical card override: an edited list of field lines per person. */
+    fun medicalCardKey(person: String) = stringPreferencesKey("medcard_${person.lowercase()}")
+
+    fun medicalCardOverride(prefs: Preferences, person: String): List<String>? =
+        MedicalFields.decode(prefs[medicalCardKey(person)])
+
+    suspend fun setMedicalCard(context: Context, person: String, fields: List<String>?) {
+        context.dataStore.edit { prefs ->
+            if (fields == null) prefs.remove(medicalCardKey(person))
+            else prefs[medicalCardKey(person)] = MedicalFields.encode(fields)
+        }
+    }
+
     fun purchases(prefs: Preferences): List<Purchase> = BudgetLogic.decode(prefs[PURCHASES])
 
     suspend fun setPurchases(context: Context, purchases: List<Purchase>) {

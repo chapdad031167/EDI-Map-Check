@@ -6,9 +6,12 @@ import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -42,9 +45,41 @@ interface JournalDao {
     suspend fun delete(date: String, person: String)
 }
 
-@Database(entities = [JournalEntry::class], version = 1, exportSchema = false)
+/** One itinerary override per date; the JSON blob is a serialized DayEdit. */
+@Entity(tableName = "day_override")
+data class DayOverrideRow(
+    @PrimaryKey val date: String,
+    val json: String
+)
+
+@Dao
+interface ItineraryDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(row: DayOverrideRow)
+
+    @Query("SELECT * FROM day_override")
+    fun overrides(): Flow<List<DayOverrideRow>>
+
+    @Query("DELETE FROM day_override WHERE date = :date")
+    suspend fun restoreDay(date: String)
+
+    @Query("DELETE FROM day_override")
+    suspend fun restoreAll()
+}
+
+private val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `day_override` (" +
+                "`date` TEXT NOT NULL, `json` TEXT NOT NULL, PRIMARY KEY(`date`))"
+        )
+    }
+}
+
+@Database(entities = [JournalEntry::class, DayOverrideRow::class], version = 2, exportSchema = false)
 abstract class JournalDb : RoomDatabase() {
     abstract fun dao(): JournalDao
+    abstract fun itineraryDao(): ItineraryDao
 
     companion object {
         @Volatile
@@ -56,7 +91,7 @@ abstract class JournalDb : RoomDatabase() {
                     context.applicationContext,
                     JournalDb::class.java,
                     "wishweek_journal.db"
-                ).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2).build().also { instance = it }
             }
     }
 }

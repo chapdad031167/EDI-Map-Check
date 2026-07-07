@@ -1,5 +1,9 @@
 package com.chapman.wishweek.ui.screens
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,9 +20,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -26,6 +36,26 @@ import androidx.datastore.preferences.core.Preferences
 import com.chapman.wishweek.data.Checklist
 import com.chapman.wishweek.data.PrefsStore
 import kotlinx.coroutines.launch
+
+/** A checkbox that gives a satisfying bounce when ticked. */
+@Composable
+private fun BouncyCheckbox(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val scale = remember { Animatable(1f) }
+    var previous by remember { mutableStateOf(checked) }
+    LaunchedEffect(checked) {
+        if (checked && !previous) {
+            scale.snapTo(1f)
+            scale.animateTo(1.35f, tween(durationMillis = 90))
+            scale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy))
+        }
+        previous = checked
+    }
+    Checkbox(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = Modifier.scale(scale.value)
+    )
+}
 
 @Composable
 fun ChecklistsScreen(
@@ -78,7 +108,7 @@ fun ChecklistsScreen(
                                 .padding(vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Checkbox(
+                            BouncyCheckbox(
                                 checked = isChecked,
                                 onCheckedChange = {
                                     scope.launch {

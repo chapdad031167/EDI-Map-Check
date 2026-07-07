@@ -48,13 +48,16 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.datastore.preferences.core.emptyPreferences
+import com.chapman.wishweek.data.ItineraryLogic
 import com.chapman.wishweek.data.PrefsStore
 import com.chapman.wishweek.data.Tokens
 import com.chapman.wishweek.data.TripContent
 import com.chapman.wishweek.data.TripRepository
 import com.chapman.wishweek.data.dataStore
+import com.chapman.wishweek.journal.JournalDb
 import com.chapman.wishweek.notify.ReminderScheduler
 import com.chapman.wishweek.ui.screens.BudgetScreen
+import com.chapman.wishweek.ui.screens.ItineraryFocus
 import com.chapman.wishweek.ui.screens.ChecklistsScreen
 import com.chapman.wishweek.ui.screens.EmergencyScreen
 import com.chapman.wishweek.ui.screens.InfoScreen
@@ -108,6 +111,16 @@ fun WishWeekApp(content: TripContent) {
     val overrides = PrefsStore.overridesFrom(prefs, content.placeholders.keys)
     val kidMode = prefs[PrefsStore.KID_MODE] ?: false
 
+    // Itinerary = bundled base merged with the Room override layer.
+    val itineraryDao = remember { JournalDb.get(context).itineraryDao() }
+    val overrideRows by itineraryDao.overrides().collectAsState(initial = emptyList())
+    val edits = remember(overrideRows) {
+        overrideRows.mapNotNull { row -> ItineraryLogic.decode(row.json)?.let { row.date to it } }.toMap()
+    }
+    val displayDays = remember(content, edits) {
+        content.days.map { ItineraryLogic.display(it, edits[it.date]) }
+    }
+
     // Device clock drives the Today screen and the 6pm tuck-in card; refresh
     // once a minute so both roll over without a restart.
     var today by remember { mutableStateOf(LocalDate.now()) }
@@ -132,7 +145,7 @@ fun WishWeekApp(content: TripContent) {
     }
 
     if (kidMode) {
-        KidModeScreen(content = content, today = today, onExitKidMode = {
+        KidModeScreen(content = content, displayDays = displayDays, today = today, onExitKidMode = {
             scope.launch { PrefsStore.setKidMode(context, false) }
         })
         return
@@ -140,6 +153,7 @@ fun WishWeekApp(content: TripContent) {
 
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var overlay by rememberSaveable { mutableStateOf<String?>(null) }
+    var itineraryFocus by remember { mutableStateOf<ItineraryFocus?>(null) }
 
     val pendingCount = content.placeholders.keys.count { token ->
         Tokens.resolve(token, content.placeholders, overrides) == null
@@ -244,14 +258,26 @@ fun WishWeekApp(content: TripContent) {
                     0 -> TodayScreen(
                         content = content,
                         overrides = overrides,
+                        displayDays = displayDays,
                         today = today,
                         evening = evening,
                         prefs = prefs,
                         onOpenBudget = { overlay = OVERLAY_BUDGET },
                         onOpenJournal = { overlay = OVERLAY_JOURNAL },
-                        onOpenScrapbook = { overlay = OVERLAY_SCRAPBOOK }
+                        onOpenScrapbook = { overlay = OVERLAY_SCRAPBOOK },
+                        onOpenEvent = { date, eventId ->
+                            itineraryFocus = ItineraryFocus(date, eventId)
+                            selectedTab = 1
+                        }
                     )
-                    1 -> ItineraryScreen(content = content, overrides = overrides)
+                    1 -> ItineraryScreen(
+                        content = content,
+                        overrides = overrides,
+                        displayDays = displayDays,
+                        edits = edits,
+                        focus = itineraryFocus,
+                        onFocusConsumed = { itineraryFocus = null }
+                    )
                     2 -> ChecklistsScreen(
                         checklists = content.checklists,
                         prefs = prefs,
