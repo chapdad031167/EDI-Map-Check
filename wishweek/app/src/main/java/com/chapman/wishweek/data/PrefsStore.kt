@@ -74,4 +74,31 @@ object PrefsStore {
     suspend fun setMedical(context: Context, person: String, field: String, value: String) {
         context.dataStore.edit { prefs -> prefs[medicalKey(person, field)] = value }
     }
+
+    // Budget tracker
+    val PURCHASES = stringPreferencesKey("budget_purchases")
+
+    fun purchases(prefs: Preferences): List<Purchase> = BudgetLogic.decode(prefs[PURCHASES])
+
+    suspend fun setPurchases(context: Context, purchases: List<Purchase>) {
+        context.dataStore.edit { prefs -> prefs[PURCHASES] = BudgetLogic.encode(purchases) }
+    }
+
+    // Reminders: per-reminder enabled flag and time override (HH:mm)
+    fun reminderEnabledKey(id: String) = booleanPreferencesKey("rem_on_$id")
+    fun reminderTimeKey(id: String) = stringPreferencesKey("rem_time_$id")
+
+    fun reminderEnabled(prefs: Preferences, def: ReminderDef): Boolean =
+        prefs[reminderEnabledKey(def.id)] ?: def.enabledDefault
+
+    fun reminderTime(prefs: Preferences, def: ReminderDef): String =
+        prefs[reminderTimeKey(def.id)] ?: def.time
+
+    suspend fun setReminderEnabled(context: Context, id: String, enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[reminderEnabledKey(id)] = enabled }
+    }
+
+    suspend fun setReminderTime(context: Context, id: String, time: String) {
+        context.dataStore.edit { prefs -> prefs[reminderTimeKey(id)] = time }
+    }
 }

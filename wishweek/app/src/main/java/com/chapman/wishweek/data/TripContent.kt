@@ -11,7 +11,10 @@ data class TripContent(
     val checklists: List<Checklist> = emptyList(),
     val infoSections: List<InfoSection> = emptyList(),
     val emergency: Emergency = Emergency(),
-    val kidMode: KidMode = KidMode()
+    val kidMode: KidMode = KidMode(),
+    val reminders: List<ReminderDef> = emptyList(),
+    val budget: BudgetConfig = BudgetConfig(),
+    val journalPrompts: Map<String, String> = emptyMap()
 )
 
 @Serializable
@@ -92,4 +95,30 @@ data class KidMode(
     val dinoFacts: List<String> = emptyList(),
     val aedanLines: List<String> = emptyList(),
     val roarSound: String = ""
+)
+
+@Serializable
+data class ReminderDef(
+    val id: String,
+    /** "parkDaysOnly" or "daily" */
+    val type: String = "daily",
+    /** 24h HH:mm */
+    val time: String,
+    val label: String,
+    val enabledDefault: Boolean = true
+)
+
+@Serializable
+data class BudgetConfig(
+    val currency: String = "USD",
+    val wholeDollarsOnly: Boolean = true,
+    val envelopes: List<Envelope> = emptyList(),
+    val preApproved: List<String> = emptyList(),
+    val fundingSource: String = ""
+)
+
+@Serializable
+data class Envelope(
+    val kid: String,
+    val startAmountToken: String
 )

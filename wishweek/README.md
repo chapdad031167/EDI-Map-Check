@@ -1,6 +1,6 @@
 # Ashton's Wish Week 🦖
 
-An offline-first Android app for one family's Make-A-Wish trip to Orlando, Nov 30 to Dec 6, 2026. Built with Kotlin and Jetpack Compose, Material 3, single module. It works with zero connectivity inside the parks: the manifest requests **no permissions at all, including no INTERNET**, so nothing can leave the phone even by accident.
+An offline-first Android app for one family's Make-A-Wish trip to Orlando, Nov 30 to Dec 6, 2026. Built with Kotlin and Jetpack Compose, Material 3, single module. It works with zero connectivity inside the parks: the manifest requests **no INTERNET permission**, so nothing can leave the phone even by accident. The only permissions are `POST_NOTIFICATIONS` (meal and snack reminders) and `RECEIVE_BOOT_COMPLETED` (re-arm those reminders after a reboot).
 
 ## The five tabs
 
@@ -12,7 +12,15 @@ An offline-first Android app for one family's Make-A-Wish trip to Orlando, Nov 3
 | Info | Searchable family reference book: GKTW guide, wish access, golden rules, heights, diabetes playbook, care notes, budget |
 | Emergency | One-tap call buttons, medical cards. Ashton's history/meds/allergies are parent-entered and stored only on the phone |
 
-Settings (gear, top right) holds the Kid Mode toggle and the **Fill In The Blanks** editor.
+Settings (gear, top right) holds the Kid Mode toggle, the reminder controls, and the **Fill In The Blanks** editor.
+
+## V1.1 features
+
+**Meal and snack reminders.** Defined in the JSON under `"reminders"`. Lunch and both snack nudges fire on park days only (Village days are the rest days); the 19:30 tuck-in journal nudge fires every trip day. Nothing fires outside Nov 30 to Dec 6. Each reminder can be toggled or re-timed in Settings. Implementation is AlarmManager with inexact alarms plus a boot receiver, all local. There are deliberately no medication reminders; those live outside this app.
+
+**Souvenir budget tracker.** One envelope per kid, both bound to the `SOUVENIR_BUDGET` token ($500 each, Make-A-Wish spending money). A card on the Today screen shows "Ashton: $X left • Aedan: $X left"; tap it for the tracker: pick kid, giant numpad, optional note, save. Undo removes the last entry. Whole dollars only, persisted in DataStore. If the token were unfilled the card shows the amber chip and the tracker stays locked.
+
+**Memory journal.** After 6pm the Today screen grows a "Tonight's tuck-in" card with the day's prompt (per-day prompts in `"journalPrompts"`). One entry per person per day: a line plus an optional photo, taken with the camera or picked from the gallery (no storage or camera manifest permissions needed; photos are copied into app-private storage). Entries live in a Room database and survive app updates. The Scrapbook screen shows the whole week chronologically and exports a one-page-per-day PDF to Downloads (pure local file write). To back the journal up, export the PDF; the raw database lives in the app's private data and goes away if the app is uninstalled, so export before deleting the app.
 
 ## The placeholder system
 
