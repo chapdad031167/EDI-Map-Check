@@ -198,13 +198,32 @@ Instructions sheet; `mapcheck init-spec` gives you a blank one.
 
 ## Output formats
 
-Two reference output formats ship with the MVP, behind one adapter seam:
+The validation engine never reads the output file directly — every format
+loads into one canonical model addressed by the spec's Target Field paths.
+That seam is what makes MapCheck vendor-neutral on the *output* side too:
+the same spec validates a translation whether the target is a staging file
+or an ERP's native inbound document.
 
 * **JSON** — nested `order` / `ship_to` / `lines[]` / `summary`
 * **Keyed flat** — record-per-line `H|k=v|...`, `A|role=ship_to|...`, `D|...`, `S|...`
+* **SAP IDoc ORDERS05** — the real-world X12-to-ERP case, in **both**
+  wire formats: the fixed-width IDoc flat file (EDI_DC40 control record +
+  EDI_DD40 data records) and IDoc XML. Both parse through one shared fold,
+  so the flat and XML renditions of the same IDoc produce identical
+  canonical data — and therefore identical findings. Specs address IDoc
+  fields mechanically (`refs.001.belnr`, `partners.we.name1`,
+  `lines[].ids.003.idtnr`); what a qualifier *means* stays in the spec,
+  same as X12-side `REF[DP]` addressing.
 
-The engine only ever sees the canonical model, so adding a format is one
-parsing function in `mapcheck/output/`.
+```bash
+# same 850, same spec, either IDoc format — identical results
+mapcheck validate --spec examples/specs/orders05_reference_spec.xlsx \
+  --source examples/source/850_sap.edi \
+  --output examples/output/orders05_baseline.txt   # or .xml
+```
+
+Adding a format is one parsing function in `mapcheck/output/` that emits
+the canonical dict; the engine, spec grammar, and reports come for free.
 
 ## Test data policy
 
@@ -221,7 +240,7 @@ src/mapcheck/
 ├── spec/          Excel template, rule model, condition grammar, spec loader
 ├── transactions/  declarative transaction definitions (YAML) + registry
 ├── x12/           pyx12-backed generic parser, driven by the definitions
-├── output/        JSON + keyed-flat adapters onto one canonical model
+├── output/        JSON, keyed-flat, and SAP IDoc ORDERS05 (flat + XML) adapters
 ├── engine/        rule evaluation, format checks, reconciliation, findings
 ├── report/        terminal report, Excel export, SQLite history
 └── cli.py         the mapcheck command
@@ -233,7 +252,8 @@ tests/             pytest suite (every rule category, every planted defect)
 
 ## Scope
 
-Inbound X12 → generic internal output, one spec template format. Not yet:
+Inbound X12 → internal or ERP-native output (JSON, keyed flat, SAP IDoc
+ORDERS05), one spec template format. Not yet:
 outbound direction, arbitrary spec formats, partner-specific overrides,
 cross-transaction pairing (e.g. 844/849). The layering above is built so
 those grow without rework.
