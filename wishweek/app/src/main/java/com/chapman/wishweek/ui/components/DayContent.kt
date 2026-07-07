@@ -1,15 +1,20 @@
 package com.chapman.wishweek.ui.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
@@ -29,9 +34,8 @@ import androidx.compose.ui.unit.dp
 import com.chapman.wishweek.data.FamilyMember
 import com.chapman.wishweek.data.TripEvent
 import com.chapman.wishweek.ui.theme.WishAmberContainer
-import com.chapman.wishweek.ui.theme.WishBlueLight
-import com.chapman.wishweek.ui.theme.WishGreen
-import com.chapman.wishweek.ui.theme.WishRed
+import com.chapman.wishweek.ui.theme.WishGold
+import com.chapman.wishweek.ui.theme.WishTealLight
 
 /** Family members with a known height, i.e. the kids. */
 fun kidsOf(family: List<FamilyMember>): List<FamilyMember> =
@@ -43,21 +47,41 @@ fun heightVerdict(kid: FamilyMember, min: Int?, max: Int?): String {
     return if (ok) "${kid.name} ✅" else "${kid.name} ❌"
 }
 
+/** The gold "this drifted from the original plan" dot. */
+@Composable
+fun ModifiedDot() {
+    Box(
+        modifier = Modifier
+            .padding(start = 6.dp)
+            .size(8.dp)
+            .background(WishGold, CircleShape)
+    )
+}
+
 @Composable
 fun EventRow(
     event: TripEvent,
     family: List<FamilyMember>,
     placeholders: Map<String, String?>,
-    overrides: Map<String, String>
+    overrides: Map<String, String>,
+    modified: Boolean = false,
+    highlighted: Boolean = false,
+    onClick: (() -> Unit)? = null
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (event.mustDo) WishBlueLight else MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.Top
-    ) {
+    val baseColor = if (event.mustDo) WishTealLight else MaterialTheme.colorScheme.surface
+    val bg by animateColorAsState(
+        targetValue = if (highlighted) MaterialTheme.colorScheme.secondaryContainer else baseColor,
+        animationSpec = tween(durationMillis = 450),
+        label = "eventHighlight"
+    )
+    var rowModifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(16.dp))
+        .background(bg)
+    if (onClick != null) rowModifier = rowModifier.clickable(onClickLabel = "Open in itinerary") { onClick() }
+    rowModifier = rowModifier.padding(horizontal = 14.dp, vertical = 12.dp)
+
+    Row(modifier = rowModifier, verticalAlignment = Alignment.Top) {
         Column(modifier = Modifier.width(76.dp)) {
             Text(
                 text = event.time ?: "",
@@ -71,7 +95,7 @@ fun EventRow(
                     Icon(
                         imageVector = Icons.Filled.Star,
                         contentDescription = "Must do",
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = WishGold,
                         modifier = Modifier.padding(end = 6.dp)
                     )
                 }
@@ -81,6 +105,7 @@ fun EventRow(
                     overrides = overrides,
                     style = MaterialTheme.typography.titleSmall
                 )
+                if (modified) ModifiedDot()
             }
             if (!event.location.isNullOrBlank()) {
                 TokenText(
@@ -109,17 +134,15 @@ fun EventRow(
                 val verdicts = kidsOf(family).joinToString("   ") {
                     heightVerdict(it, event.heightMin, event.heightMax)
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Text(
-                            text = "$label   $verdicts",
-                            style = MaterialTheme.typography.labelMedium,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Text(
+                        text = "$label   $verdicts",
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
                 }
             }
         }
@@ -136,23 +159,23 @@ fun PlanBSection(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(WishAmberContainer)
-            .clickable { expanded = !expanded }
-            .padding(12.dp)
+            .clickable(onClickLabel = if (expanded) "Hide plan B" else "Show plan B") { expanded = !expanded }
+            .padding(14.dp)
             .animateContentSize()
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "Plan B",
                 style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.tertiary
+                color = MaterialTheme.colorScheme.onSecondaryContainer
             )
             Spacer(modifier = Modifier.weight(1f))
             Text(
                 text = if (expanded) "Hide" else "Show",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.tertiary
+                color = MaterialTheme.colorScheme.onSecondaryContainer
             )
         }
         if (expanded) {
@@ -165,10 +188,4 @@ fun PlanBSection(
             )
         }
     }
-}
-
-/** Small colored legend used on itinerary height rules. */
-object VerdictColors {
-    val pass = WishGreen
-    val fail = WishRed
 }

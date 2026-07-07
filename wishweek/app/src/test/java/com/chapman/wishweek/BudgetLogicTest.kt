@@ -59,6 +59,37 @@ class BudgetLogicTest {
     }
 
     @Test
+    fun `in-app edited start amount wins over the token`() {
+        assertEquals(600, BudgetLogic.effectiveStart("500", 600))
+        assertEquals(500, BudgetLogic.effectiveStart("500", null))
+        assertEquals(250, BudgetLogic.effectiveStart(null, 250))
+        assertNull(BudgetLogic.effectiveStart(null, null))
+    }
+
+    @Test
+    fun `editing a start amount recomputes remaining and keeps every purchase`() {
+        var list = emptyList<Purchase>()
+        list = BudgetLogic.add(list, "Ashton", 40, "dino", 1)
+        list = BudgetLogic.add(list, "Ashton", 10, "stickers", 2)
+        assertEquals(450, BudgetLogic.remaining(500, list, "Ashton"))
+        // Parent bumps the envelope to 600: transactions untouched, math redone.
+        val newStart = BudgetLogic.effectiveStart("500", 600)!!
+        assertEquals(550, BudgetLogic.remaining(newStart, list, "Ashton"))
+        assertEquals(2, list.size)
+    }
+
+    @Test
+    fun `overall remaining sums both envelopes`() {
+        var list = emptyList<Purchase>()
+        list = BudgetLogic.add(list, "Ashton", 40, "", 1)
+        list = BudgetLogic.add(list, "Aedan", 100, "", 2)
+        assertEquals(
+            (500 - 40) + (500 - 100),
+            BudgetLogic.overallRemaining(mapOf("Ashton" to 500, "Aedan" to 500), list)
+        )
+    }
+
+    @Test
     fun `purchases round trip through the persisted encoding`() {
         val list = listOf(
             Purchase("Ashton", 40, "Build-A-Dino", 100),

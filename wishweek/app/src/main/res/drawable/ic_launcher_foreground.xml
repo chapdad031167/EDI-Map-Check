@@ -1,11 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Chunky T-Rex silhouette (white) with a gold wish star on teal. Built from
+     unioned blocks so it reads clearly at launcher sizes. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Wish star -->
+    <!-- head -->
+    <path android:fillColor="#FFFFFF" android:pathData="M56,26 h28 v14 h-28 z" />
+    <!-- open-mouth notch (background teal) -->
+    <path android:fillColor="#00565C" android:pathData="M72,34 h12 v6 h-12 z" />
+    <!-- lower jaw -->
+    <path android:fillColor="#FFFFFF" android:pathData="M72,38 h10 v4 h-10 z" />
+    <!-- eye (background teal) -->
+    <path android:fillColor="#00565C" android:pathData="M62,30 h3.5 v3.5 h-3.5 z" />
+    <!-- neck -->
+    <path android:fillColor="#FFFFFF" android:pathData="M52,38 h12 v20 h-12 z" />
+    <!-- body -->
+    <path android:fillColor="#FFFFFF" android:pathData="M40,46 h24 v16 h-24 z" />
+    <!-- tail -->
+    <path android:fillColor="#FFFFFF" android:pathData="M32,42 h12 v8 h-12 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M27,38 h9 v8 h-9 z" />
+    <!-- tiny arm -->
+    <path android:fillColor="#FFFFFF" android:pathData="M64,46 h6 v3.5 h-6 z" />
+    <!-- front leg + foot -->
+    <path android:fillColor="#FFFFFF" android:pathData="M56,62 h6 v14 h-6 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M56,74 h10 v4 h-10 z" />
+    <!-- back leg + foot -->
+    <path android:fillColor="#FFFFFF" android:pathData="M44,62 h6 v14 h-6 z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M44,74 h10 v4 h-10 z" />
+    <!-- wish star -->
     <path
-        android:fillColor="#FFD54F"
-        android:pathData="M54,30 L60.2,46.1 L77.4,46.7 L63.9,57.2 L68.7,73.8 L54,64.6 L39.3,73.8 L44.1,57.2 L30.6,46.7 L47.8,46.1 Z" />
+        android:fillColor="#FFC53D"
+        android:pathData="M34,18 L36,23.3 L41.6,23.5 L37.2,27.1 L38.7,32.5 L34,29.4 L29.3,32.5 L30.8,27.1 L26.4,23.5 L32,23.3 Z" />
 </vector>

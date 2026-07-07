@@ -14,6 +14,18 @@ An offline-first Android app for one family's Make-A-Wish trip to Orlando, Nov 3
 
 Settings (gear, top right) holds the Kid Mode toggle, the reminder controls, and the **Fill In The Blanks** editor.
 
+## V1.2 features
+
+**Editable itinerary.** Tap the pencil on any day card: add, edit, delete (soft, restorable), and reorder events; move an event to a different day; edit the day's title, emoji, and park. The bundled JSON stays the immutable original plan; edits live as an override layer in the app's database and merge at render time, so "Restore this day" and "Restore the whole original plan" always work. Anything that drifted from the plan wears a small gold dot.
+
+**Medical cards for all four.** The Emergency tab has a card each for Ashton, Aedan, Jason, and Stephanie. Every line is editable in-app (Edit, change lines, add or remove lines, Save); edits persist on-device and survive updates, with a Reset back to the bundled card.
+
+**Budget upgrades.** An overall-remaining header sits above the per-kid envelopes, starting amounts are editable in-app ("Edit amount" on an envelope) without touching logged purchases, and balances animate as they change.
+
+**Event deep links.** The "First up when we get there" card and every event on the Today screen jump to the Itinerary tab with the right day expanded, scrolled to the event, and briefly highlighted.
+
+**Design pass.** Deep teal + wish-star gold + dino green palette, bundled Nunito type (no runtime font fetching), per-park gradient hero cards, big celebratory countdown numerals, consistent 16dp card rhythm, a bouncier checklist, a star that pops on journal entries, and a proper T-Rex-and-star adaptive icon with a teal splash. The Emergency tab keeps red for the call buttons only.
+
 ## V1.1 features
 
 **Meal and snack reminders.** Defined in the JSON under `"reminders"`. Lunch and both snack nudges fire on park days only (Village days are the rest days); the 19:30 tuck-in journal nudge fires every trip day. Nothing fires outside Nov 30 to Dec 6. Each reminder can be toggled or re-timed in Settings. Implementation is AlarmManager with inexact alarms plus a boot receiver, all local. There are deliberately no medication reminders; those live outside this app.

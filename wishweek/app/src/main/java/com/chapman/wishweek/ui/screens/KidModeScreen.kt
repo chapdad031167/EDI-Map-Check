@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.chapman.wishweek.data.DayResolver
+import com.chapman.wishweek.data.DisplayDay
 import com.chapman.wishweek.data.TripContent
 import com.chapman.wishweek.data.TripPhase
 import com.chapman.wishweek.ui.theme.WishBlueLight
@@ -60,6 +61,7 @@ fun playRoar(context: Context, assetPath: String) {
 @Composable
 fun KidModeScreen(
     content: TripContent,
+    displayDays: List<DisplayDay>,
     today: LocalDate,
     onExitKidMode: () -> Unit
 ) {
@@ -90,7 +92,7 @@ fun KidModeScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
                 is TripPhase.DuringTrip -> {
-                    val day = content.days[phase.dayIndex]
+                    val day = displayDays[phase.dayIndex]
                     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                         Text(text = day.emoji, fontSize = 64.sp)
                         Text(
@@ -120,14 +122,14 @@ fun KidModeScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        content.days[phase.dayIndex].events.forEach { event ->
+                        displayDays[phase.dayIndex].events.forEach { de ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = if (event.mustDo) "⭐" else "▪️",
+                                    text = if (de.event.mustDo) "⭐" else "▪️",
                                     fontSize = 22.sp,
                                     modifier = Modifier.padding(end = 10.dp)
                                 )
-                                Text(text = event.title, style = MaterialTheme.typography.titleMedium)
+                                Text(text = de.event.title, style = MaterialTheme.typography.titleMedium)
                             }
                         }
                     }

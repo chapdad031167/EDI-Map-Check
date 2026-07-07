@@ -87,6 +87,7 @@ data class EmergencyContact(
 @Serializable
 data class MedicalCard(
     val person: String,
+    val editable: Boolean = false,
     val fields: List<String> = emptyList()
 )
 
@@ -114,7 +115,9 @@ data class BudgetConfig(
     val wholeDollarsOnly: Boolean = true,
     val envelopes: List<Envelope> = emptyList(),
     val preApproved: List<String> = emptyList(),
-    val fundingSource: String = ""
+    val fundingSource: String = "",
+    val showOverallTotal: Boolean = false,
+    val amountsEditableInApp: Boolean = false
 )
 
 @Serializable

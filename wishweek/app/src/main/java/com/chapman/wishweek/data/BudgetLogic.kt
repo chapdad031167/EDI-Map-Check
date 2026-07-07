@@ -28,6 +28,14 @@ object BudgetLogic {
         return digits.toIntOrNull()
     }
 
+    /** In-app edited amount wins over the token value. */
+    fun effectiveStart(tokenValue: String?, editedAmount: Int?): Int? =
+        editedAmount ?: parseStartAmount(tokenValue)
+
+    /** Sum of every kid's remaining, for the overall header. */
+    fun overallRemaining(starts: Map<String, Int>, purchases: List<Purchase>): Int =
+        starts.entries.sumOf { (kid, start) -> remaining(start, purchases, kid) }
+
     fun spent(purchases: List<Purchase>, kid: String): Int =
         purchases.filter { it.kid == kid }.sumOf { it.amount }
 
