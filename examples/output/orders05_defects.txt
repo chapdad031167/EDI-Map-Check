@@ -1,0 +1,18 @@
+EDI_DC40                                          ORDERS05
+E1EDK01                                                        000 EUR                                                                        NB
+E1EDK14                                                        0081000
+E1EDK03                                                        01220260701
+E1EDK03                                                        00220260715
+E1EDK02                                                        001PO5500770                                26-07-01
+E1EDKA1                                                        WE 0118                              ALPINE OUTFITTERS STORE 118                                                                                                                 4501 CASCADE AVE                                                                                         BOULDER                                     80301                                                                                                                                                                                                                                                                                                                                    CO
+E1EDKA1                                                        AG 0001                              ALPINE OUTFITTERS CORPORATE
+E1EDP01                                                        000010     12.000         EA                          8.50
+E1EDP20                                                        12.000                   20260715
+E1EDP02                                                        001                                   1
+E1EDP19                                                        003614141007349                       TRAIL MIX 12OZ
+E1EDP01                                                        000020     6.000          KAR                         24.00
+E1EDP20                                                        6.000                    20260715
+E1EDP02                                                        001                                   2
+E1EDP19                                                        003614141007350                       SPRING WATER 24PK
+E1EDS01                                                        0013
+E1EDS01                                                        002306.00
