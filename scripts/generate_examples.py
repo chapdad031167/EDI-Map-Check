@@ -2579,6 +2579,274 @@ def generate_997_files() -> None:
         print(f"wrote {path.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# 850-to-ORDERS05 (SAP IDoc) scenario: one spec, outputs in both IDoc formats
+# --------------------------------------------------------------------------
+
+SPEC_ORDERS05_ROWS: list[tuple[str, ...]] = [
+    ("I-001", "BEG01", "", "header.action", "CODE_LIST", "", "", "", "",
+     "", "SAP_ACTION", "string", "", "IDoc action code (synthetic convention)."),
+    ("I-002", "BEG02", "", "header.bsart", "CODE_LIST", "", "", "", "",
+     "", "PO_TYPE_SAP", "string", "", "SAP document type."),
+    ("I-003", "BEG03", "", "refs.001.belnr", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..35", "E1EDK02 qualifier 001 = customer PO number."),
+    ("I-004", "BEG05", "", "refs.001.datum", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y%m%d", "SAP dates are YYYYMMDD."),
+    ("I-005", "BEG05", "", "dates.012", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y%m%d", "E1EDK03 IDDAT 012 = document date."),
+    ("I-006", "CUR02", "", "header.curcy", "CONDITIONAL",
+     "Map the currency only when a buying-party currency code is sent.",
+     "CUR01 = 'BY'", "SOURCE", "SKIP", "", "", "string", "len:3..3", ""),
+    ("I-007", "DTM02", "DTM[002]", "dates.002", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y%m%d", "IDDAT 002 = requested delivery."),
+    ("I-008", "", "", "org.012", "CONSTANT", "", "", "", "",
+     "NB", "", "string", "", "Hardcoded order type (E1EDK14 qualifier 012)."),
+    ("I-009", "N102", "N1[ST]", "partners.we.name1", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..35", "WE = ship-to party."),
+    ("I-010", "N104", "N1[ST]", "partners.we.partn", "CONDITIONAL",
+     "Map the store number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("I-011", "N301", "N1[ST]", "partners.we.stras", "DIRECT", "", "", "", "",
+     "", "", "string", "", ""),
+    ("I-012", "N401", "N1[ST]", "partners.we.ort01", "DIRECT", "", "", "", "",
+     "", "", "string", "", ""),
+    ("I-013", "N402", "N1[ST]", "partners.we.regio", "DIRECT", "", "", "", "",
+     "", "", "string", "len:2..3", ""),
+    ("I-014", "N403", "N1[ST]", "partners.we.pstlz", "DIRECT", "", "", "", "",
+     "", "", "string", "len:5..9", ""),
+    ("I-015", "N102", "N1[BT]", "partners.ag.name1", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..35", "AG = sold-to party."),
+    ("I-016", "N104", "N1[BT]", "partners.ag.partn", "CONDITIONAL",
+     "Map the sold-to number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("I-017", "PO101", "PO1", "lines[].refs.001.zeile", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "E1EDP02 qualifier 001 = customer PO line."),
+    ("I-018", "PO102", "PO1", "lines[].menge", "DIRECT", "", "", "", "",
+     "", "", "decimal", "", "SAP quantities carry decimals (12.000)."),
+    ("I-019", "PO103", "PO1", "lines[].menee", "CODE_LIST", "", "", "", "",
+     "", "UOM_SAP", "string", "", "X12 UOM to SAP unit."),
+    ("I-020", "PO104", "PO1", "lines[].vprei", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2", ""),
+    ("I-021", "PO107", "PO1", "lines[].ids.003.idtnr", "CONDITIONAL",
+     "Map the UPC only when the product ID qualifier is UP.",
+     "PO106 = 'UP'", "SOURCE", "SKIP", "", "", "string", "len:12..14",
+     "E1EDP19 qualifier 003 = EAN/UPC."),
+    ("I-022", "PID05", "PO1", "lines[].ids.003.ktext", "CONDITIONAL",
+     "Map the free-form description when the PID is free-form.",
+     "PID01 = 'F'", "SOURCE", "SKIP", "", "", "string", "len:1..70", ""),
+    ("I-023", "CTT01", "", "summary.001", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "E1EDS01 SUMID 001 = item count."),
+    ("I-024", "PO1", "", "summary.001", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("I-025", "AMT02", "AMT[TT]", "summary.002", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2", "E1EDS01 SUMID 002 = net value."),
+]
+
+CODE_LIST_ORDERS05_ROWS = [
+    ("SAP_ACTION", "00", "000", "Original (synthetic convention)"),
+    ("SAP_ACTION", "01", "001", "Cancellation (synthetic convention)"),
+    ("SAP_ACTION", "05", "002", "Replacement (synthetic convention)"),
+    ("PO_TYPE_SAP", "SA", "NB", "Stand-alone -> standard order"),
+    ("PO_TYPE_SAP", "NE", "ZNB", "New order -> custom order type"),
+    ("UOM_SAP", "EA", "ST", "Each -> Stueck"),
+    ("UOM_SAP", "CA", "KAR", "Case -> Karton"),
+    ("UOM_SAP", "DZ", "DZN", "Dozen"),
+]
+
+SPEC_ORDERS05_META = {
+    "Transaction Set": "850",
+    "X12 Version": "004010",
+    "Spec Name": "Synthetic 850-to-ORDERS05 map - reference example",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-07-07",
+}
+
+SAP_850 = [
+    "BEG*00*SA*PO5500077**20260701",
+    "CUR*BY*USD",
+    "DTM*002*20260715",
+    "N1*ST*ALPINE OUTFITTERS STORE 118*92*0118",
+    "N3*4501 CASCADE AVE",
+    "N4*BOULDER*CO*80301",
+    "N1*BT*ALPINE OUTFITTERS CORPORATE*92*0001",
+    "PO1*1*12*EA*8.5**UP*614141007349",
+    "PID*F****TRAIL MIX 12OZ",
+    "PO1*2*6*CA*24**UP*614141007350",
+    "PID*F****SPRING WATER 24PK",
+    "PO1*3*5*DZ*12**UP*614141007351",
+    "PID*F****GRANOLA BARS VARIETY",
+    "CTT*3",
+    "AMT*TT*306",
+]
+
+# One scenario structure drives BOTH IDoc writers: (segment, {FIELD: value}).
+# POSEX and E1EDP20 appear in the files for realism; the adapter ignores
+# them by design.
+
+
+def _orders05_segments(
+    po_number: str,
+    po_date: str,
+    currency: str | None,
+    bsart: str | None,
+    order_type: str | None,
+    lines: list[dict],
+    item_count: str,
+    net_value: str,
+    extra_org: tuple[str, str] | None = None,
+) -> list[tuple[str, dict[str, str]]]:
+    segments: list[tuple[str, dict[str, str]]] = []
+    k01 = {"ACTION": "000"}
+    if currency:
+        k01["CURCY"] = currency
+    if bsart:
+        k01["BSART"] = bsart
+    segments.append(("E1EDK01", k01))
+    if order_type:
+        segments.append(("E1EDK14", {"QUALF": "012", "ORGID": order_type}))
+    if extra_org:
+        segments.append(("E1EDK14", {"QUALF": extra_org[0], "ORGID": extra_org[1]}))
+    segments.append(("E1EDK03", {"IDDAT": "012", "DATUM": po_date}))
+    segments.append(("E1EDK03", {"IDDAT": "002", "DATUM": "20260715"}))
+    segments.append(("E1EDK02", {"QUALF": "001", "BELNR": po_number, "DATUM": po_date}))
+    segments.append(("E1EDKA1", {
+        "PARVW": "WE", "PARTN": "0118", "NAME1": "ALPINE OUTFITTERS STORE 118",
+        "STRAS": "4501 CASCADE AVE", "ORT01": "BOULDER", "PSTLZ": "80301",
+        "REGIO": "CO",
+    }))
+    segments.append(("E1EDKA1", {
+        "PARVW": "AG", "PARTN": "0001", "NAME1": "ALPINE OUTFITTERS CORPORATE",
+    }))
+    for index, line in enumerate(lines, start=1):
+        segments.append(("E1EDP01", {
+            "POSEX": f"{index * 10:06d}", "MENGE": line["menge"],
+            "MENEE": line["menee"], "VPREI": line["vprei"],
+        }))
+        segments.append(("E1EDP20", {"WMENG": line["menge"], "EDATU": "20260715"}))
+        segments.append(("E1EDP02", {"QUALF": "001", "ZEILE": line["zeile"]}))
+        segments.append(("E1EDP19", {
+            "QUALF": "003", "IDTNR": line["idtnr"], "KTEXT": line["ktext"],
+        }))
+    segments.append(("E1EDS01", {"SUMID": "001", "SUMME": item_count}))
+    segments.append(("E1EDS01", {"SUMID": "002", "SUMME": net_value}))
+    return segments
+
+
+_ORDERS05_LINES = [
+    {"zeile": "1", "menge": "12.000", "menee": "ST", "vprei": "8.50",
+     "idtnr": "614141007349", "ktext": "TRAIL MIX 12OZ"},
+    {"zeile": "2", "menge": "6.000", "menee": "KAR", "vprei": "24.00",
+     "idtnr": "614141007350", "ktext": "SPRING WATER 24PK"},
+    {"zeile": "3", "menge": "5.000", "menee": "DZN", "vprei": "12.00",
+     "idtnr": "614141007351", "ktext": "GRANOLA BARS VARIETY"},
+]
+
+BASELINE_ORDERS05 = _orders05_segments(
+    po_number="PO5500077", po_date="20260701", currency="USD", bsart="NB",
+    order_type="NB", lines=_ORDERS05_LINES, item_count="3", net_value="306.00",
+)
+
+# Planted defects (identical in both formats):
+#   1. PO number transposed                    -> value_mismatch   (I-003)
+#   2. currency EUR though CUR01=BY sent USD   -> condition_logic  (I-006)
+#   3. line 1 unit left untranslated (EA)      -> code_translation (I-019)
+#   4. E1EDK14 012 hardcode missing            -> constant_default (I-008)
+#   5. refs.001.datum as YYMMDD-ish, not SAP YYYYMMDD -> format    (I-004)
+#      (kept 8 chars wide so the flat DATUM field carries it whole and
+#      both formats stay byte-identical)
+#   6. third line dropped                      -> count_mismatch + missing_output
+#   7. stray E1EDK14 008 sales org             -> unmapped_target warning
+_DEFECT_LINES = [
+    {**_ORDERS05_LINES[0], "menee": "EA"},
+    _ORDERS05_LINES[1],
+]
+
+DEFECTS_ORDERS05 = _orders05_segments(
+    po_number="PO5500770", po_date="26-07-01", currency="EUR", bsart="NB",
+    order_type=None, lines=_DEFECT_LINES, item_count="3", net_value="306.00",
+    extra_org=("008", "1000"),
+)
+# the defective datum is ISO in refs but the document date must stay valid
+for _seg, _fields in DEFECTS_ORDERS05:
+    if _seg == "E1EDK03" and _fields.get("IDDAT") == "012":
+        _fields["DATUM"] = "20260701"
+
+#: Writer-side field layouts: the parser tables plus realism-only fields
+#: (POSEX, E1EDP20) that the adapter deliberately ignores.
+_WRITER_FIELDS = {
+    "E1EDK01": {"ACTION": (0, 3), "CURCY": (4, 3), "BSART": (79, 4)},
+    "E1EDK14": {"QUALF": (0, 3), "ORGID": (3, 35)},
+    "E1EDK03": {"IDDAT": (0, 3), "DATUM": (3, 8)},
+    "E1EDK02": {"QUALF": (0, 3), "BELNR": (3, 35), "DATUM": (44, 8)},
+    "E1EDKA1": {"PARVW": (0, 3), "PARTN": (3, 17), "NAME1": (37, 35),
+                "STRAS": (177, 35), "ORT01": (282, 35), "PSTLZ": (326, 9),
+                "REGIO": (655, 3)},
+    "E1EDP01": {"POSEX": (0, 6), "MENGE": (11, 15), "MENEE": (26, 3),
+                "VPREI": (54, 15)},
+    "E1EDP20": {"WMENG": (0, 15), "EDATU": (25, 8)},
+    "E1EDP02": {"QUALF": (0, 3), "BELNR": (3, 35), "ZEILE": (38, 6)},
+    "E1EDP19": {"QUALF": (0, 3), "IDTNR": (3, 35), "KTEXT": (38, 70)},
+    "E1EDS01": {"SUMID": (0, 3), "SUMME": (3, 18)},
+}
+
+
+def _write_idoc_flat(segments: list[tuple[str, dict[str, str]]]) -> str:
+    lines = ["EDI_DC40".ljust(30) + " " * 20 + "ORDERS05"]
+    for seg_name, fields in segments:
+        table = _WRITER_FIELDS[seg_name]
+        end = max(off + ln for off, ln in table.values())
+        sdata = [" "] * end
+        for name, value in fields.items():
+            offset, length = table[name]
+            assert len(value) <= length, f"{seg_name}.{name} value {value!r} overflows its field"
+            sdata[offset : offset + len(value)] = value
+        lines.append((seg_name.ljust(30) + " " * 33 + "".join(sdata)).rstrip())
+    return "\n".join(lines) + "\n"
+
+
+def _write_idoc_xml(segments: list[tuple[str, dict[str, str]]]) -> str:
+    import xml.etree.ElementTree as ET
+
+    root = ET.Element("ORDERS05")
+    idoc = ET.SubElement(root, "IDOC", BEGIN="1")
+    control = ET.SubElement(idoc, "EDI_DC40", SEGMENT="1")
+    ET.SubElement(control, "IDOCTYP").text = "ORDERS05"
+    current_item = None
+    for seg_name, fields in segments:
+        parent = idoc
+        if seg_name == "E1EDP01":
+            current_item = None  # new item starts at IDOC level
+        elif seg_name.startswith("E1EDP") and current_item is not None:
+            parent = current_item
+        element = ET.SubElement(parent, seg_name, SEGMENT="1")
+        for name, value in fields.items():
+            ET.SubElement(element, name).text = value
+        if seg_name == "E1EDP01":
+            current_item = element
+    ET.indent(root)
+    return ET.tostring(root, encoding="unicode") + "\n"
+
+
+def generate_orders05_files() -> None:
+    generate_spec(
+        EXAMPLES / "specs" / "orders05_reference_spec.xlsx",
+        SPEC_ORDERS05_ROWS, CODE_LIST_ORDERS05_ROWS, SPEC_ORDERS05_META,
+    )
+    source_path = EXAMPLES / "source" / "850_sap.edi"
+    source_path.write_text(build_interchange(SAP_850, "71", "850", "PO"))
+    print(f"wrote {source_path.relative_to(REPO_ROOT)}")
+    for name, segments in (
+        ("orders05_baseline", BASELINE_ORDERS05),
+        ("orders05_defects", DEFECTS_ORDERS05),
+    ):
+        flat_path = EXAMPLES / "output" / f"{name}.txt"
+        flat_path.write_text(_write_idoc_flat(segments))
+        print(f"wrote {flat_path.relative_to(REPO_ROOT)}")
+        xml_path = EXAMPLES / "output" / f"{name}.xml"
+        xml_path.write_text(_write_idoc_xml(segments))
+        print(f"wrote {xml_path.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -2604,6 +2872,7 @@ def main() -> None:
     generate_inventory_files()
     generate_pharma_files()
     generate_997_files()
+    generate_orders05_files()
 
 
 if __name__ == "__main__":
