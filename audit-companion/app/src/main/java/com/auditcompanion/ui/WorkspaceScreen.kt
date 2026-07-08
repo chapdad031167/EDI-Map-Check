@@ -46,7 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.auditcompanion.AppViewModel
 import com.auditcompanion.data.AuditStatus
-import com.auditcompanion.data.CATEGORIES
+import com.auditcompanion.data.Category
+import com.auditcompanion.data.CheckItem
 import com.auditcompanion.data.Finding
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,18 +56,24 @@ fun WorkspaceScreen(
     viewModel: AppViewModel,
     auditId: Long,
     onBack: () -> Unit,
-    onAddFinding: (categoryIndex: Int) -> Unit,
+    onAddFinding: (categoryId: Long) -> Unit,
     onEditFinding: (Finding) -> Unit,
     onOpenReport: () -> Unit,
 ) {
-    val audit by viewModel.audit(auditId).collectAsStateWithLifecycle(null)
-    val findings by viewModel.findings(auditId).collectAsStateWithLifecycle(emptyList())
-    val checkStates by viewModel.checkStates(auditId).collectAsStateWithLifecycle(emptyList())
+    val auditFlow = remember(auditId) { viewModel.audit(auditId) }
+    val findingsFlow = remember(auditId) { viewModel.findings(auditId) }
+    val checkStatesFlow = remember(auditId) { viewModel.checkStates(auditId) }
+    val audit by auditFlow.collectAsStateWithLifecycle(null)
+    val findings by findingsFlow.collectAsStateWithLifecycle(emptyList())
+    val checkStates by checkStatesFlow.collectAsStateWithLifecycle(emptyList())
+    val categories by viewModel.categories.collectAsStateWithLifecycle()
+    val allChecks by viewModel.checks.collectAsStateWithLifecycle()
 
     val currentAudit = audit ?: return
     val checkedMap = remember(checkStates) {
-        checkStates.associate { (it.categoryIndex to it.checkIndex) to it.checked }
+        checkStates.associate { it.checkId to it.checked }
     }
+    val checksByCategory = remember(allChecks) { allChecks.groupBy { it.categoryId } }
 
     var statusMenuOpen by remember { mutableStateOf(false) }
 
@@ -119,17 +126,18 @@ fun WorkspaceScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            CATEGORIES.forEachIndexed { categoryIndex, category ->
-                item(key = "cat-$categoryIndex") {
+            categories.forEachIndexed { index, category ->
+                item(key = "cat-${category.id}") {
                     CategorySection(
-                        number = categoryIndex + 1,
-                        categoryIndex = categoryIndex,
+                        number = index + 1,
+                        category = category,
+                        checks = checksByCategory[category.id].orEmpty(),
                         checkedMap = checkedMap,
-                        findings = findings.filter { it.categoryIndex == categoryIndex },
-                        onCheck = { checkIndex, checked ->
-                            viewModel.setCheck(auditId, categoryIndex, checkIndex, checked)
+                        findings = findings.filter { it.categoryId == category.id },
+                        onCheck = { checkId, checked ->
+                            viewModel.setCheck(auditId, checkId, checked)
                         },
-                        onAddFinding = { onAddFinding(categoryIndex) },
+                        onAddFinding = { onAddFinding(category.id) },
                         onEditFinding = onEditFinding,
                     )
                 }
@@ -141,53 +149,57 @@ fun WorkspaceScreen(
 @Composable
 private fun CategorySection(
     number: Int,
-    categoryIndex: Int,
-    checkedMap: Map<Pair<Int, Int>, Boolean>,
+    category: Category,
+    checks: List<CheckItem>,
+    checkedMap: Map<Long, Boolean>,
     findings: List<Finding>,
-    onCheck: (checkIndex: Int, checked: Boolean) -> Unit,
+    onCheck: (checkId: Long, checked: Boolean) -> Unit,
     onAddFinding: () -> Unit,
     onEditFinding: (Finding) -> Unit,
 ) {
-    val category = CATEGORIES[categoryIndex]
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text("$number. ${category.name}", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                category.meaning,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (category.meaning.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    category.meaning,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Spacer(Modifier.height(8.dp))
 
-            category.checks.forEachIndexed { checkIndex, check ->
+            checks.forEach { check ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Checkbox(
-                        checked = checkedMap[categoryIndex to checkIndex] ?: false,
-                        onCheckedChange = { onCheck(checkIndex, it) },
+                        checked = checkedMap[check.id] ?: false,
+                        onCheckedChange = { onCheck(check.id, it) },
                     )
-                    Text(check, style = MaterialTheme.typography.bodyMedium)
+                    Text(check.text, style = MaterialTheme.typography.bodyMedium)
                 }
             }
 
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = {
-                    copyToClipboard(context, clipboard, category.claudePrompt, "Prompt")
-                }) {
-                    Icon(
-                        Icons.Default.ContentCopy,
-                        contentDescription = null,
-                        modifier = Modifier.width(18.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Copy prompt")
+                if (category.claudePrompt.isNotBlank()) {
+                    OutlinedButton(onClick = {
+                        copyToClipboard(context, clipboard, category.claudePrompt, "Prompt")
+                    }) {
+                        Icon(
+                            Icons.Default.ContentCopy,
+                            contentDescription = null,
+                            modifier = Modifier.width(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Copy prompt")
+                    }
                 }
                 Button(onClick = onAddFinding) {
                     Icon(
