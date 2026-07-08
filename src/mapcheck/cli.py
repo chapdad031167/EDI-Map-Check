@@ -34,8 +34,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mapcheck",
         description=(
-            "EDI MapCheck — validate that a translated output file matches "
-            "what the mapping spec says an X12 850 source should produce."
+            "EDI MapCheck — validate that a translated file matches what the "
+            "mapping spec says its source should produce, in either direction "
+            "(X12 to internal, or internal to X12)."
         ),
     )
     parser.add_argument("--version", action="version", version=f"mapcheck {__version__}")
@@ -43,12 +44,20 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_val = sub.add_parser("validate", help="run a validation")
     p_val.add_argument("--spec", required=True, help="mapping spec workbook (.xlsx)")
-    p_val.add_argument("--source", required=True, help="X12 850 source file")
-    p_val.add_argument("--output", required=True, help="translated output file (.json or flat)")
+    p_val.add_argument(
+        "--source",
+        required=True,
+        help="the translation's input (X12 for inbound specs, internal document for outbound)",
+    )
+    p_val.add_argument(
+        "--output",
+        required=True,
+        help="the translation's result (internal document for inbound specs, X12 for outbound)",
+    )
     p_val.add_argument(
         "--transaction",
         metavar="SET",
-        help="force a transaction set (default: auto-detect from the source file's ST01)",
+        help="force a transaction set (default: auto-detect from the X12 file's ST01)",
     )
     p_val.add_argument(
         "--export-xlsx",
@@ -72,6 +81,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init-spec", help="write a blank mapping spec template")
     p_init.add_argument("path", help="where to write the template (.xlsx)")
+    p_init.add_argument(
+        "--direction",
+        choices=("inbound", "outbound"),
+        default="inbound",
+        help="map direction preset for the Meta sheet (default: inbound)",
+    )
 
     p_hist = sub.add_parser("history", help="list recent validation runs")
     p_hist.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
@@ -109,7 +124,7 @@ def _cmd_init_spec(args: argparse.Namespace) -> int:
     if path.exists():
         print(f"mapcheck: {path} already exists, not overwriting", file=sys.stderr)
         return EXIT_USAGE
-    create_template(path)
+    create_template(path, direction=args.direction)
     print(f"Blank spec template written to {path}")
     return 0
 
