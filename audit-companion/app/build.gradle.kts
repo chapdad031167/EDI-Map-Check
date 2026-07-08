@@ -17,9 +17,22 @@ android {
         versionName = "1.0"
     }
 
+    // Personal-use signing key, committed on purpose so CI always signs
+    // releases with the same key (required for updates to install over the
+    // old version). The repo is private and the key has no store value.
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file("signing/release.keystore")
+            storePassword = "auditcompanion"
+            keyAlias = "audit-companion"
+            keyPassword = "auditcompanion"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

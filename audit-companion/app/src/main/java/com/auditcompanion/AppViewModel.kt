@@ -1,6 +1,7 @@
 package com.auditcompanion
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auditcompanion.data.AppDatabase
@@ -15,9 +16,11 @@ import com.auditcompanion.data.Platform
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -229,6 +232,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             dao.updateCheck(a.copy(sortOrder = b.sortOrder))
             dao.updateCheck(b.copy(sortOrder = a.sortOrder))
+        }
+    }
+
+    // ---- Backup ----
+
+    /** [onResult] receives null on success, or a short error message. */
+    fun exportBackup(uri: Uri, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val error = withContext(Dispatchers.IO) {
+                runCatching { BackupManager.export(getApplication(), db, uri) }
+                    .exceptionOrNull()?.message
+            }
+            onResult(error)
+        }
+    }
+
+    /** Replaces all data on the device. [onResult] as in [exportBackup]. */
+    fun importBackup(uri: Uri, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val error = withContext(Dispatchers.IO) {
+                runCatching { BackupManager.import(getApplication(), db, uri) }
+                    .exceptionOrNull()?.message
+            }
+            onResult(error)
         }
     }
 }
