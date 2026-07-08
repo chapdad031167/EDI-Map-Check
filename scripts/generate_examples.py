@@ -2847,6 +2847,162 @@ def generate_orders05_files() -> None:
         print(f"wrote {xml_path.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# Outbound 855: internal POA response -> X12 855 (Direction: outbound)
+# --------------------------------------------------------------------------
+
+# Row ID, Source Field (canonical path), Loop Context (X12 target side),
+# Target Field (X12 element), Rule Type, ... — see the template Instructions.
+SPEC855_OUT_ROWS: list[tuple[str, ...]] = [
+    ("O-001", "order.purpose", "", "BAK01", "CODE_LIST", "", "", "", "",
+     "", "TX_PURPOSE_OUT", "string", "", "Internal purpose to X12 code."),
+    ("O-002", "order.ack_type", "", "BAK02", "CODE_LIST", "", "", "", "",
+     "", "ACK_TYPE_OUT", "string", "", ""),
+    ("O-003", "order.po_number", "", "BAK03", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", "PO number being acknowledged."),
+    ("O-004", "order.po_date", "", "BAK04", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y%m%d", "Internal ISO date must land as CCYYMMDD."),
+    ("O-005", "order.vendor_order_number", "", "BAK08", "CONDITIONAL",
+     "Send the vendor order number when the response carries one.",
+     "EXISTS(order.vendor_order_number)", "SOURCE", "SKIP",
+     "", "", "string", "", ""),
+    ("O-006", "", "N1[SE]", "N103", "CONSTANT", "", "", "", "",
+     "92", "", "string", "", "ID qualifier hardcoded by the map."),
+    ("O-007", "vendor.name", "N1[SE]", "N102", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", "Selling party."),
+    ("O-008", "vendor.id", "N1[SE]", "N104", "CONDITIONAL",
+     "Send the vendor number when the response carries one.",
+     "EXISTS(vendor.id)", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("O-009", "lines[].line_no", "PO1", "PO101", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("O-010", "lines[].qty_ordered", "PO1", "PO102", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Ordered quantity echoed back."),
+    ("O-011", "lines[].uom", "PO1", "PO103", "CODE_LIST", "", "", "", "",
+     "", "UOM_OUT", "string", "", "Internal unit to X12 UOM."),
+    ("O-012", "lines[].unit_price", "PO1", "PO104", "DIRECT", "", "", "", "",
+     "", "", "decimal", "", "PO104 is X12 R: explicit decimal, no fixed places."),
+    ("O-013", "", "PO1", "PO106", "CONSTANT", "", "", "", "",
+     "UP", "", "string", "", "Product ID qualifier hardcoded per line."),
+    ("O-014", "lines[].upc", "PO1", "PO107", "DIRECT", "", "", "", "",
+     "", "", "string", "len:12..14", ""),
+    ("O-015", "lines[].line_status", "PO1", "ACK01", "CODE_LIST", "", "", "", "",
+     "", "ACK_STATUS_OUT", "string", "", "Internal status to X12 ACK code."),
+    ("O-016", "lines[].qty_acknowledged", "PO1", "ACK02", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("O-017", "lines[].ack_uom", "PO1", "ACK03", "CODE_LIST", "", "", "", "",
+     "", "UOM_OUT", "string", "", ""),
+    ("O-018", "summary.line_count", "", "CTT01", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("O-019", "lines[]", "", "CTT01", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "",
+     "CTT01 must also equal the actual number of source lines."),
+]
+
+CODE_LIST_855_OUT_ROWS: list[tuple[str, str, str, str]] = [
+    ("TX_PURPOSE_OUT", "ORIGINAL", "00", "Original transmission"),
+    ("TX_PURPOSE_OUT", "CANCELLATION", "01", "Cancellation"),
+    ("TX_PURPOSE_OUT", "REPLACE", "05", "Replacement"),
+    ("ACK_TYPE_OUT", "ACKNOWLEDGE", "AC", "Acknowledge, no detail"),
+    ("ACK_TYPE_OUT", "ACK_WITH_DETAIL", "AD", "Acknowledge with detail, no change"),
+    ("ACK_TYPE_OUT", "ACK_WITH_CHANGE", "AK", "Acknowledge with detail and change"),
+    ("ACK_TYPE_OUT", "REJECT_WITH_DETAIL", "RD", "Reject with detail"),
+    ("ACK_TYPE_OUT", "REJECTED", "RJ", "Rejected, no detail"),
+    ("UOM_OUT", "EACH", "EA", "Each"),
+    ("UOM_OUT", "CASE", "CA", "Case"),
+    ("UOM_OUT", "DOZEN", "DZ", "Dozen"),
+    ("ACK_STATUS_OUT", "ACCEPTED", "IA", "Item accepted"),
+    ("ACK_STATUS_OUT", "BACKORDERED", "IB", "Item backordered"),
+    ("ACK_STATUS_OUT", "QTY_CHANGED", "IQ", "Item accepted, quantity changed"),
+    ("ACK_STATUS_OUT", "REJECTED", "IR", "Item rejected"),
+    ("ACK_STATUS_OUT", "DATE_RESCHEDULED", "DR", "Item accepted, date rescheduled"),
+]
+
+SPEC855_OUT_META = {
+    "Transaction Set": "855",
+    "X12 Version": "004010",
+    "Direction": "outbound",
+    "Spec Name": "Synthetic POA response-to-855 map - outbound reference",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-07-07",
+}
+
+#: The internal POA response document — the translation's INPUT. One
+#: source drives both the clean and the defective X12 output.
+POA_RESPONSE: dict = {
+    "order": {
+        "purpose": "ORIGINAL",
+        "ack_type": "ACK_WITH_DETAIL",
+        "po_number": "PO4400021",
+        "po_date": "2026-06-15",
+        "vendor_order_number": "VN2088841",
+    },
+    "vendor": {"name": "SUMMIT WHOLESALE FOODS", "id": "7731"},
+    "lines": [
+        {"line_no": 1, "qty_ordered": 12, "uom": "EACH", "unit_price": 8.5,
+         "upc": "614141007349", "line_status": "ACCEPTED",
+         "qty_acknowledged": 12, "ack_uom": "EACH"},
+        {"line_no": 2, "qty_ordered": 6, "uom": "CASE", "unit_price": 24,
+         "upc": "614141007350", "line_status": "ACCEPTED",
+         "qty_acknowledged": 6, "ack_uom": "CASE"},
+        {"line_no": 3, "qty_ordered": 5, "uom": "DOZEN", "unit_price": 12,
+         "upc": "614141007351", "line_status": "ACCEPTED",
+         "qty_acknowledged": 5, "ack_uom": "DOZEN"},
+    ],
+    "summary": {"line_count": 3},
+}
+
+BASELINE_855_OUT = [
+    "BAK*00*AD*PO4400021*20260615****VN2088841",
+    "N1*SE*SUMMIT WHOLESALE FOODS*92*7731",
+    "PO1*1*12*EA*8.5**UP*614141007349",
+    "ACK*IA*12*EA",
+    "PO1*2*6*CA*24**UP*614141007350",
+    "ACK*IA*6*CA",
+    "PO1*3*5*DZ*12**UP*614141007351",
+    "ACK*IA*5*DZ",
+    "CTT*3",
+]
+
+# Deliberately defective outbound 855 (same internal source). Planted:
+#   1. BAK03 PO number transposed                 -> value_mismatch   (O-003)
+#   2. BAK04 date left in ISO, not CCYYMMDD       -> format           (O-004)
+#   3. BAK08 carries the else-literal 'NONE'
+#      though the source has a vendor order no.   -> condition_logic  (O-005)
+#   4. N103 qualifier ZZ, map must hardcode 92    -> constant_default (O-006)
+#   5. line 1 ACK01 left untranslated (ACCEPTED)  -> code_translation (O-015)
+#   6. third line dropped from the X12            -> count_mismatch +
+#      (CTT still says 3 -> recon warning too)       missing_output
+#   7. stray header REF*TN nobody maps            -> unmapped_target
+DEFECTS_855_OUT = [
+    "BAK*00*AD*PO4400012*2026-06-15****NONE",
+    "REF*TN*123456",
+    "N1*SE*SUMMIT WHOLESALE FOODS*ZZ*7731",
+    "PO1*1*12*EA*8.5**UP*614141007349",
+    "ACK*ACCEPTED*12*EA",
+    "PO1*2*6*CA*24**UP*614141007350",
+    "ACK*IA*6*CA",
+    "CTT*3",
+]
+
+
+def generate_outbound_855_files() -> None:
+    generate_spec(
+        EXAMPLES / "specs" / "855_outbound_reference_spec.xlsx",
+        SPEC855_OUT_ROWS, CODE_LIST_855_OUT_ROWS, SPEC855_OUT_META,
+    )
+    source_path = EXAMPLES / "source" / "poa_response.json"
+    source_path.write_text(json.dumps(POA_RESPONSE, indent=2) + "\n")
+    print(f"wrote {source_path.relative_to(REPO_ROOT)}")
+    outputs = {
+        "855_ack_baseline.edi": build_interchange(BASELINE_855_OUT, "81", "855", "PR"),
+        "855_ack_defects.edi": build_interchange(DEFECTS_855_OUT, "82", "855", "PR"),
+    }
+    for name, content in outputs.items():
+        path = EXAMPLES / "output" / name
+        path.write_text(content)
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -2873,6 +3029,7 @@ def main() -> None:
     generate_pharma_files()
     generate_997_files()
     generate_orders05_files()
+    generate_outbound_855_files()
 
 
 if __name__ == "__main__":
