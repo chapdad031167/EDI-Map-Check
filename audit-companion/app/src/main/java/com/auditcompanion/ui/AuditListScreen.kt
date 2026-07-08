@@ -16,7 +16,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -51,13 +53,26 @@ import com.auditcompanion.data.Platform
 fun AuditListScreen(
     viewModel: AppViewModel,
     onOpenAudit: (Long) -> Unit,
+    onManageCategories: () -> Unit,
 ) {
     val audits by viewModel.audits.collectAsStateWithLifecycle()
     var showNewDialog by remember { mutableStateOf(false) }
     var auditToDelete by remember { mutableStateOf<Audit?>(null) }
 
     Scaffold(
-        topBar = { CenterAlignedTopAppBar(title = { Text("Audit Companion") }) },
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { Text("Audit Companion") },
+                actions = {
+                    IconButton(onClick = onManageCategories) {
+                        Icon(
+                            Icons.Default.Checklist,
+                            contentDescription = "Manage categories",
+                        )
+                    }
+                },
+            )
+        },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { showNewDialog = true },
