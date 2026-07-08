@@ -11,14 +11,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -45,10 +53,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.auditcompanion.AppViewModel
+import com.auditcompanion.data.Audit
 import com.auditcompanion.data.AuditStatus
 import com.auditcompanion.data.Category
 import com.auditcompanion.data.CheckItem
 import com.auditcompanion.data.Finding
+import com.auditcompanion.data.Platform
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,6 +86,8 @@ fun WorkspaceScreen(
     val checksByCategory = remember(allChecks) { allChecks.groupBy { it.categoryId } }
 
     var statusMenuOpen by remember { mutableStateOf(false) }
+    var overflowOpen by remember { mutableStateOf(false) }
+    var showEditDetails by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -117,6 +129,21 @@ fun WorkspaceScreen(
                     IconButton(onClick = onOpenReport) {
                         Icon(Icons.Default.Description, contentDescription = "Report")
                     }
+                    IconButton(onClick = { overflowOpen = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                    }
+                    DropdownMenu(
+                        expanded = overflowOpen,
+                        onDismissRequest = { overflowOpen = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Edit details") },
+                            onClick = {
+                                overflowOpen = false
+                                showEditDetails = true
+                            },
+                        )
+                    }
                 },
             )
         },
@@ -144,6 +171,96 @@ fun WorkspaceScreen(
             }
         }
     }
+
+    if (showEditDetails) {
+        EditDetailsDialog(
+            audit = currentAudit,
+            onDismiss = { showEditDetails = false },
+            onSave = { updated ->
+                showEditDetails = false
+                viewModel.updateAudit(updated)
+            },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun EditDetailsDialog(
+    audit: Audit,
+    onDismiss: () -> Unit,
+    onSave: (Audit) -> Unit,
+) {
+    var client by remember { mutableStateOf(audit.clientName) }
+    var app by remember { mutableStateOf(audit.appName) }
+    var contact by remember { mutableStateOf(audit.clientContact) }
+    var platform by remember { mutableStateOf(audit.platform) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit details") },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
+                OutlinedTextField(
+                    value = client,
+                    onValueChange = { client = it },
+                    label = { Text("Client name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = app,
+                    onValueChange = { app = it },
+                    label = { Text("App name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = contact,
+                    onValueChange = { contact = it },
+                    label = { Text("Client contact") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Platform used", style = MaterialTheme.typography.labelLarge)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Platform.entries.forEach { p ->
+                        FilterChip(
+                            selected = platform == p,
+                            onClick = { platform = p },
+                            label = { Text(p.label) },
+                        )
+                    }
+                }
+                audit.deliveredAt?.let {
+                    Text(
+                        "Delivered ${formatDate(it)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(
+                        audit.copy(
+                            clientName = client.trim(),
+                            appName = app.trim(),
+                            clientContact = contact.trim(),
+                            platform = platform,
+                        )
+                    )
+                },
+                enabled = client.isNotBlank() && app.isNotBlank(),
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
