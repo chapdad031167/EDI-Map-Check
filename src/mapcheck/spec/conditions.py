@@ -16,6 +16,11 @@ a coded one for the engine. The coded grammar is deliberately tiny — no
 
 Outcomes (the Then/Else columns) are one of the keywords ``SOURCE``,
 ``SKIP``, ``BLANK``, or a quoted literal like ``'DROP SHIP'``.
+
+FIELD notation depends on the spec's direction: inbound conditions test
+X12 elements (``N101``), outbound ones test canonical paths into the
+internal source document (``lines[].item_type``). Conditions always
+address the *source* side, whichever document that is.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from mapcheck.spec.model import (
     Outcome,
     OutcomeKind,
     Predicate,
+    is_canonical_path,
     split_source_field,
 )
 
@@ -42,7 +48,7 @@ _TOKEN_RE = re.compile(
       | (?P<lparen>\()
       | (?P<rparen>\))
       | (?P<comma>,)
-      | (?P<word>[A-Za-z_][A-Za-z0-9_]*)
+      | (?P<word>[A-Za-z_][A-Za-z0-9_]*(?:\[\])?(?:\.[A-Za-z0-9_]+(?:\[\])?)*)
     )""",
     re.VERBOSE,
 )
@@ -63,9 +69,10 @@ def _tokenize(text: str) -> list[tuple[str, str]]:
 
 
 class _Parser:
-    def __init__(self, tokens: list[tuple[str, str]], raw: str) -> None:
+    def __init__(self, tokens: list[tuple[str, str]], raw: str, allow_paths: bool) -> None:
         self.tokens = tokens
         self.raw = raw
+        self.allow_paths = allow_paths
         self.pos = 0
 
     def peek(self) -> tuple[str, str] | None:
@@ -98,8 +105,8 @@ class _Parser:
             self.take("lparen")
             _, fld = self.take("word")
             self.take("rparen")
-            return Predicate(field=_validate_field(fld, self.raw), op="EXISTS")
-        fld = _validate_field(value, self.raw)
+            return Predicate(field=_validate_field(fld, self.raw, self.allow_paths), op="EXISTS")
+        fld = _validate_field(value, self.raw, self.allow_paths)
         tok = self.take()
         if tok[0] == "op":
             val = self._take_string()
@@ -119,7 +126,17 @@ class _Parser:
         return quoted[1:-1]
 
 
-def _validate_field(field: str, raw: str) -> str:
+def _validate_field(field: str, raw: str, allow_paths: bool) -> str:
+    if allow_paths:
+        # outbound: canonical paths only — case is preserved, since the
+        # internal document's keys are case-sensitive
+        if is_canonical_path(field):
+            return field
+        raise ConditionSyntaxError(
+            f"invalid field reference {field!r} in condition {raw!r} "
+            "(outbound conditions test the internal source document — "
+            "expected a canonical path, e.g. order.currency or lines[].qty)"
+        )
     try:
         split_source_field(field)
     except ValueError:
@@ -130,15 +147,17 @@ def _validate_field(field: str, raw: str) -> str:
     return field.upper()
 
 
-def parse_condition(text: str) -> Condition:
+def parse_condition(text: str, allow_paths: bool = False) -> Condition:
     """Parse a coded condition cell into a :class:`Condition`.
 
-    Raises :class:`ConditionSyntaxError` on invalid syntax.
+    ``allow_paths`` switches FIELD notation from X12 elements (inbound) to
+    canonical paths (outbound). Raises :class:`ConditionSyntaxError` on
+    invalid syntax.
     """
     raw = text.strip()
     if not raw:
         raise ConditionSyntaxError("empty condition")
-    return _Parser(_tokenize(raw), raw).parse_condition()
+    return _Parser(_tokenize(raw), raw, allow_paths).parse_condition()
 
 
 _OUTCOME_KEYWORDS = {

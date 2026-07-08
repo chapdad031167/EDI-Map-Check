@@ -50,6 +50,7 @@ CODELIST_COLUMNS: tuple[tuple[str, int], ...] = (
 META_KEYS: tuple[str, ...] = (
     "Transaction Set",
     "X12 Version",
+    "Direction",
     "Spec Name",
     "Author",
     "Date",
@@ -100,6 +101,24 @@ FORMAT          date:    strftime pattern of the OUTPUT value, e.g. %Y-%m-%d
                 Combine with ; e.g.  implied:2;places:2
 CODE LISTS      Long format on the CodeLists sheet; Code List Ref names the
                 List Name value.
+
+DIRECTION (Meta sheet; default inbound)
+  inbound       X12 -> internal. Columns read as documented above.
+  outbound      internal -> X12. Three columns flip sides:
+                  SOURCE FIELD  canonical path into the internal source
+                                document: order.po_number, lines[].qty
+                  TARGET FIELD  X12 element the map must produce: BAK03
+                  LOOP CONTEXT  qualifies the X12 TARGET occurrence; a bare
+                                loop id (PO1) makes the rule per-line,
+                                pairing internal lines[] entries with loop
+                                occurrences in order
+                Conditions always test the SOURCE side, so outbound coded
+                conditions use canonical paths: EXISTS(order.currency),
+                lines[].item_type = 'DS'. LOOP_COUNT sources name the
+                internal list (lines[]). FORMAT describes the X12 element
+                (dates default to %Y%m%d). BLANK outcomes are not testable
+                against X12 (empty and absent are indistinguishable) and
+                report NOT TESTED.
 """
 
 
@@ -113,7 +132,7 @@ def _write_header(ws: Worksheet, columns: tuple[tuple[str, int], ...]) -> None:
     ws.freeze_panes = "A2"
 
 
-def build_template() -> Workbook:
+def build_template(direction: str = "inbound") -> Workbook:
     """Build the blank spec template as an in-memory workbook."""
     wb = Workbook()
 
@@ -144,6 +163,7 @@ def build_template() -> Workbook:
         ws_meta.cell(row=i, column=1, value=key)
     ws_meta.cell(row=2, column=2, value="850")
     ws_meta.cell(row=3, column=2, value="004010")
+    ws_meta.cell(row=4, column=2, value=direction)
 
     ws_help = wb.create_sheet("Instructions")
     ws_help.column_dimensions["A"].width = 100
@@ -154,8 +174,8 @@ def build_template() -> Workbook:
     return wb
 
 
-def create_template(path: str | Path) -> Path:
+def create_template(path: str | Path, direction: str = "inbound") -> Path:
     """Write the blank spec template to ``path`` and return it."""
     path = Path(path)
-    build_template().save(path)
+    build_template(direction).save(path)
     return path
