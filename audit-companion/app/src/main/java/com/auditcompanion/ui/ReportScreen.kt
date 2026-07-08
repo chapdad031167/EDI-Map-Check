@@ -16,6 +16,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -33,22 +34,28 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.auditcompanion.AppViewModel
+import com.auditcompanion.PdfExporter
 import com.auditcompanion.buildReportMarkdown
-import com.auditcompanion.categoryName
 import com.auditcompanion.data.Audit
 import com.auditcompanion.data.Finding
 import com.auditcompanion.defaultFixOrder
+import com.auditcompanion.severityBreakdown
 import com.auditcompanion.sortedWorstFirst
 import com.auditcompanion.todayFormatted
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,12 +64,17 @@ fun ReportScreen(
     auditId: Long,
     onBack: () -> Unit,
 ) {
-    val audit by viewModel.audit(auditId).collectAsStateWithLifecycle(null)
-    val findings by viewModel.findings(auditId).collectAsStateWithLifecycle(emptyList())
+    val auditFlow = remember(auditId) { viewModel.audit(auditId) }
+    val findingsFlow = remember(auditId) { viewModel.findings(auditId) }
+    val audit by auditFlow.collectAsStateWithLifecycle(null)
+    val findings by findingsFlow.collectAsStateWithLifecycle(emptyList())
+    val categories by viewModel.categories.collectAsStateWithLifecycle()
 
     val currentAudit = audit ?: return
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    val categoryNames = remember(categories) { categories.associate { it.id to it.name } }
 
     // Editable report fields, initialized once from the stored audit.
     var preparedBy by remember(currentAudit.id) { mutableStateOf(currentAudit.preparedBy) }
@@ -87,6 +99,26 @@ fun ReportScreen(
         viewModel.updateAudit(editedAudit())
     }
 
+    fun sharePdf() {
+        scope.launch {
+            val file = withContext(Dispatchers.IO) {
+                PdfExporter.export(context, editedAudit(), findings, categoryNames)
+            }
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file,
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_SUBJECT, "AI App Health Check: ${currentAudit.appName}")
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Share PDF report"))
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -100,14 +132,18 @@ fun ReportScreen(
                     IconButton(onClick = {
                         copyToClipboard(
                             context, clipboard,
-                            buildReportMarkdown(editedAudit(), findings),
+                            buildReportMarkdown(editedAudit(), findings, categoryNames),
                             "Report",
                         )
                     }) {
                         Icon(Icons.Default.ContentCopy, contentDescription = "Copy report")
                     }
+                    IconButton(onClick = { sharePdf() }) {
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = "Share as PDF")
+                    }
                     IconButton(onClick = {
-                        val markdown = buildReportMarkdown(editedAudit(), findings)
+                        val markdown =
+                            buildReportMarkdown(editedAudit(), findings, categoryNames)
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(
@@ -170,6 +206,7 @@ fun ReportScreen(
             ReportPreview(
                 audit = editedAudit(),
                 findings = findings,
+                categoryNames = categoryNames,
                 fixOrderText = fixOrder,
             )
         }
@@ -177,8 +214,14 @@ fun ReportScreen(
 }
 
 @Composable
-private fun ReportPreview(audit: Audit, findings: List<Finding>, fixOrderText: String) {
+private fun ReportPreview(
+    audit: Audit,
+    findings: List<Finding>,
+    categoryNames: Map<Long, String>,
+    fixOrderText: String,
+) {
     val sorted = sortedWorstFirst(findings)
+    val breakdown = severityBreakdown(findings)
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -199,6 +242,9 @@ private fun ReportPreview(audit: Audit, findings: List<Finding>, fixOrderText: S
             HorizontalDivider()
 
             LabeledBlock("Summary", audit.summary.ifBlank { "(add a 2 to 3 sentence summary)" })
+            if (breakdown.isNotBlank()) {
+                LabeledBlock("Severity breakdown", breakdown)
+            }
 
             Text("Findings, worst first:", fontWeight = FontWeight.Bold)
             if (sorted.isEmpty()) {
@@ -221,7 +267,7 @@ private fun ReportPreview(audit: Audit, findings: List<Finding>, fixOrderText: S
                             SeverityBadge(f.severity)
                         }
                         Text(
-                            categoryName(f.categoryIndex),
+                            categoryNames[f.categoryId] ?: "General",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
