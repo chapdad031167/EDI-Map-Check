@@ -88,6 +88,18 @@ EXAMPLE_SCENARIOS = {
         "997_reference_spec.xlsx", "997_baseline.edi", "funcack_baseline.json"),
     "997 defective ack (impossible counts)": (
         "997_reference_spec.xlsx", "997_defects.edi", "funcack_defects.json"),
+    "850 to SAP ORDERS05 IDoc flat (clean)": (
+        "orders05_reference_spec.xlsx", "850_sap.edi", "orders05_baseline.txt"),
+    "850 to SAP ORDERS05 IDoc XML (clean)": (
+        "orders05_reference_spec.xlsx", "850_sap.edi", "orders05_baseline.xml"),
+    "850 to SAP ORDERS05 defective (flat)": (
+        "orders05_reference_spec.xlsx", "850_sap.edi", "orders05_defects.txt"),
+    "850 to SAP ORDERS05 defective (XML)": (
+        "orders05_reference_spec.xlsx", "850_sap.edi", "orders05_defects.xml"),
+    "outbound 855 from POA response (clean)": (
+        "855_outbound_reference_spec.xlsx", "poa_response.json", "855_ack_baseline.edi"),
+    "outbound 855 defective translation": (
+        "855_outbound_reference_spec.xlsx", "poa_response.json", "855_ack_defects.edi"),
 }
 
 _STATUS_COLORS = {
@@ -185,8 +197,10 @@ def main() -> None:
     st.title("EDI MapCheck")
     st.markdown(
         "Vendor-neutral validation for EDI mapping work: upload a **mapping spec**, "
-        "an **X12 source file**, and the **translated output** — get a field-level "
-        "pass/fail report. The transaction set is auto-detected from ST01."
+        "the **translation's source file**, and its **translated output** — get a "
+        "field-level pass/fail report. Inbound specs validate X12 → internal "
+        "(JSON, keyed flat, SAP IDoc); outbound specs validate internal → X12. "
+        "The transaction set is auto-detected from the X12 file's ST01."
     )
 
     with st.sidebar:
@@ -203,17 +217,25 @@ def main() -> None:
             st.caption(f"Spec: {spec_name}\n\nSource: {source_name}\n\nOutput: {output_name}")
         else:
             spec_upload = st.file_uploader("Mapping spec (.xlsx)", type=["xlsx"])
-            source_upload = st.file_uploader("X12 850 source", type=["edi", "txt", "x12", "dat"])
+            source_upload = st.file_uploader(
+                "Source file (X12 inbound; internal document outbound)",
+                type=["edi", "txt", "x12", "dat", "json", "flat", "xml"],
+            )
             output_upload = st.file_uploader(
-                "Translated output (.json or keyed flat)", type=["json", "flat", "txt", "dat"]
+                "Translated output (internal document inbound; X12 outbound)",
+                type=["json", "flat", "txt", "dat", "edi", "x12", "xml"],
             )
             if spec_upload:
                 spec_path = _save_upload(spec_upload, ".xlsx")
             if source_upload:
-                source_path = _save_upload(source_upload, ".edi")
+                # keep the original extension so the right loader is picked
+                source_path = _save_upload(
+                    source_upload, Path(source_upload.name).suffix or ".edi"
+                )
             if output_upload:
-                # keep the original extension so the adapter picks JSON vs flat
-                output_path = _save_upload(output_upload, Path(output_upload.name).suffix or ".flat")
+                output_path = _save_upload(
+                    output_upload, Path(output_upload.name).suffix or ".flat"
+                )
 
         run = st.button(
             "Run validation",

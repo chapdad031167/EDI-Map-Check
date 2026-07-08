@@ -1,6 +1,8 @@
 # Design 001 — Outbound Direction (internal → X12)
 
-**Status:** proposed — awaiting review, no code yet
+**Status:** approved 2026-07-07 — all four open questions resolved as
+recommended (one template, BLANK → NOT TESTED + load warning, outbound
+855 reference scenario, source-side-only conditions)
 **Roadmap item:** 1.1 (Phase 1, design-first)
 
 ## The inversion, precisely
