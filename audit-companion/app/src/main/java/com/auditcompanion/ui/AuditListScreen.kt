@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Checklist
@@ -73,6 +75,9 @@ fun AuditListScreen(
 ) {
     val context = LocalContext.current
     val audits by viewModel.audits.collectAsStateWithLifecycle()
+    val allChecks by viewModel.checks.collectAsStateWithLifecycle()
+    val checkedCounts by viewModel.checkedCounts.collectAsStateWithLifecycle(emptyMap())
+    val findingCounts by viewModel.findingCounts.collectAsStateWithLifecycle(emptyMap())
     var showNewDialog by remember { mutableStateOf(false) }
     var auditForActions by remember { mutableStateOf<Audit?>(null) }
     var auditToDelete by remember { mutableStateOf<Audit?>(null) }
@@ -209,6 +214,9 @@ fun AuditListScreen(
                 items(audits, key = { it.id }) { audit ->
                     AuditCard(
                         audit = audit,
+                        totalChecks = allChecks.size,
+                        checkedCount = checkedCounts[audit.id] ?: 0,
+                        findingCount = findingCounts[audit.id] ?: 0,
                         onClick = { onOpenAudit(audit.id) },
                         onLongClick = { auditForActions = audit },
                     )
@@ -220,9 +228,9 @@ fun AuditListScreen(
     if (showNewDialog) {
         NewAuditDialog(
             onDismiss = { showNewDialog = false },
-            onCreate = { client, app, platform ->
+            onCreate = { client, app, platform, contact ->
                 showNewDialog = false
-                viewModel.createAudit(client, app, platform) { id -> onOpenAudit(id) }
+                viewModel.createAudit(client, app, platform, contact) { id -> onOpenAudit(id) }
             },
         )
     }
@@ -321,7 +329,14 @@ fun AuditListScreen(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AuditCard(audit: Audit, onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun AuditCard(
+    audit: Audit,
+    totalChecks: Int,
+    checkedCount: Int,
+    findingCount: Int,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -342,9 +357,17 @@ private fun AuditCard(audit: Audit, onClick: () -> Unit, onLongClick: () -> Unit
             HorizontalDivider()
             Spacer(Modifier.height(6.dp))
             Text(
-                "${audit.platform.label}  •  Started ${formatDate(audit.dateStarted)}",
+                "${audit.platform.label}  •  Started ${formatDate(audit.dateStarted)}" +
+                    (audit.deliveredAt?.let { "  •  Delivered ${formatDate(it)}" } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "$checkedCount/$totalChecks checks  •  $findingCount " +
+                    if (findingCount == 1) "finding" else "findings",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
             )
         }
     }
@@ -354,17 +377,21 @@ private fun AuditCard(audit: Audit, onClick: () -> Unit, onLongClick: () -> Unit
 @Composable
 private fun NewAuditDialog(
     onDismiss: () -> Unit,
-    onCreate: (client: String, app: String, platform: Platform) -> Unit,
+    onCreate: (client: String, app: String, platform: Platform, contact: String) -> Unit,
 ) {
     var client by remember { mutableStateOf("") }
     var app by remember { mutableStateOf("") }
+    var contact by remember { mutableStateOf("") }
     var platform by remember { mutableStateOf(Platform.LOVABLE) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("New Audit") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
                 OutlinedTextField(
                     value = client,
                     onValueChange = { client = it },
@@ -376,6 +403,13 @@ private fun NewAuditDialog(
                     value = app,
                     onValueChange = { app = it },
                     label = { Text("App name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = contact,
+                    onValueChange = { contact = it },
+                    label = { Text("Client contact (optional)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -393,7 +427,7 @@ private fun NewAuditDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onCreate(client.trim(), app.trim(), platform) },
+                onClick = { onCreate(client.trim(), app.trim(), platform, contact.trim()) },
                 enabled = client.isNotBlank() && app.isNotBlank(),
             ) { Text("Create") }
         },
