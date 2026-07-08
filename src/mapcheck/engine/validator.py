@@ -1,11 +1,23 @@
 """The validation engine: evaluates every spec rule against source + output.
 
 For each mapping rule the engine derives the *expected* target value from
-the X12 source (per the rule type), resolves the *actual* value from the
-output file, and emits a :class:`~mapcheck.engine.results.Finding`. On top
-of the per-rule checks it reconciles line counts, reports interchange
-control problems, and flags unmapped data in both directions (spec rule
-category 7).
+the source document (per the rule type), resolves the *actual* value from
+the produced document, and emits a :class:`~mapcheck.engine.results.Finding`.
+On top of the per-rule checks it reconciles line counts, reports
+interchange control problems, and flags unmapped data in both directions
+(spec rule category 7).
+
+Which document plays which role comes from the spec's direction:
+
+* **inbound** — expected values derive from the parsed X12 transaction,
+  actuals resolve from the canonical output model.
+* **outbound** — the roles swap: expected values derive from the internal
+  document (loaded through the same canonical model), actuals resolve
+  from the parsed X12 file the map produced.
+
+The swap lives entirely in two source-reader classes and the actual-value
+resolvers; the rule loop, root-cause categories, and finding assembly are
+shared, direction-agnostic code.
 """
 
 from __future__ import annotations
@@ -20,12 +32,14 @@ from mapcheck.engine.formats import (
     display,
     normalize_actual,
     normalize_source,
+    normalize_x12,
 )
 from mapcheck.spec.formats import FormatSpec, parse_format
 from mapcheck.engine.results import Category, Finding, RunResult, Status
 from mapcheck.output.adapter import MISSING, CanonicalOutput
 from mapcheck.spec.model import (
     Condition,
+    Direction,
     LoopContext,
     MappingRule,
     MappingSpec,
@@ -55,22 +69,122 @@ class _Expected:
     note: str = ""
 
 
+# --------------------------------------------------------------------------
+# Source-side readers: how expected values see their document
+# --------------------------------------------------------------------------
+
+_NEUTRAL_FMT = parse_format(None)
+
+
+class _X12Source:
+    """Reads the parsed X12 document as the *source* side (inbound specs).
+
+    One instance per evaluation scope: fields resolve within the rule's
+    Loop Context scope exactly as before the outbound refactor.
+    """
+
+    def __init__(self, tx: TransactionDocument, scope: Scope | None) -> None:
+        self.tx = tx
+        self.scope = scope
+
+    def read(self, field: str) -> str | None:
+        seg_id, element = split_source_field(field)
+        return self.scope.value(seg_id, element) if self.scope is not None else None
+
+    #: X12 elements are already strings; conditions read them unchanged.
+    condition_value = read
+
+    def missing_reason(self, rule: MappingRule) -> str:
+        seg_id, _ = split_source_field(rule.source_field or "")
+        if self.scope is None:
+            return f"source segment {rule.loop_context or seg_id} not present in this file"
+        if self.scope.first(seg_id) is None:
+            return f"source segment {seg_id} not present in {self.scope.label}"
+        return f"source element {rule.source_field} is empty"
+
+    def loop_count(self, ref: str) -> tuple[int, str]:
+        count = len(self.tx.loops(ref))
+        return count, f"count of {ref} loops in source"
+
+    def normalize(self, raw: Any, rule: MappingRule, fmt: FormatSpec) -> Any:
+        return normalize_source(raw, rule.data_type, fmt)
+
+    def normalize_literal(self, literal: str, rule: MappingRule, fmt: FormatSpec) -> Any:
+        value, _ = normalize_actual(literal, rule.data_type, fmt, typed=False)
+        return value
+
+
+class _CanonicalSource:
+    """Reads the internal document as the *source* side (outbound specs).
+
+    Fields are canonical paths; per-line rules carry the current line
+    index. Absent (MISSING), null, and empty all read as "nothing there" —
+    matching how an X12 source treats an empty element.
+    """
+
+    def __init__(self, output: CanonicalOutput, line_index: int | None) -> None:
+        self.output = output
+        self.line_index = line_index
+
+    def read(self, field: str) -> Any | None:
+        value = self.output.get(field, line_index=self.line_index)
+        if value is MISSING or value is None or value == "":
+            return None
+        return value
+
+    def condition_value(self, field: str) -> str | None:
+        value = self.read(field)
+        return None if value is None else str(value)
+
+    def missing_reason(self, rule: MappingRule) -> str:
+        assert rule.source_field is not None
+        if self.output.get(rule.source_field, line_index=self.line_index) is MISSING:
+            return f"source field {rule.source_field} is absent from the source document"
+        return f"source field {rule.source_field} is empty"
+
+    def loop_count(self, ref: str) -> tuple[int, str]:
+        count = self.output.line_count(ref[:-2] if ref.endswith("[]") else ref)
+        return count, f"count of {ref} entries in source"
+
+    def normalize(self, raw: Any, rule: MappingRule, fmt: FormatSpec) -> Any:
+        # Internal-convention parse (ISO dates, plain decimals): the Format
+        # column describes the X12 target side, not this document.
+        value, _ = normalize_actual(raw, rule.data_type, _NEUTRAL_FMT, self.output.typed)
+        return value
+
+    def normalize_literal(self, literal: str, rule: MappingRule, fmt: FormatSpec) -> Any:
+        value, _ = normalize_x12(literal, rule.data_type, fmt)
+        return value
+
+
 def validate(
     spec: MappingSpec,
     tx: TransactionDocument,
     output: CanonicalOutput,
     source_path: str = "",
+    output_path: str | None = None,
 ) -> RunResult:
-    """Run the full validation and return the collected findings."""
+    """Run the full validation and return the collected findings.
+
+    ``tx`` is always the X12 document and ``output`` the canonical one;
+    the spec's direction decides which is the source of expected values.
+    ``output_path`` defaults to the canonical document's path (inbound
+    convention) — outbound callers pass the X12 file's path instead.
+    """
+    outbound = spec.direction is Direction.OUTBOUND
     result = RunResult(
         spec_path=spec.source_path or "",
         source_path=source_path,
-        output_path=output.source_path,
+        output_path=output_path if output_path is not None else output.source_path,
         spec_name=spec.meta.get("Spec Name"),
         transaction_set=tx.definition.set_code,
         transaction_name=tx.definition.name,
     )
 
+    for note in spec.load_notes:
+        result.findings.append(
+            Finding(status=Status.WARNING, source_ref="(spec)", message=f"spec note: {note}")
+        )
     for note in tx.control_notes:
         result.findings.append(
             Finding(
@@ -80,35 +194,50 @@ def validate(
                 message=f"interchange control: {note}",
             )
         )
+    # Structure problems in the X12 document: source-data defects inbound,
+    # defects of the *produced* file outbound.
+    structure_category = Category.UNEXPECTED_OUTPUT if outbound else Category.SOURCE_DATA
+    structure_side = "output " if outbound else ""
     for note in tx.definition_notes:
         result.findings.append(
             Finding(
                 status=Status.WARNING,
-                category=Category.SOURCE_DATA,
+                category=structure_category,
                 source_ref="(structure)",
-                message=f"transaction structure: {note}",
+                message=f"{structure_side}transaction structure: {note}",
             )
         )
     for error in tx.hierarchy_errors:
         result.findings.append(
             Finding(
                 status=Status.FAIL,
-                category=Category.SOURCE_DATA,
+                category=structure_category,
                 source_ref="(hierarchy)",
-                message=f"hierarchical structure defect: {error}",
+                message=f"{structure_side}hierarchical structure defect: {error}",
             )
         )
 
     for rule in spec.rules:
-        if rule.is_per_line:
+        if outbound:
+            if rule.is_per_line:
+                result.findings.extend(_evaluate_per_line_out(rule, spec, tx, output))
+            else:
+                result.findings.append(_evaluate_in_scope_out(rule, spec, tx, output, None))
+        elif rule.is_per_line:
             result.findings.extend(_evaluate_per_line(rule, spec, tx, output))
         else:
             result.findings.append(_evaluate_in_scope(rule, spec, tx, output, None))
 
-    _check_line_counts(tx, output, result)
-    _check_reconciliation(tx, result)
-    _check_unmapped_source(spec, tx, result)
-    _check_unmapped_target(spec, output, result)
+    if outbound:
+        _check_line_counts_out(tx, output, result)
+        _check_reconciliation(tx, result, side="output")
+        _check_unmapped_source_out(spec, output, result)
+        _check_unmapped_target_out(spec, tx, result)
+    else:
+        _check_line_counts(tx, output, result)
+        _check_reconciliation(tx, result)
+        _check_unmapped_source(spec, tx, result)
+        _check_unmapped_target(spec, output, result)
     return result
 
 
@@ -120,12 +249,14 @@ def validate_files(
 ) -> RunResult:
     """Load the three artifacts and validate. Convenience for CLI/UI callers.
 
-    The transaction set is auto-detected from the source file's ST01 unless
+    ``source_path`` is the translation's input and ``output_path`` its
+    result; the spec's direction decides which of them is the X12 file.
+    The transaction set is auto-detected from the X12 file's ST01 unless
     ``transaction`` forces a specific registered definition. The spec's Meta
-    ``Transaction Set`` must agree with the source file.
+    ``Transaction Set`` must agree with the X12 file.
 
     Raises ``SpecLoadError``, ``X12ParseError``, or ``OutputLoadError`` when
-    an input cannot be loaded or the spec and source disagree.
+    an input cannot be loaded or the spec and X12 file disagree.
     """
     from mapcheck.output.adapter import load_output
     from mapcheck.spec.parser import SpecLoadError, load_spec
@@ -139,13 +270,22 @@ def validate_files(
             definition = default_registry.get(transaction)
         except UnknownTransactionError as exc:
             raise X12ParseError(str(exc.args[0])) from exc
-    tx = parse_transaction(source_path, definition=definition)
+
+    x12_path, x12_role = (
+        (output_path, "output") if spec.direction is Direction.OUTBOUND else (source_path, "source")
+    )
+    tx = parse_transaction(x12_path, definition=definition)
     if spec.transaction_set and spec.transaction_set != tx.definition.set_code:
         raise SpecLoadError(
             [
-                f"spec is for transaction set {spec.transaction_set} but the source "
+                f"spec is for transaction set {spec.transaction_set} but the {x12_role} "
                 f"file is a {tx.definition.set_code} ({tx.definition.name})"
             ]
+        )
+    if spec.direction is Direction.OUTBOUND:
+        doc = load_output(source_path)
+        return validate(
+            spec, tx, doc, source_path=str(source_path), output_path=str(output_path)
         )
     output = load_output(output_path)
     return validate(spec, tx, output, source_path=str(source_path))
@@ -211,6 +351,131 @@ def _evaluate_per_line(
     return findings
 
 
+# --------------------------------------------------------------------------
+# Outbound rule evaluation: canonical source, X12 target
+# --------------------------------------------------------------------------
+
+
+def _x12_actual(rule: MappingRule, scope: Scope | None) -> Any:
+    """Resolve the rule's X12 target element within a target scope.
+
+    X12 cannot distinguish an empty element from an absent one, so both
+    resolve to MISSING — which is why SKIP is fully testable on this side
+    and BLANK is not.
+    """
+    if scope is None:
+        return MISSING
+    seg_id, element = split_source_field(rule.target_field)
+    value = scope.value(seg_id, element)
+    return MISSING if value is None else value
+
+
+def _outbound_refs(
+    rule: MappingRule, tx: TransactionDocument, line_index: int | None
+) -> tuple[str, str]:
+    """(source_ref, target) display labels for an outbound finding."""
+    if line_index is None:
+        return rule.source_ref(), rule.target_ref()
+    line_loop = tx.line_loop_id or "line"
+    source_ref = (
+        rule.source_field.replace("[]", f"[{line_index}]")
+        if rule.source_field
+        else "(none)"
+    )
+    return source_ref, f"{line_loop} #{line_index + 1} {rule.target_field}"
+
+
+def _evaluate_in_scope_out(
+    rule: MappingRule,
+    spec: MappingSpec,
+    tx: TransactionDocument,
+    output: CanonicalOutput,
+    line_index: int | None,
+    scope: Scope | None = None,
+) -> Finding:
+    """Evaluate one outbound rule against one X12 target scope."""
+    if scope is None and not rule.is_per_line:
+        scopes = tx.scopes(rule.loop_context)
+        scope = scopes[0] if scopes else None
+
+    fmt = parse_format(rule.format)
+    expected = _expected_for(rule, spec, _CanonicalSource(output, line_index), fmt)
+    actual = _x12_actual(rule, scope)
+    source_ref, target = _outbound_refs(rule, tx, line_index)
+
+    def normalize_target(value: Any, r: MappingRule, f: FormatSpec) -> tuple[Any, list[str]]:
+        return normalize_x12(value, r.data_type, f)
+
+    return _judge(
+        rule,
+        expected,
+        actual,
+        source_ref=source_ref,
+        target=target,
+        fmt=fmt,
+        normalize_target=normalize_target,
+        blank_testable=False,
+    )
+
+
+def _evaluate_per_line_out(
+    rule: MappingRule,
+    spec: MappingSpec,
+    tx: TransactionDocument,
+    output: CanonicalOutput,
+) -> list[Finding]:
+    """Evaluate an outbound per-line rule: lines[] entry n ↔ loop occurrence n."""
+    assert rule.loop_context is not None
+    pairing = tx.definition.output_pairing
+    pairing_context = LoopContext.parse(pairing.loop) if pairing else None
+    if pairing_context is None or rule.loop_context.base() != pairing_context:
+        supported = pairing.loop if pairing else "(none declared)"
+        return [
+            Finding(
+                status=Status.NOT_TESTED,
+                row_id=rule.row_id,
+                sheet_row=rule.sheet_row,
+                source_ref=rule.source_ref(),
+                target=rule.target_ref(),
+                message=(
+                    f"loop context {rule.loop_context} is not paired with the "
+                    f"source {pairing.list_path if pairing else 'lines'}[] list — the "
+                    f"{tx.definition.set_code} definition pairs lines[] with {supported}"
+                ),
+            )
+        ]
+
+    scopes = tx.scopes(rule.loop_context)
+    source_count = output.line_count(pairing.list_path)
+    findings: list[Finding] = []
+    total = max(len(scopes), source_count)
+    for index in range(total):
+        scope = scopes[index] if index < len(scopes) else None
+        if index >= source_count:
+            actual = _x12_actual(rule, scope)
+            if actual is not MISSING:
+                _, target = _outbound_refs(rule, tx, index)
+                findings.append(
+                    Finding(
+                        status=Status.FAIL,
+                        category=Category.COUNT_MISMATCH,
+                        row_id=rule.row_id,
+                        sheet_row=rule.sheet_row,
+                        source_ref=f"{pairing.list_path}[{index}] (absent)",
+                        target=target,
+                        actual=display(actual),
+                        message=(
+                            f"output {pairing.loop} loop {index + 1} has no matching "
+                            f"{pairing.list_path}[] entry in the source "
+                            f"(source has {source_count})"
+                        ),
+                    )
+                )
+            continue
+        findings.append(_evaluate_in_scope_out(rule, spec, tx, output, index, scope=scope))
+    return findings
+
+
 def _evaluate_in_scope(
     rule: MappingRule,
     spec: MappingSpec,
@@ -219,13 +484,13 @@ def _evaluate_in_scope(
     line_index: int | None,
     scope: Scope | None = None,
 ) -> Finding:
-    """Evaluate one rule in one concrete scope and produce its finding."""
+    """Evaluate one inbound rule in one concrete scope and produce its finding."""
     if scope is None and not rule.is_per_line:
         scopes = tx.scopes(rule.loop_context)
         scope = scopes[0] if scopes else None
 
     fmt = parse_format(rule.format)
-    expected = _expected_for(rule, spec, tx, scope, fmt)
+    expected = _expected_for(rule, spec, _X12Source(tx, scope), fmt)
     actual = output.get(rule.target_field, line_index=line_index)
 
     target = (
@@ -239,6 +504,38 @@ def _evaluate_in_scope(
         if line_index is None
         else f"{line_loop} #{line_index + 1} {rule.source_field or ''}".strip()
     )
+
+    def normalize_target(value: Any, r: MappingRule, f: FormatSpec) -> tuple[Any, list[str]]:
+        return normalize_actual(value, r.data_type, f, output.typed)
+
+    return _judge(
+        rule,
+        expected,
+        actual,
+        source_ref=source_ref,
+        target=target,
+        fmt=fmt,
+        normalize_target=normalize_target,
+    )
+
+
+def _judge(
+    rule: MappingRule,
+    expected: _Expected,
+    actual: Any,
+    *,
+    source_ref: str,
+    target: str,
+    fmt: FormatSpec,
+    normalize_target: Any,
+    blank_testable: bool = True,
+) -> Finding:
+    """The direction-agnostic decision table: expected vs. actual → finding.
+
+    ``normalize_target`` converts the actual value per the target side's
+    conventions; ``blank_testable`` is False on X12 targets, where empty
+    and absent are indistinguishable and BLANK outcomes cannot be checked.
+    """
 
     def finding(
         status: Status,
@@ -293,6 +590,12 @@ def _evaluate_in_scope(
         )
 
     if expected.kind == "empty":
+        if not blank_testable:
+            return finding(
+                Status.NOT_TESTED,
+                "BLANK outcome is not testable against an X12 target (an empty "
+                "element and an absent one are indistinguishable)" + _why(expected.note),
+            )
         if actual is MISSING:
             return finding(
                 Status.FAIL,
@@ -326,7 +629,7 @@ def _evaluate_in_scope(
         )
 
     try:
-        normalized, warnings = normalize_actual(actual, rule.data_type, fmt, output.typed)
+        normalized, warnings = normalize_target(actual, rule, fmt)
     except NormalizationError as exc:
         return finding(
             Status.FAIL,
@@ -378,23 +681,22 @@ def _why(note: str) -> str:
 def _expected_for(
     rule: MappingRule,
     spec: MappingSpec,
-    tx: TransactionDocument,
-    scope: Scope | None,
+    source: Any,
     fmt: FormatSpec,
 ) -> _Expected:
-    """Derive the expected target value for one rule in one scope."""
+    """Derive the expected target value for one rule from its source reader."""
     if rule.rule_type is RuleType.CONSTANT:
-        return _literal_expected(rule.default_value or "", rule, fmt, note="hardcoded constant")
+        return _literal_expected(
+            rule.default_value or "", rule, fmt, source, note="hardcoded constant"
+        )
 
     if rule.rule_type is RuleType.LOOP_COUNT:
-        count = len(tx.loops(rule.source_field or ""))
-        return _Expected(
-            kind="value", value=count, note=f"count of {rule.source_field} loops in source"
-        )
+        count, note = source.loop_count(rule.source_field or "")
+        return _Expected(kind="value", value=count, note=note)
 
     if rule.rule_type is RuleType.CONDITIONAL:
         assert rule.condition is not None and rule.then_outcome is not None
-        branch_true = _evaluate_condition(rule.condition, scope)
+        branch_true = _evaluate_condition(rule.condition, source)
         outcome = rule.then_outcome if branch_true else rule.else_outcome
         assert outcome is not None
         note = f"condition {rule.condition.raw!r} is {'true' if branch_true else 'false'}"
@@ -403,27 +705,23 @@ def _expected_for(
         if outcome.kind is OutcomeKind.BLANK:
             return _Expected(kind="empty", note=note)
         if outcome.kind is OutcomeKind.LITERAL:
-            return _literal_expected(outcome.literal or "", rule, fmt, note=note)
-        return _source_expected(rule, spec, scope, fmt, note=note)  # SOURCE
+            return _literal_expected(outcome.literal or "", rule, fmt, source, note=note)
+        return _source_expected(rule, spec, source, fmt, note=note)  # SOURCE
 
     # DIRECT / CODE_LIST
-    return _source_expected(rule, spec, scope, fmt)
+    return _source_expected(rule, spec, source, fmt)
 
 
 def _source_expected(
     rule: MappingRule,
     spec: MappingSpec,
-    scope: Scope | None,
+    source: Any,
     fmt: FormatSpec,
     note: str = "",
 ) -> _Expected:
-    """Expected value for rules that read the source element."""
+    """Expected value for rules that read the source document."""
     assert rule.source_field is not None
-    seg_id, element = split_source_field(rule.source_field)
-
-    raw: str | None = None
-    if scope is not None:
-        raw = scope.value(seg_id, element)
+    raw = source.read(rule.source_field)
 
     if raw is None:
         if rule.default_value is not None:
@@ -431,20 +729,15 @@ def _source_expected(
                 rule.default_value,
                 rule,
                 fmt,
+                source,
                 note=f"source {rule.source_field} empty, spec default applies",
             )
-        if scope is None:
-            reason = f"source segment {rule.loop_context or seg_id} not present in this file"
-        elif scope.first(seg_id) is None:
-            reason = f"source segment {seg_id} not present in {scope.label}"
-        else:
-            reason = f"source element {rule.source_field} is empty"
-        return _Expected(kind="untestable", note=reason)
+        return _Expected(kind="untestable", note=source.missing_reason(rule))
 
     if rule.rule_type is RuleType.CODE_LIST:
         assert rule.code_list_ref is not None
         code_list = spec.code_lists[rule.code_list_ref]
-        translated = code_list.translate(raw)
+        translated = code_list.translate(raw if isinstance(raw, str) else str(raw))
         if translated is None:
             return _Expected(
                 kind="source_defect",
@@ -455,22 +748,31 @@ def _source_expected(
                 ),
             )
         return _literal_expected(
-            translated, rule, fmt, note=f"code list {rule.code_list_ref}: {raw!r} -> {translated!r}"
+            translated,
+            rule,
+            fmt,
+            source,
+            note=f"code list {rule.code_list_ref}: {raw!r} -> {translated!r}",
         )
 
     try:
-        value = normalize_source(raw, rule.data_type, fmt)
+        value = source.normalize(raw, rule, fmt)
     except NormalizationError as exc:
         return _Expected(kind="source_defect", note=f"{rule.source_field} {exc.reason}")
     return _Expected(kind="value", value=value, note=note)
 
 
 def _literal_expected(
-    literal: str, rule: MappingRule, fmt: FormatSpec, note: str = ""
+    literal: str, rule: MappingRule, fmt: FormatSpec, source: Any, note: str = ""
 ) -> _Expected:
-    """Expected value from a spec literal (constant, default, or Then/Else)."""
+    """Expected value from a spec literal (constant, default, or Then/Else).
+
+    The literal is normalized with the *target side's* conventions (the
+    source reader knows which those are), so it lands comparable with the
+    normalized actual value.
+    """
     try:
-        value, _ = normalize_actual(literal, rule.data_type, fmt, typed=False)
+        value = source.normalize_literal(literal, rule, fmt)
     except NormalizationError as exc:
         return _Expected(
             kind="source_defect",
@@ -479,16 +781,15 @@ def _literal_expected(
     return _Expected(kind="value", value=value, note=note)
 
 
-def _evaluate_condition(condition: Condition, scope: Scope | None) -> bool:
-    """Evaluate AND-joined predicates against a scope.
+def _evaluate_condition(condition: Condition, source: Any) -> bool:
+    """Evaluate AND-joined predicates against the source reader.
 
-    Fields resolve within the rule's Loop Context scope; a missing scope or
+    Fields resolve within the rule's evaluation scope; a missing scope or
     element reads as empty, so ``EXISTS`` is false and ``=`` compares
     against the empty string.
     """
     for predicate in condition.predicates:
-        seg_id, element = split_source_field(predicate.field)
-        value = scope.value(seg_id, element) if scope is not None else None
+        value = source.condition_value(predicate.field)
         if predicate.op == "EXISTS":
             ok = value is not None
         elif predicate.op == "=":
@@ -525,6 +826,32 @@ def _check_line_counts(tx: TransactionDocument, output: CanonicalOutput, result:
                 message=(
                     f"source has {source_count} {pairing.loop} loop(s) but the output has "
                     f"{output_count} line(s)"
+                ),
+            )
+        )
+
+
+def _check_line_counts_out(
+    tx: TransactionDocument, output: CanonicalOutput, result: RunResult
+) -> None:
+    """Outbound mirror: internal lines[] entries vs. X12 pairing-loop count."""
+    pairing = tx.definition.output_pairing
+    if pairing is None:
+        return
+    source_count = output.line_count(pairing.list_path)
+    output_count = len(tx.scopes(LoopContext.parse(pairing.loop)))
+    if source_count != output_count:
+        result.findings.append(
+            Finding(
+                status=Status.FAIL,
+                category=Category.COUNT_MISMATCH,
+                source_ref=f"{pairing.list_path}[] entries",
+                target=f"{pairing.loop} loops",
+                expected=str(source_count),
+                actual=str(output_count),
+                message=(
+                    f"source has {source_count} {pairing.list_path}[] entry(ies) but "
+                    f"the output has {output_count} {pairing.loop} loop(s)"
                 ),
             )
         )
@@ -641,11 +968,16 @@ def _resolve_operand(operand: Operand, tx: TransactionDocument) -> tuple[Any, st
     return number, f"{label}={display(number)}"
 
 
-def _check_reconciliation(tx: TransactionDocument, result: RunResult) -> None:
-    """Run the definition's declarative source-side reconciliation rules.
+def _check_reconciliation(
+    tx: TransactionDocument, result: RunResult, side: str = "source"
+) -> None:
+    """Run the definition's declarative X12-side reconciliation rules.
 
     Rules are silent when they pass or cannot be evaluated; a mismatch
-    emits a finding at the rule's declared severity.
+    emits a finding at the rule's declared severity. ``side`` names the
+    document in messages: the X12 file is the source inbound and the
+    produced output outbound (where these checks audit the produced
+    file's internal consistency).
     """
     for rule in tx.definition.reconciliation:
         if rule.when_exists is not None:
@@ -681,14 +1013,33 @@ def _check_reconciliation(tx: TransactionDocument, result: RunResult) -> None:
                     actual=right_text,
                     message=(
                         (rule.description + " — " if rule.description else "")
-                        + f"source reconciliation failed: {left_text} {relation} {right_text}"
+                        + f"{side} reconciliation failed: {left_text} {relation} {right_text}"
                     ),
                 )
             )
 
 
 
-def _referenced_elements(spec: MappingSpec, tx: TransactionDocument) -> set[tuple[int, int]]:
+def _x12_fields_inbound(rule: MappingRule) -> list[str]:
+    """The X12 element refs an inbound rule reads: source + condition fields."""
+    fields: list[str] = []
+    if rule.source_field and rule.rule_type is not RuleType.LOOP_COUNT:
+        fields.append(rule.source_field)
+    if rule.condition is not None:
+        fields.extend(predicate.field for predicate in rule.condition.predicates)
+    return fields
+
+
+def _x12_fields_outbound(rule: MappingRule) -> list[str]:
+    """The X12 element ref an outbound rule produces: its target."""
+    return [rule.target_field]
+
+
+def _referenced_elements(
+    spec: MappingSpec,
+    tx: TransactionDocument,
+    fields_for: Any = _x12_fields_inbound,
+) -> set[tuple[int, int]]:
     """(segment identity, element index) pairs any rule reads or qualifies on."""
     referenced: set[tuple[int, int]] = set()
 
@@ -730,11 +1081,8 @@ def _referenced_elements(spec: MappingSpec, tx: TransactionDocument) -> set[tupl
                 elif context.qualifier is not None:
                     context_loop = tx.definition.loop(context.segment_id)
                     mark(scope.segments[0], context_loop.qualifier if context_loop else 1)
-            if rule.source_field and rule.rule_type is not RuleType.LOOP_COUNT:
-                mark_all(scope, rule.source_field)
-            if rule.condition is not None:
-                for predicate in rule.condition.predicates:
-                    mark_all(scope, predicate.field)
+            for field in fields_for(rule):
+                mark_all(scope, field)
     return referenced
 
 
@@ -773,5 +1121,59 @@ def _check_unmapped_target(
                     target=concrete,
                     actual=display(value),
                     message="output field is not produced by any spec rule",
+                )
+            )
+
+
+def _check_unmapped_source_out(
+    spec: MappingSpec, output: CanonicalOutput, result: RunResult
+) -> None:
+    """Outbound mirror of rule 7a: internal source data no rule references.
+
+    LOOP_COUNT sources reference the list itself, not its leaves, so they
+    do not mark anything here.
+    """
+    referenced: set[str] = set()
+    for rule in spec.rules:
+        if rule.source_field and rule.rule_type is not RuleType.LOOP_COUNT:
+            referenced.add(rule.source_field)
+        if rule.condition is not None:
+            referenced.update(predicate.field for predicate in rule.condition.predicates)
+    for normalized, concrete, value in output.walk_paths():
+        if normalized not in referenced:
+            result.findings.append(
+                Finding(
+                    status=Status.WARNING,
+                    category=Category.UNMAPPED_SOURCE,
+                    source_ref=concrete,
+                    message=(
+                        "source field is not referenced by any spec rule "
+                        f"(value {display(value)!r})"
+                    ),
+                )
+            )
+
+
+def _check_unmapped_target_out(
+    spec: MappingSpec, tx: TransactionDocument, result: RunResult
+) -> None:
+    """Outbound mirror of rule 7b: X12 output data no rule produces."""
+    referenced = _referenced_elements(spec, tx, fields_for=_x12_fields_outbound)
+    for label, segment in tx.business_segments():
+        unreferenced = [
+            f"{segment.ref(index)}={value!r}"
+            for index, value in enumerate(segment.elements, start=1)
+            if value != "" and (id(segment), index) not in referenced
+        ]
+        if unreferenced:
+            result.findings.append(
+                Finding(
+                    status=Status.WARNING,
+                    category=Category.UNMAPPED_TARGET,
+                    target=f"{label} {segment.seg_id}",
+                    message=(
+                        "output data not produced by any spec rule: "
+                        + ", ".join(unreferenced)
+                    ),
                 )
             )
