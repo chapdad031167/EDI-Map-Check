@@ -44,3 +44,32 @@ jobs:
           name: audit-companion-apk-debug
           path: audit-companion/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+  # Publishes the signed APK as a GitHub Release asset so it has a stable,
+  # phone-friendly download link. Runs on pushes to main and on manual dispatch.
+  release-apk:
+    needs: build-apk
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: audit-companion-apk
+          path: apk
+
+      - name: Publish/refresh the latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: audit-companion-latest
+          name: Audit Companion (latest APK)
+          body: |
+            Latest signed Audit Companion APK, rebuilt automatically from `main`.
+
+            **Install:** download `app-release.apk` below, open it on your phone,
+            and allow installs from this source when prompted. No internet
+            permission — everything stays on the device.
+          files: apk/app-release.apk
+          fail_on_unmatched_files: true
