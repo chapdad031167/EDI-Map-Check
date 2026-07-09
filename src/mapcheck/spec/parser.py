@@ -10,6 +10,7 @@ reported together rather than one at a time.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -21,12 +22,15 @@ from mapcheck.spec.formats import FormatSpecError, parse_format
 from mapcheck.spec.model import (
     CodeList,
     DataType,
+    Direction,
     LoopContext,
     MappingRule,
     MappingSpec,
     Outcome,
     OutcomeKind,
     RuleType,
+    is_canonical_path,
+    is_element_ref,
     split_source_field,
 )
 from mapcheck.spec.template import CODELIST_COLUMNS, MAPPING_COLUMNS
@@ -112,11 +116,17 @@ def _check_header(
     return True
 
 
+#: LOOP_COUNT source in an outbound spec: a top-level list ref (``lines[]``).
+_LIST_REF_RE = re.compile(r"^[A-Za-z0-9_]+\[\]$")
+
+
 def _parse_rule(
     idx: int,
     cells: tuple[str | None, ...],
     code_lists: dict[str, CodeList],
     errors: list[str],
+    direction: Direction = Direction.INBOUND,
+    notes_out: list[str] | None = None,
 ) -> MappingRule | None:
     (
         row_id,
@@ -168,18 +178,37 @@ def _parse_rule(
             err(str(exc))
             ok = False
 
+    outbound = direction is Direction.OUTBOUND
     if source_field and rule_type is not RuleType.LOOP_COUNT:
+        if outbound:
+            if not is_canonical_path(source_field):
+                err(
+                    f"outbound Source Field must be a canonical path into the "
+                    f"internal source document (e.g. order.po_number, "
+                    f"lines[].qty), got {source_field!r}"
+                )
+                ok = False
+        else:
+            try:
+                split_source_field(source_field)
+            except ValueError as exc:
+                err(str(exc))
+                ok = False
+    if outbound and target_field:
         try:
-            split_source_field(source_field)
-        except ValueError as exc:
-            err(str(exc))
+            split_source_field(target_field)
+        except ValueError:
+            err(
+                f"outbound Target Field must be an X12 element "
+                f"(segment+element, e.g. BAK03), got {target_field!r}"
+            )
             ok = False
 
     condition = None
     then_outcome = else_outcome = None
     if condition_coded:
         try:
-            condition = parse_condition(condition_coded)
+            condition = parse_condition(condition_coded, allow_paths=outbound)
         except ConditionSyntaxError as exc:
             err(f"Condition (Coded): {exc}")
             ok = False
@@ -255,7 +284,17 @@ def _parse_rule(
         err(f"Condition (Coded) is only allowed on CONDITIONAL rules, not {rule_type_raw}")
         ok = False
     if rule_type is RuleType.LOOP_COUNT:
-        if not source_field:
+        if outbound:
+            if not source_field or not _LIST_REF_RE.match(source_field):
+                err(
+                    "outbound LOOP_COUNT source must be a list reference like "
+                    f"'lines[]', got {source_field!r}"
+                )
+                ok = False
+            if loop_context is not None:
+                err("outbound LOOP_COUNT rule must not have a Loop Context")
+                ok = False
+        elif not source_field:
             err("LOOP_COUNT rule requires a Source Field naming the loop (e.g. PO1)")
             ok = False
         elif not source_field.isalnum():
@@ -265,30 +304,64 @@ def _parse_rule(
     if rule_type is RuleType.CONDITIONAL and then_outcome is not None and else_outcome is None:
         else_outcome = Outcome(kind=OutcomeKind.SKIP)
 
-    per_line = target_field is not None and "[]" in target_field
-    if per_line and loop_context is None:
-        if rule_type is not RuleType.LOOP_COUNT:
+    if outbound:
+        # Per-line = bare (unqualified) Loop Context: the rule runs once
+        # per occurrence of that X12 target loop.
+        per_line = loop_context is not None and loop_context.qualifier is None
+        line_paths = [
+            f
+            for f in (
+                [source_field] if source_field and rule_type is not RuleType.LOOP_COUNT else []
+            )
+            + [p.field for p in (condition.predicates if condition else ())]
+            if "[]" in f
+        ]
+        if line_paths and not per_line:
             err(
-                f"per-line target {target_field!r} requires a repeating Loop Context "
-                "(a loop id like 'PO1', or a level-qualified one like 'HL[I]')"
+                f"per-line source path {line_paths[0]!r} requires a bare repeating "
+                "Loop Context naming the X12 loop the lines map to (e.g. 'PO1')"
             )
             ok = False
-    if not per_line and loop_context is not None and loop_context.qualifier is None:
-        err(
-            f"repeating loop context {loop_context_raw!r} requires a per-line target "
-            "(lines[] notation) — or qualify the occurrence, e.g. 'N1[ST]'"
-        )
-        ok = False
+        if notes_out is not None:
+            for outcome_name, outcome in (("Then", then_outcome), ("Else", else_outcome)):
+                if outcome is not None and outcome.kind is OutcomeKind.BLANK:
+                    notes_out.append(
+                        f"Mapping row {idx}: {outcome_name} outcome BLANK is not "
+                        "testable against an X12 target (X12 cannot distinguish an "
+                        "empty element from an absent one) — the rule will report "
+                        "NOT TESTED when that branch fires"
+                    )
+    else:
+        per_line = target_field is not None and "[]" in target_field
+        if per_line and loop_context is None:
+            if rule_type is not RuleType.LOOP_COUNT:
+                err(
+                    f"per-line target {target_field!r} requires a repeating Loop Context "
+                    "(a loop id like 'PO1', or a level-qualified one like 'HL[I]')"
+                )
+                ok = False
+        if not per_line and loop_context is not None and loop_context.qualifier is None:
+            err(
+                f"repeating loop context {loop_context_raw!r} requires a per-line target "
+                "(lines[] notation) — or qualify the occurrence, e.g. 'N1[ST]'"
+            )
+            ok = False
 
     if not ok:
         return None
     assert row_id and target_field and rule_type
+    if outbound:
+        # canonical source paths are case-sensitive; X12 targets are not
+        kept_source = source_field
+        target_field = target_field.upper()
+    else:
+        kept_source = source_field.upper() if source_field else None
     return MappingRule(
         row_id=row_id,
         sheet_row=idx,
         target_field=target_field,
         rule_type=rule_type,
-        source_field=source_field.upper() if source_field else None,
+        source_field=kept_source,
         loop_context=loop_context,
         condition_text=condition_text,
         condition=condition,
@@ -299,6 +372,7 @@ def _parse_rule(
         data_type=data_type,
         format=format_raw,
         notes=notes,
+        direction=direction,
     )
 
 
@@ -330,6 +404,17 @@ def load_spec(path: str | Path) -> MappingSpec:
         meta = _load_meta(ws_meta)
         code_lists = _load_code_lists(ws_codes, errors)
 
+        direction = Direction.INBOUND
+        direction_raw = meta.get("Direction")
+        if direction_raw is not None:
+            try:
+                direction = Direction(direction_raw.lower())
+            except ValueError:
+                errors.append(
+                    f"Meta Direction must be 'inbound' or 'outbound', got {direction_raw!r}"
+                )
+
+        load_notes: list[str] = []
         rules: list[MappingRule] = []
         seen_ids: dict[str, int] = {}
         n_cols = len(MAPPING_COLUMNS)
@@ -339,7 +424,7 @@ def load_spec(path: str | Path) -> MappingSpec:
             cells = tuple(_cell_str(v) for v in row)
             if not any(cells):
                 continue
-            rule = _parse_rule(idx, cells, code_lists, errors)
+            rule = _parse_rule(idx, cells, code_lists, errors, direction, load_notes)
             if rule is None:
                 continue
             if rule.row_id in seen_ids:
@@ -361,6 +446,8 @@ def load_spec(path: str | Path) -> MappingSpec:
             rules=tuple(rules),
             code_lists=code_lists,
             source_path=str(path),
+            direction=direction,
+            load_notes=tuple(load_notes),
         )
     finally:
         wb.close()

@@ -27,6 +27,20 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
+class Direction(str, Enum):
+    """Which way the spec maps (Meta sheet ``Direction`` key).
+
+    Inbound (the default) validates X12 → internal: expected values derive
+    from the X12 source, actuals resolve from the canonical output model.
+    Outbound swaps the roles: Source Field holds a canonical path into the
+    internal document, Target Field holds an X12 element (``BAK03``), and
+    Loop Context qualifies the X12 target side.
+    """
+
+    INBOUND = "inbound"
+    OUTBOUND = "outbound"
+
+
 class RuleType(str, Enum):
     """How a spec row says the target value is produced."""
 
@@ -155,6 +169,12 @@ class LoopContext:
 
 _SOURCE_FIELD_RE = re.compile(r"^([A-Z][A-Z0-9]{1,2})(\d{2})$")
 
+#: Canonical path notation: dot-separated keys, ``[]`` marking the
+#: repeating list (``order.po_number``, ``lines[].qty``, ``refs.001.belnr``).
+_CANONICAL_PATH_RE = re.compile(
+    r"^[A-Za-z0-9_]+(?:\[\])?(?:\.[A-Za-z0-9_]+(?:\[\])?)*$"
+)
+
 
 def split_source_field(source_field: str) -> tuple[str, int]:
     """Split ``'BEG03'`` into ``('BEG', 3)``; raises ValueError on bad syntax."""
@@ -164,6 +184,17 @@ def split_source_field(source_field: str) -> tuple[str, int]:
             f"invalid source field {source_field!r} (expected segment+element, e.g. 'BEG03')"
         )
     return m.group(1), int(m.group(2))
+
+
+def is_element_ref(text: str) -> bool:
+    """True when ``text`` is segment+element notation (``BEG03``)."""
+    return _SOURCE_FIELD_RE.match(text.strip().upper()) is not None
+
+
+def is_canonical_path(text: str) -> bool:
+    """True when ``text`` is canonical dot-path notation (``lines[].qty``)."""
+    text = text.strip()
+    return bool(_CANONICAL_PATH_RE.match(text)) and not is_element_ref(text)
 
 
 @dataclass(frozen=True)
@@ -185,20 +216,44 @@ class MappingRule:
     data_type: DataType | None = None
     format: str | None = None
     notes: str | None = None
+    direction: Direction = Direction.INBOUND
 
     @property
     def is_per_line(self) -> bool:
-        """True when the rule runs once per repeating-loop occurrence."""
+        """True when the rule runs once per repeating-loop occurrence.
+
+        Inbound, the ``lines[]`` target marks it; outbound the target is an
+        X12 element, so a bare (unqualified) Loop Context — *each*
+        occurrence of the loop — is the marker instead.
+        """
+        if self.direction is Direction.OUTBOUND:
+            return self.loop_context is not None and self.loop_context.qualifier is None
         return "[]" in self.target_field
 
     def source_ref(self) -> str:
-        """Human-readable source reference for reports, e.g. ``N1[ST] N104``."""
+        """Human-readable source reference for reports, e.g. ``N1[ST] N104``.
+
+        Outbound the source is a canonical path and Loop Context belongs to
+        the X12 target side, so only the path is shown.
+        """
+        if self.direction is Direction.OUTBOUND:
+            return self.source_field or "(none)"
         parts = []
         if self.loop_context:
             parts.append(str(self.loop_context))
         if self.source_field:
             parts.append(self.source_field)
         return " ".join(parts) if parts else "(none)"
+
+    def target_ref(self) -> str:
+        """Human-readable target reference for reports.
+
+        Inbound targets are self-describing paths; outbound ones gain their
+        Loop Context, e.g. ``N1[SE] N102``.
+        """
+        if self.direction is Direction.OUTBOUND and self.loop_context:
+            return f"{self.loop_context} {self.target_field}"
+        return self.target_field
 
 
 @dataclass(frozen=True)
@@ -222,6 +277,10 @@ class MappingSpec:
     rules: tuple[MappingRule, ...]
     code_lists: dict[str, CodeList]
     source_path: str | None = None
+    direction: Direction = Direction.INBOUND
+    #: Non-fatal loader observations (e.g. BLANK outcomes in an outbound
+    #: spec); surfaced as warnings by the engine.
+    load_notes: tuple[str, ...] = ()
 
     @property
     def transaction_set(self) -> str | None:

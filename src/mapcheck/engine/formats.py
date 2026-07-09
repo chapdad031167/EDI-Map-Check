@@ -148,6 +148,54 @@ def normalize_actual(
     raise AssertionError(f"unhandled data type {data_type}")
 
 
+def normalize_x12(value: str, data_type: DataType | None, fmt: FormatSpec) -> tuple[Any, list[str]]:
+    """Convert an X12 element on the **target** side (outbound specs).
+
+    The Format column describes the X12 representation the map must
+    produce: dates default to CCYYMMDD unless a pattern overrides,
+    ``implied:N`` scales pointless decimals, ``places:N`` requires N shown
+    decimal places. Raises :class:`NormalizationError` on violations —
+    a hard format defect in the produced file.
+    """
+    warnings: list[str] = []
+    if data_type in (None, DataType.STRING):
+        return value, warnings
+    if data_type is DataType.INTEGER:
+        try:
+            return int(value), warnings
+        except ValueError:
+            raise NormalizationError(f"{value!r} is not a valid integer") from None
+    if data_type is DataType.DECIMAL:
+        try:
+            number = Decimal(value)
+        except InvalidOperation:
+            raise NormalizationError(f"{value!r} is not a valid number") from None
+        if fmt.implied is not None:
+            if "." in value:
+                raise NormalizationError(
+                    f"{value!r} has an explicit decimal point but the spec says "
+                    f"implied:{fmt.implied}"
+                )
+            number = number.scaleb(-fmt.implied)
+        elif fmt.places is not None:
+            _, _, frac = value.partition(".")
+            if len(frac) != fmt.places:
+                raise NormalizationError(
+                    f"{value!r} does not show the required {fmt.places} decimal places"
+                )
+        return number, warnings
+    if data_type in (DataType.DATE, DataType.TIME):
+        pattern = fmt.pattern or ("%Y%m%d" if data_type is DataType.DATE else "%H%M")
+        try:
+            parsed = datetime.strptime(value, pattern)
+        except ValueError:
+            raise NormalizationError(
+                f"{value!r} does not match the required {data_type.value} format {pattern!r}"
+            ) from None
+        return (parsed.date() if data_type is DataType.DATE else parsed.time()), warnings
+    raise AssertionError(f"unhandled data type {data_type}")
+
+
 def check_length(value: Any, fmt: FormatSpec) -> str | None:
     """Return a violation message when the string form breaks len:MIN..MAX."""
     if fmt.len_min is None:
