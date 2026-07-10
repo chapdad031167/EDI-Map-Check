@@ -95,6 +95,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="map direction preset for the Meta sheet (default: inbound)",
     )
 
+    p_imp = sub.add_parser(
+        "import-spec", help="import a partner mapping document (.xlsx/.csv) into a spec"
+    )
+    p_imp.add_argument("input", help="partner mapping document (.xlsx or .csv)")
+    p_imp.add_argument("--output", required=True, help="native MapCheck spec to write (.xlsx)")
+    p_imp.add_argument(
+        "--map",
+        metavar="COLS",
+        help="override column detection, e.g. "
+        "\"Source Field=B, Target Field=E, Rule Type=F\" (header name or column letter)",
+    )
+    p_imp.add_argument(
+        "--code-lists",
+        metavar="PATH",
+        help="a lookup-table document (.xlsx/.csv) to import into the CodeLists sheet",
+    )
+    p_imp.add_argument("--transaction", metavar="SET", help="Meta Transaction Set value")
+    p_imp.add_argument(
+        "--direction", choices=("inbound", "outbound"), help="Meta Direction value"
+    )
+    p_imp.add_argument("--spec-name", metavar="NAME", help="Meta Spec Name value")
+
     p_hist = sub.add_parser("history", help="list recent validation runs")
     p_hist.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
     p_hist.add_argument("--limit", type=int, default=20, help="number of runs to show")
@@ -191,6 +213,64 @@ def _cmd_init_spec(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_map_overrides(text: str | None) -> dict[str, str]:
+    if not text:
+        return {}
+    overrides: dict[str, str] = {}
+    for chunk in text.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        key, sep, value = chunk.partition("=")
+        if not sep:
+            raise ValueError(f"malformed --map entry {chunk!r} (expected 'Our Column=their header')")
+        overrides[key.strip()] = value.strip()
+    return overrides
+
+
+def _cmd_import_spec(args: argparse.Namespace) -> int:
+    from mapcheck.spec.importer import (
+        ImportError_,
+        format_worklist,
+        import_mapping,
+        write_workbook,
+        write_worklist,
+    )
+
+    output = Path(args.output)
+    if output.exists():
+        print(f"mapcheck: {output} already exists, not overwriting", file=sys.stderr)
+        return EXIT_USAGE
+    meta: dict[str, str] = {}
+    if args.transaction:
+        meta["Transaction Set"] = args.transaction
+    if args.direction:
+        meta["Direction"] = args.direction
+    if args.spec_name:
+        meta["Spec Name"] = args.spec_name
+    try:
+        overrides = _parse_map_overrides(args.map)
+        result = import_mapping(
+            args.input, overrides=overrides, meta=meta, code_lists_path=args.code_lists
+        )
+    except (ImportError_, ValueError) as exc:
+        print(f"mapcheck: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    write_workbook(result, output)
+    worklist_path = output.with_suffix(output.suffix + ".worklist.txt")
+    write_worklist(result, worklist_path)
+
+    print(format_worklist(result))
+    print(f"Spec written to {output}")
+    print(f"Worklist written to {worklist_path}")
+    if result.review_rows:
+        print(
+            f"\n{len(result.review_rows)} row(s) need review before the spec will load."
+        )
+    return 0
+
+
 def _cmd_history(args: argparse.Namespace) -> int:
     if not Path(args.db).exists():
         print(f"mapcheck: no history database at {args.db}", file=sys.stderr)
@@ -235,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {
         "validate": _cmd_validate,
         "init-spec": _cmd_init_spec,
+        "import-spec": _cmd_import_spec,
         "history": _cmd_history,
         "transactions": _cmd_transactions,
     }
