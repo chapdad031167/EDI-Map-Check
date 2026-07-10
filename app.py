@@ -113,6 +113,14 @@ EXAMPLE_SCENARIOS = {
     "multi-order interchange (orphans + dup key)": (
         "850_multi_reference_spec.xlsx", "850_multi_defects.edi",
         "orders_multi_defects.json"),
+    "810 to SAP INVOIC02 IDoc flat (clean)": (
+        "invoic02_reference_spec.xlsx", "810_sap.edi", "invoic02_baseline.txt"),
+    "810 to SAP INVOIC02 defective (XML)": (
+        "invoic02_reference_spec.xlsx", "810_sap.edi", "invoic02_defects.xml"),
+    "856 to SAP DESADV01 IDoc flat (clean)": (
+        "desadv01_reference_spec.xlsx", "856_sap.edi", "desadv01_baseline.txt"),
+    "856 to SAP DESADV01 defective (XML)": (
+        "desadv01_reference_spec.xlsx", "856_sap.edi", "desadv01_defects.xml"),
 }
 
 _STATUS_COLORS = {
