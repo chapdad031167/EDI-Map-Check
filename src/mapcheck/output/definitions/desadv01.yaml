@@ -1,0 +1,33 @@
+# SAP IDoc DESADV01 (delivery / advanced shipping notification).
+#
+# Scoped to the flat E1EDL20 -> E1EDL24 item list (no HL-on-IDoc nesting),
+# matching the single-repeating-list canonical model. Synthetic offsets,
+# self-consistent with scripts/generate_examples.py.
+
+format: idoc-desadv01
+basic_type: DESADV01
+layout: fixed
+sdata_start: 63
+segnam: [0, 30]
+
+detect:
+  flat: {control_record: EDI_DC40}
+  xml: {root: DESADV01}
+
+segments:
+  E1EDL20:            # delivery header
+    route: {kind: object, section: header}
+    fields: {VBELN: [0, 10], LIFEX: [10, 35], BOLNR: [45, 35]}
+  E1EDT13:            # delivery dates, by qualifier
+    route: {kind: keyed, section: dates, qualifier: QUALF, value: NTANF}
+    fields: {QUALF: [0, 3], NTANF: [3, 8]}
+  E1EDKA1:            # partners
+    route: {kind: partner, section: partners, qualifier: PARVW,
+            values: [PARTN, NAME1, ORT01]}
+    fields: {PARVW: [0, 3], PARTN: [3, 17], NAME1: [20, 35], ORT01: [55, 35]}
+  E1EDL24:            # delivery item
+    route: {kind: line}
+    fields: {POSNR: [0, 6], MATNR: [6, 35], LFIMG: [41, 15], VRKME: [56, 3]}
+  E1EDL41:            # item reference (PO number / line), by qualifier
+    route: {kind: line_child, group: refs, qualifier: QUALF, values: [BSTNR, POSEX]}
+    fields: {QUALF: [0, 3], BSTNR: [3, 35], POSEX: [38, 6]}

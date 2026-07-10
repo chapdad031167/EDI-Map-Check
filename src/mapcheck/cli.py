@@ -17,6 +17,7 @@ from pathlib import Path
 from mapcheck import __version__
 from mapcheck.engine.validator import validate_files, validate_interchange_files
 from mapcheck.output.adapter import OutputLoadError
+from mapcheck.output.idoc import DefinitionError
 from mapcheck.report.excel import export_excel
 from mapcheck.report.history import RunHistory
 from mapcheck.report.terminal import render_interchange_report, render_report
@@ -58,6 +59,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--transaction",
         metavar="SET",
         help="force a transaction set (default: auto-detect from the X12 file's ST01)",
+    )
+    p_val.add_argument(
+        "--output-def",
+        metavar="PATH",
+        help="register a user-supplied output-format definition (.yaml) and use it "
+        "for the output file (for formats that can't be auto-detected, e.g. delimited)",
     )
     p_val.add_argument(
         "--export-xlsx",
@@ -125,14 +132,20 @@ def _is_interchange(spec, source_path: str, output_path: str) -> bool:
 
 def _cmd_validate(args: argparse.Namespace) -> int:
     color = False if args.no_color else None
+    output_format = None
     try:
+        if args.output_def:
+            from mapcheck.output.idoc import register_output_definition
+
+            output_format = register_output_definition(args.output_def).format
         spec = load_spec(args.spec)
         if _is_interchange(spec, args.source, args.output):
-            return _run_interchange(args, color)
+            return _run_interchange(args, color, output_format)
         result = validate_files(
-            args.spec, args.source, args.output, transaction=args.transaction
+            args.spec, args.source, args.output,
+            transaction=args.transaction, output_format=output_format,
         )
-    except (SpecLoadError, X12ParseError, OutputLoadError) as exc:
+    except (SpecLoadError, X12ParseError, OutputLoadError, DefinitionError) as exc:
         print(f"mapcheck: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
@@ -149,9 +162,12 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return result.exit_code
 
 
-def _run_interchange(args: argparse.Namespace, color: bool | None) -> int:
+def _run_interchange(
+    args: argparse.Namespace, color: bool | None, output_format: str | None = None
+) -> int:
     result = validate_interchange_files(
-        args.spec, args.source, args.output, transaction=args.transaction
+        args.spec, args.source, args.output,
+        transaction=args.transaction, output_format=output_format,
     )
     print(render_interchange_report(result, verbose=args.verbose, color=color))
 

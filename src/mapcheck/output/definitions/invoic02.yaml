@@ -1,0 +1,35 @@
+# SAP IDoc INVOIC02 (invoice).
+#
+# Completes the SAP order cycle (ORDERS05 -> DESADV01 -> INVOIC02).
+# Synthetic offsets, self-consistent with scripts/generate_examples.py.
+
+format: idoc-invoic02
+basic_type: INVOIC02
+layout: fixed
+sdata_start: 63
+segnam: [0, 30]
+
+detect:
+  flat: {control_record: EDI_DC40}
+  xml: {root: INVOIC02}
+
+segments:
+  E1EDK01:            # invoice header
+    route: {kind: object, section: header}
+    fields: {CURCY: [0, 3], BELNR: [3, 35], BSART: [38, 4]}
+  E1EDK02:            # header references (PO number, delivery), by qualifier
+    route: {kind: keyed, section: refs, qualifier: QUALF, values: [BELNR, DATUM]}
+    fields: {QUALF: [0, 3], BELNR: [3, 35], DATUM: [38, 8]}
+  E1EDKA1:            # partners
+    route: {kind: partner, section: partners, qualifier: PARVW,
+            values: [PARTN, NAME1]}
+    fields: {PARVW: [0, 3], PARTN: [3, 17], NAME1: [20, 35]}
+  E1EDP01:            # invoice line item
+    route: {kind: line}
+    fields: {POSEX: [0, 6], MENGE: [6, 15], MENEE: [21, 3], VPREI: [24, 15], NETWR: [39, 18]}
+  E1EDP19:            # line product id, by qualifier
+    route: {kind: line_child, group: ids, qualifier: QUALF, values: [IDTNR, KTEXT]}
+    fields: {QUALF: [0, 3], IDTNR: [3, 35], KTEXT: [38, 70]}
+  E1EDS01:            # summary totals, by qualifier
+    route: {kind: keyed, section: summary, qualifier: SUMID, value: SUMME}
+    fields: {SUMID: [0, 3], SUMME: [3, 18]}

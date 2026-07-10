@@ -1,0 +1,13 @@
+# User-supplied output-format definition: a pipe-delimited order staging
+# file. Register with `mapcheck validate --output-def <this file>`.
+format: acme-order-csv
+layout: delimited
+delimiter: "|"
+record_id_col: 0
+segments:
+  H:
+    route: {kind: object, section: order}
+    fields: {PO: 1, DATE: 2}
+  D:
+    route: {kind: line}
+    fields: {LINE: 1, QTY: 2, UOM: 3}
