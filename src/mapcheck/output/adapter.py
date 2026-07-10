@@ -117,15 +117,30 @@ def _walk(norm_prefix: str, concrete_prefix: str, node: Any) -> Iterator[tuple[s
 # --------------------------------------------------------------------------
 
 
-def _load_json(path: Path) -> CanonicalOutput:
+def _read_json(path: Path) -> Any:
     try:
         with path.open(encoding="utf-8") as fh:
-            data = json.load(fh)
+            return json.load(fh)
     except json.JSONDecodeError as exc:
         raise OutputLoadError(f"{path}: not valid JSON — {exc}") from exc
+
+
+def _json_document(data: Any, path: Path, index: int | None = None) -> CanonicalOutput:
+    """Wrap one parsed JSON object as a document; ``index`` labels array members."""
     if not isinstance(data, dict):
-        raise OutputLoadError(f"{path}: top-level JSON value must be an object")
+        where = f"element {index}" if index is not None else "top-level JSON value"
+        raise OutputLoadError(f"{path}: {where} must be an object")
     return CanonicalOutput(data=data, typed=True, source_path=str(path), format_name="json")
+
+
+def _load_json(path: Path) -> CanonicalOutput:
+    data = _read_json(path)
+    if isinstance(data, list):
+        raise OutputLoadError(
+            f"{path}: top-level JSON is an array of {len(data)} document(s) — "
+            "use interchange validation for multi-document output"
+        )
+    return _json_document(data, path)
 
 
 # --------------------------------------------------------------------------
@@ -200,3 +215,24 @@ def load_output(path: str | Path) -> CanonicalOutput:
     if orders05.is_idoc_flat(first_line):
         return orders05.load_orders05_flat(path)
     return _load_flat(path)
+
+
+def load_output_documents(path: str | Path) -> list[CanonicalOutput]:
+    """Load an output file as one or more canonical documents.
+
+    A JSON array yields one document per element; every other container is
+    a single document (multi-document flat/IDoc is a planned follow-on).
+    Used by interchange validation; single-document callers use
+    :func:`load_output`.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise OutputLoadError(f"output file not found: {path}")
+    if path.suffix.lower() == ".json":
+        data = _read_json(path)
+        if isinstance(data, list):
+            if not data:
+                raise OutputLoadError(f"{path}: JSON array is empty — no output documents")
+            return [_json_document(item, path, index=i) for i, item in enumerate(data)]
+        return [_json_document(data, path)]
+    return [load_output(path)]
