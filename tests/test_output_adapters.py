@@ -45,9 +45,15 @@ class TestJsonAdapter:
             load_output(bad)
 
     def test_non_object_top_level(self, tmp_path: Path):
-        bad = tmp_path / "list.json"
-        bad.write_text("[1, 2]")
+        bad = tmp_path / "scalar.json"
+        bad.write_text("42")
         with pytest.raises(OutputLoadError, match="must be an object"):
+            load_output(bad)
+
+    def test_array_top_level_points_to_interchange(self, tmp_path: Path):
+        bad = tmp_path / "list.json"
+        bad.write_text("[{}, {}]")
+        with pytest.raises(OutputLoadError, match="interchange validation"):
             load_output(bad)
 
 
