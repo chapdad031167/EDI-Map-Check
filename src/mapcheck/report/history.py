@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from mapcheck.engine.results import RunResult, Status
+from mapcheck.engine.results import InterchangeResult, RunResult, Status
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -37,6 +37,15 @@ CREATE INDEX IF NOT EXISTS idx_findings_run ON findings(run_id);
 """
 
 
+def _migrate(connection: sqlite3.Connection) -> None:
+    """Additively add multi-transaction columns to an existing runs table."""
+    existing = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
+    if "interchange_id" not in existing:
+        connection.execute("ALTER TABLE runs ADD COLUMN interchange_id INTEGER")
+    if "document_key" not in existing:
+        connection.execute("ALTER TABLE runs ADD COLUMN document_key TEXT")
+
+
 class RunHistory:
     """Validation run history stored in a SQLite database file."""
 
@@ -44,6 +53,7 @@ class RunHistory:
         self.db_path = Path(db_path)
         self._connection = sqlite3.connect(self.db_path)
         self._connection.executescript(_SCHEMA)
+        _migrate(self._connection)
 
     def close(self) -> None:
         self._connection.close()
@@ -54,12 +64,18 @@ class RunHistory:
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    def record(self, result: RunResult) -> int:
-        """Persist a run and its findings; returns the run id."""
-        counts = result.counts
+    def _insert_run(
+        self,
+        result: RunResult,
+        interchange_id: int | None = None,
+        document_key: str | None = None,
+        counts: dict[Status, int] | None = None,
+    ) -> int:
+        counts = counts if counts is not None else result.counts
         cursor = self._connection.execute(
             "INSERT INTO runs (run_at, spec_file, source_file, output_file, result,"
-            " passed, failed, warnings, not_tested) VALUES (?,?,?,?,?,?,?,?,?)",
+            " passed, failed, warnings, not_tested, interchange_id, document_key)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 result.run_at.isoformat(timespec="seconds"),
                 result.spec_path,
@@ -70,6 +86,8 @@ class RunHistory:
                 counts[Status.FAIL],
                 counts[Status.WARNING],
                 counts[Status.NOT_TESTED],
+                interchange_id,
+                document_key,
             ),
         )
         run_id = cursor.lastrowid
@@ -92,14 +110,39 @@ class RunHistory:
                 for f in result.sorted_findings()
             ],
         )
+        return run_id
+
+    def record(self, result: RunResult) -> int:
+        """Persist a run and its findings; returns the run id."""
+        run_id = self._insert_run(result)
         self._connection.commit()
         return run_id
+
+    def record_interchange(self, interchange: InterchangeResult) -> int:
+        """Persist a whole interchange: a parent row whose count columns are
+        the whole-interchange rollup but which stores only the file-level
+        findings, plus a child run row per document. Returns the parent id."""
+        parent = RunResult(
+            spec_path=interchange.spec_path,
+            source_path=interchange.source_path,
+            output_path=interchange.output_path,
+            spec_name=interchange.spec_name,
+            findings=list(interchange.file_findings),
+            run_at=interchange.run_at,
+        )
+        parent_id = self._insert_run(parent, counts=interchange.counts)
+        for document in interchange.documents:
+            self._insert_run(
+                document.result, interchange_id=parent_id, document_key=document.key
+            )
+        self._connection.commit()
+        return parent_id
 
     def recent_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         """Most recent runs, newest first."""
         cursor = self._connection.execute(
             "SELECT id, run_at, spec_file, source_file, output_file, result,"
-            " passed, failed, warnings, not_tested"
+            " passed, failed, warnings, not_tested, interchange_id, document_key"
             " FROM runs ORDER BY id DESC LIMIT ?",
             (limit,),
         )
