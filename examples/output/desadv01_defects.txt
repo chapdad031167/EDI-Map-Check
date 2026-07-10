@@ -1,0 +1,7 @@
+EDI_DC40                                          DESADV01
+E1EDL20                                                                  SHIP9999
+E1EDT13                                                        00626-07-05
+E1EDKA1                                                        WE 118              RIVERSIDE MARKET
+E1EDKA1                                                        CY                  CARRIER CO
+E1EDL24                                                              614141007349                       12             EA
+E1EDL41                                                        001PO7700001                          1

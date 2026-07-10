@@ -253,6 +253,7 @@ def validate_files(
     source_path: str,
     output_path: str,
     transaction: str | None = None,
+    output_format: str | None = None,
 ) -> RunResult:
     """Load the three artifacts and validate. Convenience for CLI/UI callers.
 
@@ -260,7 +261,9 @@ def validate_files(
     result; the spec's direction decides which of them is the X12 file.
     The transaction set is auto-detected from the X12 file's ST01 unless
     ``transaction`` forces a specific registered definition. The spec's Meta
-    ``Transaction Set`` must agree with the X12 file.
+    ``Transaction Set`` must agree with the X12 file. ``output_format``
+    names a registered output-format definition for the canonical document
+    (used for user-supplied formats that can't be auto-detected).
 
     Raises ``SpecLoadError``, ``X12ParseError``, or ``OutputLoadError`` when
     an input cannot be loaded or the spec and X12 file disagree.
@@ -290,11 +293,11 @@ def validate_files(
             ]
         )
     if spec.direction is Direction.OUTBOUND:
-        doc = load_output(source_path)
+        doc = load_output(source_path, output_format=output_format)
         return validate(
             spec, tx, doc, source_path=str(source_path), output_path=str(output_path)
         )
-    output = load_output(output_path)
+    output = load_output(output_path, output_format=output_format)
     return validate(spec, tx, output, source_path=str(source_path))
 
 
@@ -496,6 +499,7 @@ def validate_interchange_files(
     source_path: str,
     output_path: str,
     transaction: str | None = None,
+    output_format: str | None = None,
 ) -> InterchangeResult:
     """Load the artifacts and validate a whole interchange.
 
@@ -532,7 +536,7 @@ def validate_interchange_files(
                 ]
             )
     canonical_path = source_path if outbound else output_path
-    documents = load_output_documents(canonical_path)
+    documents = load_output_documents(canonical_path, output_format=output_format)
     return validate_interchange(
         spec, interchange, documents, source_path=str(source_path), output_path=str(output_path)
     )
