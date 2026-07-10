@@ -104,7 +104,7 @@ def xml_path(tmp_path: Path) -> Path:
 class TestFlatParsing:
     def test_detected_and_typed(self, flat_path):
         out = load_output(flat_path)
-        assert out.format_name == "idoc-flat"
+        assert out.format_name == "idoc-orders05"
         assert out.typed is False
 
     def test_sections(self, flat_path):
@@ -155,7 +155,7 @@ class TestFlatParsing:
 class TestXmlParsing:
     def test_detected_and_sections(self, xml_path):
         out = load_output(xml_path)
-        assert out.format_name == "idoc-xml"
+        assert out.format_name == "idoc-orders05"
         assert out.typed is False
         assert out.get("refs.001.belnr") == "PO4400021"
         assert out.get("lines[].ids.003.ktext", 0) == "TRAIL MIX 12OZ"
@@ -185,16 +185,27 @@ class TestFormatEquivalence:
 
 class TestLoaderErrors:
     def test_wrong_basic_type_flat(self, tmp_path):
+        # the ORDERS05 shim rejects a control record naming another basic type
+        from mapcheck.output.orders05 import load_orders05_flat
+
         path = tmp_path / "other.txt"
-        path.write_text(control_record("DESADV01") + "\n")
+        path.write_text(control_record("XXXXXX01") + "\n")
         with pytest.raises(OutputLoadError, match="only ORDERS05"):
+            load_orders05_flat(path)
+
+    def test_unregistered_xml_root(self, tmp_path):
+        path = tmp_path / "other.xml"
+        path.write_text("<UNKNOWN99><IDOC></IDOC></UNKNOWN99>")
+        with pytest.raises(OutputLoadError, match="no registered IDoc XML format"):
             load_output(path)
 
-    def test_wrong_xml_root(self, tmp_path):
+    def test_wrong_xml_root_direct(self, tmp_path):
+        from mapcheck.output.orders05 import load_orders05_xml
+
         path = tmp_path / "other.xml"
         path.write_text("<DESADV01><IDOC></IDOC></DESADV01>")
-        with pytest.raises(OutputLoadError, match="expected an ORDERS05"):
-            load_output(path)
+        with pytest.raises(OutputLoadError, match="expected a ORDERS05"):
+            load_orders05_xml(path)
 
     def test_wrong_basic_type_xml_control(self, tmp_path):
         path = tmp_path / "ctl.xml"
@@ -209,7 +220,7 @@ class TestLoaderErrors:
         ]
         path = tmp_path / "orphan.txt"
         path.write_text("\n".join(records) + "\n")
-        with pytest.raises(OutputLoadError, match="before any E1EDP01"):
+        with pytest.raises(OutputLoadError, match="before any line segment"):
             load_output(path)
 
     def test_invalid_xml(self, tmp_path):
