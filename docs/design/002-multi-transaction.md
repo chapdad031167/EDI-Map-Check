@@ -1,6 +1,9 @@
 # Design 002 — Multi-Transaction Interchange Validation
 
-**Status:** proposed — awaiting review, no code yet
+**Status:** approved 2026-07-10 — all four open questions resolved as
+recommended (JSON-array container this PR with flat/IDoc as a fast-follow,
+hard error on a keyless multi-document file, two Meta keys for the pairing
+key, three-850 reference scenario)
 **Roadmap item:** 1.2 (Phase 1, design-first)
 
 ## The problem
