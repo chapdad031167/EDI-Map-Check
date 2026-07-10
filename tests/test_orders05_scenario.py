@@ -17,7 +17,7 @@ from mapcheck.engine import Category, RunResult, Status, validate_files
 from mapcheck.output import load_output
 
 #: (extension, expected adapter) — the same scenario in each IDoc format.
-FORMATS = [("txt", "idoc-flat"), ("xml", "idoc-xml")]
+FORMATS = [("txt", "idoc-orders05"), ("xml", "idoc-orders05")]
 EXTS = [ext for ext, _ in FORMATS]
 
 

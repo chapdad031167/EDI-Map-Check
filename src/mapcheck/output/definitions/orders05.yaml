@@ -1,0 +1,54 @@
+# SAP IDoc ORDERS05 (sales order) output-format definition.
+#
+# Fixed-width EDI_DD40 data records (SEGNAM [0:30], SDATA from offset 63)
+# plus the equivalent IDoc XML. Field offsets are from the public ORDERS05
+# basic type; only the fields the reference maps validate are listed, so
+# SAP-assigned values (POSEX, NETWR, ...) don't produce unmapped-output
+# noise. E1EDP20 schedule lines are excluded (multi-list pairing backlog).
+
+format: idoc-orders05
+basic_type: ORDERS05
+layout: fixed
+sdata_start: 63
+segnam: [0, 30]
+
+detect:
+  flat: {control_record: EDI_DC40}
+  xml: {root: ORDERS05}
+
+segments:
+  E1EDK01:            # header: ACTION(3) KZABS(1) CURCY(3) HWAER(3) ... BSART@79(4)
+    route: {kind: object, section: header}
+    fields: {ACTION: [0, 3], CURCY: [4, 3], BSART: [79, 4]}
+  E1EDK14:            # org data: QUALF(3) ORGID(35)
+    route: {kind: keyed, section: org, qualifier: QUALF, value: ORGID}
+    fields: {QUALF: [0, 3], ORGID: [3, 35]}
+  E1EDK03:            # dates: IDDAT(3) DATUM(8)
+    route: {kind: keyed, section: dates, qualifier: IDDAT, value: DATUM}
+    fields: {IDDAT: [0, 3], DATUM: [3, 8]}
+  E1EDK02:            # references: QUALF(3) BELNR(35) POSNR(6) DATUM@44(8)
+    route: {kind: keyed, section: refs, qualifier: QUALF, values: [BELNR, DATUM]}
+    fields: {QUALF: [0, 3], BELNR: [3, 35], DATUM: [44, 8]}
+  E1EDKA1:            # partners: PARVW(3) PARTN(17) ... NAME1@37 STRAS@177 ORT01@282 PSTLZ@326 REGIO@655
+    route: {kind: partner, section: partners, qualifier: PARVW,
+            values: [PARTN, NAME1, STRAS, ORT01, PSTLZ, REGIO]}
+    fields:
+      PARVW: [0, 3]
+      PARTN: [3, 17]
+      NAME1: [37, 35]
+      STRAS: [177, 35]
+      ORT01: [282, 35]
+      PSTLZ: [326, 9]
+      REGIO: [655, 3]
+  E1EDP01:            # line item: MENGE@11(15) MENEE@26(3) VPREI@54(15)
+    route: {kind: line}
+    fields: {MENGE: [11, 15], MENEE: [26, 3], VPREI: [54, 15]}
+  E1EDP02:            # line reference: QUALF(3) ZEILE@38(6)
+    route: {kind: line_child, group: refs, qualifier: QUALF, values: [ZEILE]}
+    fields: {QUALF: [0, 3], ZEILE: [38, 6]}
+  E1EDP19:            # line product id: QUALF(3) IDTNR(35) KTEXT@38(70)
+    route: {kind: line_child, group: ids, qualifier: QUALF, values: [IDTNR, KTEXT]}
+    fields: {QUALF: [0, 3], IDTNR: [3, 35], KTEXT: [38, 70]}
+  E1EDS01:            # summary: SUMID(3) SUMME(18)
+    route: {kind: keyed, section: summary, qualifier: SUMID, value: SUMME}
+    fields: {SUMID: [0, 3], SUMME: [3, 18]}

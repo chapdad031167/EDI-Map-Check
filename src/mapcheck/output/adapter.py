@@ -22,6 +22,7 @@ dict shape and return ``CanonicalOutput`` with the right ``typed`` flag.
 from __future__ import annotations
 
 import json
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
@@ -194,30 +195,51 @@ def _load_flat(path: Path) -> CanonicalOutput:
     return CanonicalOutput(data=data, typed=False, source_path=str(path), format_name="flat")
 
 
-def load_output(path: str | Path) -> CanonicalOutput:
+def load_output(path: str | Path, output_format: str | None = None) -> CanonicalOutput:
     """Load an output file, picking the adapter by extension/content.
 
-    ``.json`` loads as JSON; ``.xml`` as SAP ORDERS05 IDoc XML; a file
-    whose first line is an ``EDI_DC40`` control record as ORDERS05 IDoc
-    flat; anything else as keyed flat.
+    ``.json`` loads as JSON; ``.xml`` and IDoc flat files are matched
+    against the registered output-format definitions (ORDERS05, DESADV01,
+    INVOIC02, ...); anything else is keyed flat. Passing ``output_format``
+    names a registered definition explicitly — used for user-supplied
+    formats (e.g. a delimited layout) that can't be auto-detected.
     """
-    from mapcheck.output import orders05
+    from mapcheck.output import idoc
 
     path = Path(path)
     if not path.exists():
         raise OutputLoadError(f"output file not found: {path}")
+
+    if output_format is not None:
+        defn = idoc.default_output_registry.get(output_format)
+        if path.suffix.lower() == ".xml":
+            return idoc.load_idoc_xml(path, defn)
+        return idoc.load_idoc_flat(path, defn)
+
     if path.suffix.lower() == ".json":
         return _load_json(path)
     if path.suffix.lower() == ".xml":
-        return orders05.load_orders05_xml(path)
+        try:
+            root = ET.parse(path).getroot()
+        except ET.ParseError as exc:
+            raise OutputLoadError(f"{path}: not valid XML — {exc}") from exc
+        defn = idoc.default_output_registry.detect_xml(root.tag)
+        if defn is None:
+            raise OutputLoadError(
+                f"{path}: no registered IDoc XML format matches root <{root.tag}>"
+            )
+        return idoc.load_idoc_xml(path, defn)
     with path.open(encoding="utf-8") as fh:
         first_line = fh.readline()
-    if orders05.is_idoc_flat(first_line):
-        return orders05.load_orders05_flat(path)
+    defn = idoc.default_output_registry.detect_flat(first_line)
+    if defn is not None:
+        return idoc.load_idoc_flat(path, defn)
     return _load_flat(path)
 
 
-def load_output_documents(path: str | Path) -> list[CanonicalOutput]:
+def load_output_documents(
+    path: str | Path, output_format: str | None = None
+) -> list[CanonicalOutput]:
     """Load an output file as one or more canonical documents.
 
     A JSON array yields one document per element; every other container is
@@ -228,11 +250,11 @@ def load_output_documents(path: str | Path) -> list[CanonicalOutput]:
     path = Path(path)
     if not path.exists():
         raise OutputLoadError(f"output file not found: {path}")
-    if path.suffix.lower() == ".json":
+    if output_format is None and path.suffix.lower() == ".json":
         data = _read_json(path)
         if isinstance(data, list):
             if not data:
                 raise OutputLoadError(f"{path}: JSON array is empty — no output documents")
             return [_json_document(item, path, index=i) for i, item in enumerate(data)]
         return [_json_document(data, path)]
-    return [load_output(path)]
+    return [load_output(path, output_format=output_format)]

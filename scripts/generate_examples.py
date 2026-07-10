@@ -2819,10 +2819,14 @@ _WRITER_FIELDS = {
 }
 
 
-def _write_idoc_flat(segments: list[tuple[str, dict[str, str]]]) -> str:
-    lines = ["EDI_DC40".ljust(30) + " " * 20 + "ORDERS05"]
+def _write_idoc_flat(
+    segments: list[tuple[str, dict[str, str]]],
+    fields_table: dict = _WRITER_FIELDS,
+    basic_type: str = "ORDERS05",
+) -> str:
+    lines = ["EDI_DC40".ljust(30) + " " * 20 + basic_type]
     for seg_name, fields in segments:
-        table = _WRITER_FIELDS[seg_name]
+        table = fields_table[seg_name]
         end = max(off + ln for off, ln in table.values())
         sdata = [" "] * end
         for name, value in fields.items():
@@ -2833,24 +2837,29 @@ def _write_idoc_flat(segments: list[tuple[str, dict[str, str]]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _write_idoc_xml(segments: list[tuple[str, dict[str, str]]]) -> str:
+def _write_idoc_xml(
+    segments: list[tuple[str, dict[str, str]]],
+    line_segment: str = "E1EDP01",
+    child_prefix: str = "E1EDP",
+    basic_type: str = "ORDERS05",
+) -> str:
     import xml.etree.ElementTree as ET
 
-    root = ET.Element("ORDERS05")
+    root = ET.Element(basic_type)
     idoc = ET.SubElement(root, "IDOC", BEGIN="1")
     control = ET.SubElement(idoc, "EDI_DC40", SEGMENT="1")
-    ET.SubElement(control, "IDOCTYP").text = "ORDERS05"
+    ET.SubElement(control, "IDOCTYP").text = basic_type
     current_item = None
     for seg_name, fields in segments:
         parent = idoc
-        if seg_name == "E1EDP01":
+        if seg_name == line_segment:
             current_item = None  # new item starts at IDOC level
-        elif seg_name.startswith("E1EDP") and current_item is not None:
+        elif seg_name.startswith(child_prefix) and current_item is not None:
             parent = current_item
         element = ET.SubElement(parent, seg_name, SEGMENT="1")
         for name, value in fields.items():
             ET.SubElement(element, name).text = value
-        if seg_name == "E1EDP01":
+        if seg_name == line_segment:
             current_item = element
     ET.indent(root)
     return ET.tostring(root, encoding="unicode") + "\n"
@@ -3165,6 +3174,331 @@ def generate_multi_interchange_files() -> None:
         print(f"wrote {path.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# 810 -> INVOIC02 (SAP IDoc), output in both flat and XML
+# --------------------------------------------------------------------------
+
+SPEC_INVOIC02_ROWS: list[tuple[str, ...]] = [
+    ("V-001", "BIG02", "", "header.belnr", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..35", "Invoice number."),
+    ("V-002", "CUR02", "", "header.curcy", "CONDITIONAL",
+     "Map currency when a buying-party code is sent.",
+     "CUR01 = 'BY'", "SOURCE", "SKIP", "", "", "string", "len:3..3", ""),
+    ("V-003", "", "", "header.bsart", "CONSTANT", "", "", "", "",
+     "INVO", "", "string", "", "Hardcoded invoice document type."),
+    ("V-004", "BIG04", "", "refs.001.belnr", "DIRECT", "", "", "", "",
+     "", "", "string", "", "E1EDK02 qualifier 001 = purchase order number."),
+    ("V-005", "N102", "N1[RE]", "partners.re.name1", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..35", "RE = bill-to/payer."),
+    ("V-006", "N104", "N1[RE]", "partners.re.partn", "CONDITIONAL",
+     "Map the payer number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("V-007", "IT102", "IT1", "lines[].menge", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Invoiced quantity."),
+    ("V-008", "IT103", "IT1", "lines[].menee", "CODE_LIST", "", "", "", "",
+     "", "UOM_SAP", "string", "", "X12 UOM to SAP unit."),
+    ("V-009", "IT104", "IT1", "lines[].vprei", "DIRECT", "", "", "", "",
+     "", "", "decimal", "places:2", "Unit price."),
+    ("V-010", "IT107", "IT1", "lines[].ids.003.idtnr", "CONDITIONAL",
+     "Map the UPC only when the product ID qualifier is UP.",
+     "IT106 = 'UP'", "SOURCE", "SKIP", "", "", "string", "len:12..14", ""),
+    ("V-014", "IT101", "IT1", "lines[].posex", "DIRECT", "", "", "", "",
+     "", "", "string", "", "Invoice line position."),
+    ("V-011", "CTT01", "", "summary.001", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "E1EDS01 SUMID 001 = item count."),
+    ("V-012", "IT1", "", "summary.001", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("V-013", "TDS01", "", "summary.002", "DIRECT", "", "", "", "",
+     "", "", "decimal", "implied:2;places:2", "TDS01 is X12 N2 -> SUMME 306.00."),
+]
+
+CODE_LIST_INVOIC02_ROWS = [
+    ("UOM_SAP", "EA", "ST", "Each -> Stueck"),
+    ("UOM_SAP", "CA", "KAR", "Case -> Karton"),
+    ("UOM_SAP", "DZ", "DZN", "Dozen"),
+]
+
+SPEC_INVOIC02_META = {
+    "Transaction Set": "810",
+    "X12 Version": "004010",
+    "Spec Name": "Synthetic 810-to-INVOIC02 map - reference example",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-07-10",
+}
+
+# Lean 856: BSN01/BSN04 blanked and CTT dropped so every non-empty element
+# is mapped (a clean rule-7 baseline). Ship-to N1 at shipment level; PRF
+# (PO number) at order level, read by the item rules via HL ancestry.
+SAP_810 = [
+    "BIG**INV5001**PO7700001",
+    "CUR*BY*USD",
+    "N1*RE*ACME CORP*92*118",
+    "IT1*1*12*EA*8.50**UP*614141007349",
+    "IT1*2*6*CA*24.00**UP*614141007350",
+    "TDS*24600",
+    "CTT*2",
+]
+
+_INVOIC02_WRITER = {
+    "E1EDK01": {"CURCY": (0, 3), "BELNR": (3, 35), "BSART": (38, 4)},
+    "E1EDK02": {"QUALF": (0, 3), "BELNR": (3, 35), "DATUM": (38, 8)},
+    "E1EDKA1": {"PARVW": (0, 3), "PARTN": (3, 17), "NAME1": (20, 35)},
+    "E1EDP01": {"POSEX": (0, 6), "MENGE": (6, 15), "MENEE": (21, 3),
+                "VPREI": (24, 15)},
+    "E1EDP19": {"QUALF": (0, 3), "IDTNR": (3, 35), "KTEXT": (38, 70)},
+    "E1EDS01": {"SUMID": (0, 3), "SUMME": (3, 18)},
+}
+
+_INVOIC02_LINES = [
+    {"posex": "1", "menge": "12", "menee": "ST", "vprei": "8.50",
+     "idtnr": "614141007349"},
+    {"posex": "2", "menge": "6", "menee": "KAR", "vprei": "24.00",
+     "idtnr": "614141007350"},
+]
+
+
+def _invoic02_segments(belnr, curcy, bsart, po_number, lines, totals,
+                       extra_ref=None):
+    segs = [("E1EDK01", {k: v for k, v in
+             {"CURCY": curcy, "BELNR": belnr, "BSART": bsart}.items() if v})]
+    segs.append(("E1EDK02", {"QUALF": "001", "BELNR": po_number}))
+    if extra_ref:
+        segs.append(("E1EDK02", {"QUALF": extra_ref[0], "BELNR": extra_ref[1]}))
+    segs.append(("E1EDKA1", {"PARVW": "RE", "PARTN": "118", "NAME1": "ACME CORP"}))
+    for line in lines:
+        segs.append(("E1EDP01", {"POSEX": line["posex"], "MENGE": line["menge"],
+                                 "MENEE": line["menee"], "VPREI": line["vprei"]}))
+        segs.append(("E1EDP19", {"QUALF": "003", "IDTNR": line["idtnr"]}))
+    for sumid, summe in totals:
+        segs.append(("E1EDS01", {"SUMID": sumid, "SUMME": summe}))
+    return segs
+
+
+BASELINE_INVOIC02 = _invoic02_segments(
+    "INV5001", "USD", "INVO", "PO7700001", _INVOIC02_LINES,
+    [("001", "2"), ("002", "246.00")])
+
+# Planted defects: value_mismatch (V-001), condition_logic (V-002),
+# constant_default (V-003), code_translation (V-008), format (V-009),
+# count_mismatch + missing_output (dropped line), unmapped_target (extra ref).
+_INVOIC02_DEFECT_LINES = [
+    {**_INVOIC02_LINES[0], "menee": "EA", "vprei": "8.5"},
+]
+DEFECTS_INVOIC02 = _invoic02_segments(
+    "INV5009", "EUR", None, "PO7700001", _INVOIC02_DEFECT_LINES,
+    [("001", "2"), ("002", "246.00")], extra_ref=("012", "DL88"))
+
+
+def _write_idoc_pair(name, segments, writer, basic_type, line_seg, child_prefix):
+    flat = EXAMPLES / "output" / f"{name}.txt"
+    flat.write_text(_write_idoc_flat(segments, writer, basic_type))
+    print(f"wrote {flat.relative_to(REPO_ROOT)}")
+    xml = EXAMPLES / "output" / f"{name}.xml"
+    xml.write_text(_write_idoc_xml(segments, line_seg, child_prefix, basic_type))
+    print(f"wrote {xml.relative_to(REPO_ROOT)}")
+
+
+def generate_invoic02_files() -> None:
+    generate_spec(
+        EXAMPLES / "specs" / "invoic02_reference_spec.xlsx",
+        SPEC_INVOIC02_ROWS, CODE_LIST_INVOIC02_ROWS, SPEC_INVOIC02_META,
+    )
+    src = EXAMPLES / "source" / "810_sap.edi"
+    src.write_text(build_interchange(SAP_810, "73", "810", "IN"))
+    print(f"wrote {src.relative_to(REPO_ROOT)}")
+    for nm, segs in (("invoic02_baseline", BASELINE_INVOIC02),
+                     ("invoic02_defects", DEFECTS_INVOIC02)):
+        _write_idoc_pair(nm, segs, _INVOIC02_WRITER, "INVOIC02", "E1EDP01", "E1EDP")
+
+
+# --------------------------------------------------------------------------
+# 856 -> DESADV01 (SAP IDoc), output in both flat and XML
+# --------------------------------------------------------------------------
+
+SPEC_DESADV01_ROWS: list[tuple[str, ...]] = [
+    ("D-001", "BSN02", "", "header.lifex", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..35", "External delivery / ASN number."),
+    ("D-002", "BSN03", "", "dates.006", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y%m%d", "E1EDT13 qualifier 006 = delivery date."),
+    ("D-003", "N102", "N1[ST]", "partners.we.name1", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..35", "WE = ship-to party."),
+    ("D-004", "N104", "N1[ST]", "partners.we.partn", "CONDITIONAL",
+     "Map the store number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("D-005", "LIN03", "HL[I]", "lines[].matnr", "CONDITIONAL",
+     "Map the material number when the item is identified by UPC.",
+     "LIN02 = 'UP'", "SOURCE", "SKIP", "", "", "string", "",
+     "Item material / UPC number."),
+    ("D-006", "SN102", "HL[I]", "lines[].lfimg", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Quantity shipped."),
+    ("D-007", "SN103", "HL[I]", "lines[].vrkme", "CODE_LIST", "", "", "", "",
+     "", "UOM_SAP", "string", "", "X12 UOM to SAP unit."),
+    ("D-008", "PRF01", "HL[I]", "lines[].refs.001.bstnr", "DIRECT", "", "", "", "",
+     "", "", "string", "",
+     "PO number, read from the item's order-level PRF (HL ancestor)."),
+    ("D-009", "LIN01", "HL[I]", "lines[].refs.001.posex", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "PO line number."),
+]
+
+CODE_LIST_DESADV01_ROWS = [
+    ("UOM_SAP", "EA", "ST", "Each -> Stueck"),
+    ("UOM_SAP", "CA", "KAR", "Case -> Karton"),
+    ("UOM_SAP", "DZ", "DZN", "Dozen"),
+]
+
+SPEC_DESADV01_META = {
+    "Transaction Set": "856",
+    "X12 Version": "004010",
+    "Spec Name": "Synthetic 856-to-DESADV01 map - reference example",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-07-10",
+}
+
+SAP_856 = [
+    "BSN**SHIP0001*20260705",
+    "HL*1**S",
+    "N1*ST*RIVERSIDE MARKET*92*118",
+    "HL*2*1*O",
+    "PRF*PO7700001",
+    "HL*3*2*I",
+    "LIN*1*UP*614141007349",
+    "SN1**12*EA",
+    "HL*4*2*I",
+    "LIN*2*UP*614141007350",
+    "SN1**6*CA",
+]
+
+_DESADV01_WRITER = {
+    "E1EDL20": {"VBELN": (0, 10), "LIFEX": (10, 35), "BOLNR": (45, 35)},
+    "E1EDT13": {"QUALF": (0, 3), "NTANF": (3, 8)},
+    "E1EDKA1": {"PARVW": (0, 3), "PARTN": (3, 17), "NAME1": (20, 35),
+                "ORT01": (55, 35)},
+    "E1EDL24": {"POSNR": (0, 6), "MATNR": (6, 35), "LFIMG": (41, 15),
+                "VRKME": (56, 3)},
+    "E1EDL41": {"QUALF": (0, 3), "BSTNR": (3, 35), "POSEX": (38, 6)},
+}
+
+_DESADV01_LINES = [
+    {"posnr": "000010", "matnr": "614141007349", "lfimg": "12", "vrkme": "ST",
+     "bstnr": "PO7700001", "posex": "1"},
+    {"posnr": "000020", "matnr": "614141007350", "lfimg": "6", "vrkme": "KAR",
+     "bstnr": "PO7700001", "posex": "2"},
+]
+
+
+def _desadv01_segments(lifex, ship_date, ship_to, lines, extra_partner=None):
+    # SAP-assigned fields (VBELN delivery no, POSNR item no, ORT01) are
+    # written for realism but omitted here so the clean run has no
+    # unmapped-output noise, matching the ORDERS05 scope decision.
+    segs = [("E1EDL20", {"LIFEX": lifex})]
+    segs.append(("E1EDT13", {"QUALF": "006", "NTANF": ship_date}))
+    segs.append(("E1EDKA1", {"PARVW": "WE", "PARTN": "118", "NAME1": ship_to}))
+    if extra_partner:
+        segs.append(("E1EDKA1", {"PARVW": extra_partner[0],
+                                 "NAME1": extra_partner[1]}))
+    for line in lines:
+        segs.append(("E1EDL24", {"MATNR": line["matnr"],
+                                 "LFIMG": line["lfimg"], "VRKME": line["vrkme"]}))
+        segs.append(("E1EDL41", {"QUALF": "001", "BSTNR": line["bstnr"],
+                                 "POSEX": line["posex"]}))
+    return segs
+
+
+BASELINE_DESADV01 = _desadv01_segments(
+    "SHIP0001", "20260705", "RIVERSIDE MARKET", _DESADV01_LINES)
+
+# Planted defects: value_mismatch (D-001 lifex), format (D-002 date),
+# code_translation (D-007 uom), count_mismatch + missing_output (dropped
+# item), unmapped_target (stray CY partner).
+_DESADV01_DEFECT_LINES = [
+    {**_DESADV01_LINES[0], "vrkme": "EA"},
+]
+DEFECTS_DESADV01 = _desadv01_segments(
+    "SHIP9999", "26-07-05", "RIVERSIDE MARKET", _DESADV01_DEFECT_LINES,
+    extra_partner=("CY", "CARRIER CO"))
+
+
+# --------------------------------------------------------------------------
+# User-defined delimited output format: 850 -> a pipe-delimited staging file
+# (proves the config-driven claim — onboarded with a YAML, zero Python).
+# --------------------------------------------------------------------------
+
+USER_CSV_DEFINITION = """\
+# User-supplied output-format definition: a pipe-delimited order staging
+# file. Register with `mapcheck validate --output-def <this file>`.
+format: acme-order-csv
+layout: delimited
+delimiter: "|"
+record_id_col: 0
+segments:
+  H:
+    route: {kind: object, section: order}
+    fields: {PO: 1, DATE: 2}
+  D:
+    route: {kind: line}
+    fields: {LINE: 1, QTY: 2, UOM: 3}
+"""
+
+# Canonical keys are the definition's field names lowercased (the fold's
+# SAP convention), so targets are order.po, lines[].qty, ...
+SPEC_USERCSV_ROWS: list[tuple[str, ...]] = [
+    ("U-001", "BEG03", "", "order.po", "DIRECT", "", "", "", "",
+     "", "", "string", "", "PO number."),
+    ("U-002", "BEG05", "", "order.date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", "PO date."),
+    ("U-003", "PO101", "PO1", "lines[].line", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("U-004", "PO102", "PO1", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("U-005", "PO103", "PO1", "lines[].uom", "DIRECT", "", "", "", "",
+     "", "", "string", "", "Passed through untranslated."),
+]
+
+SPEC_USERCSV_META = {
+    "Transaction Set": "850",
+    "X12 Version": "004010",
+    "Spec Name": "Synthetic 850-to-delimited (user format) - reference example",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-07-10",
+}
+
+SAP_USERCSV_850 = [
+    "BEG***PO7700055**20260710",
+    "PO1*1*12*EA",
+    "PO1*2*6*CA",
+]
+
+
+def generate_usercsv_files() -> None:
+    generate_spec(
+        EXAMPLES / "specs" / "usercsv_reference_spec.xlsx",
+        SPEC_USERCSV_ROWS, [], SPEC_USERCSV_META,
+    )
+    defn = EXAMPLES / "formats" / "acme_order_csv.yaml"
+    defn.parent.mkdir(parents=True, exist_ok=True)
+    defn.write_text(USER_CSV_DEFINITION)
+    print(f"wrote {defn.relative_to(REPO_ROOT)}")
+    src = EXAMPLES / "source" / "850_usercsv.edi"
+    src.write_text(build_interchange(SAP_USERCSV_850, "74", "850", "PO"))
+    print(f"wrote {src.relative_to(REPO_ROOT)}")
+    out = EXAMPLES / "output" / "order_staging.csv"
+    out.write_text("H|PO7700055|2026-07-10\nD|1|12|EA\nD|2|6|CA\n")
+    print(f"wrote {out.relative_to(REPO_ROOT)}")
+
+
+def generate_desadv01_files() -> None:
+    generate_spec(
+        EXAMPLES / "specs" / "desadv01_reference_spec.xlsx",
+        SPEC_DESADV01_ROWS, CODE_LIST_DESADV01_ROWS, SPEC_DESADV01_META,
+    )
+    src = EXAMPLES / "source" / "856_sap.edi"
+    src.write_text(build_interchange(SAP_856, "72", "856", "SH"))
+    print(f"wrote {src.relative_to(REPO_ROOT)}")
+    for nm, segs in (("desadv01_baseline", BASELINE_DESADV01),
+                     ("desadv01_defects", DEFECTS_DESADV01)):
+        _write_idoc_pair(nm, segs, _DESADV01_WRITER, "DESADV01", "E1EDL24", "E1EDL4")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -3193,6 +3527,9 @@ def main() -> None:
     generate_orders05_files()
     generate_outbound_855_files()
     generate_multi_interchange_files()
+    generate_invoic02_files()
+    generate_desadv01_files()
+    generate_usercsv_files()
 
 
 if __name__ == "__main__":

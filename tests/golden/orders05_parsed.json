@@ -1,0 +1,338 @@
+{
+  "orders05_baseline.txt": {
+    "data": {
+      "dates": {
+        "002": "20260715",
+        "012": "20260701"
+      },
+      "header": {
+        "action": "000",
+        "bsart": "NB",
+        "curcy": "USD"
+      },
+      "lines": [
+        {
+          "ids": {
+            "003": {
+              "idtnr": "614141007349",
+              "ktext": "TRAIL MIX 12OZ"
+            }
+          },
+          "menee": "ST",
+          "menge": "12.000",
+          "refs": {
+            "001": {
+              "zeile": "1"
+            }
+          },
+          "vprei": "8.50"
+        },
+        {
+          "ids": {
+            "003": {
+              "idtnr": "614141007350",
+              "ktext": "SPRING WATER 24PK"
+            }
+          },
+          "menee": "KAR",
+          "menge": "6.000",
+          "refs": {
+            "001": {
+              "zeile": "2"
+            }
+          },
+          "vprei": "24.00"
+        },
+        {
+          "ids": {
+            "003": {
+              "idtnr": "614141007351",
+              "ktext": "GRANOLA BARS VARIETY"
+            }
+          },
+          "menee": "DZN",
+          "menge": "5.000",
+          "refs": {
+            "001": {
+              "zeile": "3"
+            }
+          },
+          "vprei": "12.00"
+        }
+      ],
+      "org": {
+        "012": "NB"
+      },
+      "partners": {
+        "ag": {
+          "name1": "ALPINE OUTFITTERS CORPORATE",
+          "partn": "0001"
+        },
+        "we": {
+          "name1": "ALPINE OUTFITTERS STORE 118",
+          "ort01": "BOULDER",
+          "partn": "0118",
+          "pstlz": "80301",
+          "regio": "CO",
+          "stras": "4501 CASCADE AVE"
+        }
+      },
+      "refs": {
+        "001": {
+          "belnr": "PO5500077",
+          "datum": "20260701"
+        }
+      },
+      "summary": {
+        "001": "3",
+        "002": "306.00"
+      }
+    },
+    "format_name": "idoc-flat",
+    "typed": false
+  },
+  "orders05_baseline.xml": {
+    "data": {
+      "dates": {
+        "002": "20260715",
+        "012": "20260701"
+      },
+      "header": {
+        "action": "000",
+        "bsart": "NB",
+        "curcy": "USD"
+      },
+      "lines": [
+        {
+          "ids": {
+            "003": {
+              "idtnr": "614141007349",
+              "ktext": "TRAIL MIX 12OZ"
+            }
+          },
+          "menee": "ST",
+          "menge": "12.000",
+          "refs": {
+            "001": {
+              "zeile": "1"
+            }
+          },
+          "vprei": "8.50"
+        },
+        {
+          "ids": {
+            "003": {
+              "idtnr": "614141007350",
+              "ktext": "SPRING WATER 24PK"
+            }
+          },
+          "menee": "KAR",
+          "menge": "6.000",
+          "refs": {
+            "001": {
+              "zeile": "2"
+            }
+          },
+          "vprei": "24.00"
+        },
+        {
+          "ids": {
+            "003": {
+              "idtnr": "614141007351",
+              "ktext": "GRANOLA BARS VARIETY"
+            }
+          },
+          "menee": "DZN",
+          "menge": "5.000",
+          "refs": {
+            "001": {
+              "zeile": "3"
+            }
+          },
+          "vprei": "12.00"
+        }
+      ],
+      "org": {
+        "012": "NB"
+      },
+      "partners": {
+        "ag": {
+          "name1": "ALPINE OUTFITTERS CORPORATE",
+          "partn": "0001"
+        },
+        "we": {
+          "name1": "ALPINE OUTFITTERS STORE 118",
+          "ort01": "BOULDER",
+          "partn": "0118",
+          "pstlz": "80301",
+          "regio": "CO",
+          "stras": "4501 CASCADE AVE"
+        }
+      },
+      "refs": {
+        "001": {
+          "belnr": "PO5500077",
+          "datum": "20260701"
+        }
+      },
+      "summary": {
+        "001": "3",
+        "002": "306.00"
+      }
+    },
+    "format_name": "idoc-xml",
+    "typed": false
+  },
+  "orders05_defects.txt": {
+    "data": {
+      "dates": {
+        "002": "20260715",
+        "012": "20260701"
+      },
+      "header": {
+        "action": "000",
+        "bsart": "NB",
+        "curcy": "EUR"
+      },
+      "lines": [
+        {
+          "ids": {
+            "003": {
+              "idtnr": "614141007349",
+              "ktext": "TRAIL MIX 12OZ"
+            }
+          },
+          "menee": "EA",
+          "menge": "12.000",
+          "refs": {
+            "001": {
+              "zeile": "1"
+            }
+          },
+          "vprei": "8.50"
+        },
+        {
+          "ids": {
+            "003": {
+              "idtnr": "614141007350",
+              "ktext": "SPRING WATER 24PK"
+            }
+          },
+          "menee": "KAR",
+          "menge": "6.000",
+          "refs": {
+            "001": {
+              "zeile": "2"
+            }
+          },
+          "vprei": "24.00"
+        }
+      ],
+      "org": {
+        "008": "1000"
+      },
+      "partners": {
+        "ag": {
+          "name1": "ALPINE OUTFITTERS CORPORATE",
+          "partn": "0001"
+        },
+        "we": {
+          "name1": "ALPINE OUTFITTERS STORE 118",
+          "ort01": "BOULDER",
+          "partn": "0118",
+          "pstlz": "80301",
+          "regio": "CO",
+          "stras": "4501 CASCADE AVE"
+        }
+      },
+      "refs": {
+        "001": {
+          "belnr": "PO5500770",
+          "datum": "26-07-01"
+        }
+      },
+      "summary": {
+        "001": "3",
+        "002": "306.00"
+      }
+    },
+    "format_name": "idoc-flat",
+    "typed": false
+  },
+  "orders05_defects.xml": {
+    "data": {
+      "dates": {
+        "002": "20260715",
+        "012": "20260701"
+      },
+      "header": {
+        "action": "000",
+        "bsart": "NB",
+        "curcy": "EUR"
+      },
+      "lines": [
+        {
+          "ids": {
+            "003": {
+              "idtnr": "614141007349",
+              "ktext": "TRAIL MIX 12OZ"
+            }
+          },
+          "menee": "EA",
+          "menge": "12.000",
+          "refs": {
+            "001": {
+              "zeile": "1"
+            }
+          },
+          "vprei": "8.50"
+        },
+        {
+          "ids": {
+            "003": {
+              "idtnr": "614141007350",
+              "ktext": "SPRING WATER 24PK"
+            }
+          },
+          "menee": "KAR",
+          "menge": "6.000",
+          "refs": {
+            "001": {
+              "zeile": "2"
+            }
+          },
+          "vprei": "24.00"
+        }
+      ],
+      "org": {
+        "008": "1000"
+      },
+      "partners": {
+        "ag": {
+          "name1": "ALPINE OUTFITTERS CORPORATE",
+          "partn": "0001"
+        },
+        "we": {
+          "name1": "ALPINE OUTFITTERS STORE 118",
+          "ort01": "BOULDER",
+          "partn": "0118",
+          "pstlz": "80301",
+          "regio": "CO",
+          "stras": "4501 CASCADE AVE"
+        }
+      },
+      "refs": {
+        "001": {
+          "belnr": "PO5500770",
+          "datum": "26-07-01"
+        }
+      },
+      "summary": {
+        "001": "3",
+        "002": "306.00"
+      }
+    },
+    "format_name": "idoc-xml",
+    "typed": false
+  }
+}

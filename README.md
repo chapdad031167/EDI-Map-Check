@@ -207,14 +207,15 @@ or an ERP's native inbound document.
 
 * **JSON** — nested `order` / `ship_to` / `lines[]` / `summary`
 * **Keyed flat** — record-per-line `H|k=v|...`, `A|role=ship_to|...`, `D|...`, `S|...`
-* **SAP IDoc ORDERS05** — the real-world X12-to-ERP case, in **both**
-  wire formats: the fixed-width IDoc flat file (EDI_DC40 control record +
-  EDI_DD40 data records) and IDoc XML. Both parse through one shared fold,
-  so the flat and XML renditions of the same IDoc produce identical
-  canonical data — and therefore identical findings. Specs address IDoc
-  fields mechanically (`refs.001.belnr`, `partners.we.name1`,
-  `lines[].ids.003.idtnr`); what a qualifier *means* stays in the spec,
-  same as X12-side `REF[DP]` addressing.
+* **SAP IDoc** — the real-world X12-to-ERP case, in **both** wire formats:
+  the fixed-width IDoc flat file (EDI_DC40 control record + EDI_DD40 data
+  records) and IDoc XML. Both parse through one shared fold, so the flat
+  and XML renditions of the same IDoc produce identical canonical data —
+  and therefore identical findings. **ORDERS05** (order), **DESADV01**
+  (ship), and **INVOIC02** (invoice) ship as definitions, completing the
+  SAP order cycle. Specs address IDoc fields mechanically
+  (`refs.001.belnr`, `partners.we.name1`, `lines[].ids.003.idtnr`); what a
+  qualifier *means* stays in the spec, same as X12-side `REF[DP]` addressing.
 
 ```bash
 # same 850, same spec, either IDoc format — identical results
@@ -223,8 +224,31 @@ mapcheck validate --spec examples/specs/orders05_reference_spec.xlsx \
   --output examples/output/orders05_baseline.txt   # or .xml
 ```
 
-Adding a format is one parsing function in `mapcheck/output/` that emits
-the canonical dict; the engine, spec grammar, and reports come for free.
+### Config-driven adapters (no Python)
+
+An IDoc adapter is a **declarative definition**, not code
+(`src/mapcheck/output/definitions/*.yaml`). It names each segment, its
+field layout (fixed-width offsets or delimited columns), and how it routes
+into the canonical dict via three primitives:
+
+| Kind | Canonical result |
+|---|---|
+| `object` | segment fields merge into a named section dict |
+| `keyed` (`partner`) | a qualifier field selects a sub-key → value or sub-dict |
+| `line` / `line_child` | a repeating `lines[]` entry, with children folded in |
+
+One definition drives both the flat and XML readers. Onboard your own
+fixed-width or delimited ERP layout by writing a YAML and pointing at it —
+no code:
+
+```bash
+mapcheck validate --spec spec.xlsx --source order.edi \
+  --output order_staging.csv --output-def my_layout.yaml
+```
+
+The ORDERS05 adapter is itself just such a definition, guarded by a
+golden-dict test proving the declarative parse is byte-identical to the
+hand-coded adapter it replaced.
 
 ## Outbound maps (internal → X12)
 
@@ -312,7 +336,8 @@ src/mapcheck/
 ├── spec/          Excel template, rule model, condition grammar, spec loader
 ├── transactions/  declarative transaction definitions (YAML) + registry
 ├── x12/           pyx12-backed generic parser, driven by the definitions
-├── output/        JSON, keyed-flat, and SAP IDoc ORDERS05 (flat + XML) adapters
+├── output/        JSON, keyed-flat, and declarative SAP IDoc adapters
+│                  (definitions/*.yaml: ORDERS05, DESADV01, INVOIC02)
 ├── engine/        rule evaluation, format checks, reconciliation, findings
 ├── report/        terminal report, Excel export, SQLite history
 └── cli.py         the mapcheck command
@@ -325,11 +350,12 @@ tests/             pytest suite (every rule category, every planted defect)
 ## Scope
 
 Both directions — inbound X12 → internal or ERP-native output (JSON,
-keyed flat, SAP IDoc ORDERS05) and outbound internal → X12 — with one
-spec template format, single- or multi-transaction interchanges. Not yet:
-multi-document flat/IDoc containers, arbitrary spec formats,
-partner-specific overrides, cross-transaction-set pairing (e.g. 844/849).
-The layering above is built so those grow without rework — see
+keyed flat, config-driven SAP IDoc: ORDERS05 / DESADV01 / INVOIC02, plus
+user-defined layouts) and outbound internal → X12 — with one spec template
+format, single- or multi-transaction interchanges. Not yet: multi-document
+flat/IDoc containers, spec import, partner-specific overrides, regression
+baselines, cross-transaction-set pairing (e.g. 844/849). The layering
+above is built so those grow without rework — see
 [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Development
