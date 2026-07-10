@@ -12,10 +12,17 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from mapcheck.engine import RunResult, Status, validate_files
+from mapcheck.cli import _is_interchange
+from mapcheck.engine import (
+    InterchangeResult,
+    RunResult,
+    Status,
+    validate_files,
+    validate_interchange_files,
+)
 from mapcheck.output.adapter import OutputLoadError
 from mapcheck.report.excel import export_excel
-from mapcheck.spec.parser import SpecLoadError
+from mapcheck.spec.parser import SpecLoadError, load_spec
 from mapcheck.x12.parser import X12ParseError
 
 EXAMPLES = Path(__file__).parent / "examples"
@@ -100,6 +107,12 @@ EXAMPLE_SCENARIOS = {
         "855_outbound_reference_spec.xlsx", "poa_response.json", "855_ack_baseline.edi"),
     "outbound 855 defective translation": (
         "855_outbound_reference_spec.xlsx", "poa_response.json", "855_ack_defects.edi"),
+    "multi-order interchange (3 x 850, clean)": (
+        "850_multi_reference_spec.xlsx", "850_multi_baseline.edi",
+        "orders_multi_baseline.json"),
+    "multi-order interchange (orphans + dup key)": (
+        "850_multi_reference_spec.xlsx", "850_multi_defects.edi",
+        "orders_multi_defects.json"),
 }
 
 _STATUS_COLORS = {
@@ -245,16 +258,76 @@ def main() -> None:
 
     if run:
         try:
-            result = validate_files(spec_path, source_path, output_path)
+            spec = load_spec(spec_path)
+            if _is_interchange(spec, source_path, output_path):
+                result = validate_interchange_files(spec_path, source_path, output_path)
+            else:
+                result = validate_files(spec_path, source_path, output_path)
         except (SpecLoadError, X12ParseError, OutputLoadError) as exc:
             st.error(f"Could not run validation:\n\n```\n{exc}\n```")
             return
         st.session_state["result"] = result
 
     if "result" in st.session_state:
-        _render_result(st.session_state["result"])
+        stored = st.session_state["result"]
+        if isinstance(stored, InterchangeResult):
+            _render_interchange(stored)
+        else:
+            _render_result(stored)
     else:
         st.info("Choose the three inputs in the sidebar, then hit **Run validation**.")
+
+
+def _render_interchange(result: InterchangeResult) -> None:
+    counts = result.counts
+    st.subheader("Interchange result")
+    st.caption(f"**{len(result.documents)}** documents paired")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Overall", result.overall.value)
+    m2.metric("PASS", counts[Status.PASS])
+    m3.metric("FAIL", counts[Status.FAIL])
+    m4.metric("WARNING", counts[Status.WARNING])
+    m5.metric("NOT TESTED", counts[Status.NOT_TESTED])
+
+    if result.overall is Status.PASS:
+        st.success("Every document matches the mapping spec and all pair up.")
+    elif result.overall is Status.FAIL:
+        st.error("The interchange has failures — see the document and file-level findings.")
+    else:
+        st.warning("The interchange matches, with warnings.")
+
+    if categories := result.category_counts:
+        st.caption(
+            "Root causes: "
+            + ", ".join(f"{cat.value}: {n}" for cat, n in categories.items())
+        )
+
+    if result.file_findings:
+        st.subheader("File-level findings (pairing)")
+        file_result = RunResult(
+            spec_path="", source_path="", output_path="", findings=result.file_findings
+        )
+        st.dataframe(
+            _findings_frame(file_result).style.map(
+                lambda v: _STATUS_COLORS.get(v, ""), subset=["Status"]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    st.subheader("Documents")
+    for document in result.documents:
+        overall = document.result.overall.value
+        icon = {"PASS": "✅", "FAIL": "❌", "WARNING": "⚠️"}.get(overall, "•")
+        with st.expander(f"{icon} {document.key} — {document.source_ref} — {overall}"):
+            frame = _findings_frame(document.result)
+            st.dataframe(
+                frame.style.map(
+                    lambda v: _STATUS_COLORS.get(v, ""), subset=["Status"]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 if __name__ == "__main__":
