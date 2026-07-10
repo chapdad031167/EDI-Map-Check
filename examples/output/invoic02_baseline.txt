@@ -1,0 +1,10 @@
+EDI_DC40                                          INVOIC02
+E1EDK01                                                        USDINV5001                            INVO
+E1EDK02                                                        001PO7700001
+E1EDKA1                                                        RE 118              ACME CORP
+E1EDP01                                                        1     12             ST 8.50
+E1EDP19                                                        003614141007349
+E1EDP01                                                        2     6              KAR24.00
+E1EDP19                                                        003614141007350
+E1EDS01                                                        0012
+E1EDS01                                                        002246.00
