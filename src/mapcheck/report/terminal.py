@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import sys
 
-from mapcheck.engine.results import Finding, RunResult, Status
+from mapcheck.engine.results import (
+    Finding,
+    InterchangeResult,
+    RunResult,
+    Status,
+)
 
 _ANSI = {
     Status.PASS: "\033[32m",
@@ -69,6 +74,22 @@ def render_report(
         lines.append("No findings to show (all rules passed; use --verbose for detail).")
     lines.append("")
 
+    lines.extend(_summary_lines(result, color))
+    return "\n".join(lines)
+
+
+def _findings_table(findings: list[Finding], verbose: bool, color: bool) -> list[str]:
+    shown = [
+        f for f in sorted(findings, key=lambda f: f.sort_key)
+        if verbose or f.status is not Status.PASS
+    ]
+    if not shown:
+        return ["No findings to show (all rules passed; use --verbose for detail)."]
+    header = f"{'STATUS':<10} {'ROW':<7} {'FIELD':<32} DETAIL"
+    return [_color(header, _BOLD, color)] + [_format_finding(f, color) for f in shown]
+
+
+def _summary_lines(result, color: bool, label: str = "Summary") -> list[str]:
     counts = result.counts
     summary = " / ".join(
         _color(f"{counts[status]} {status.value}", _ANSI[status], color) for status in Status
@@ -76,9 +97,48 @@ def render_report(
     overall = _color(
         f"RESULT: {result.overall.value}", _ANSI[result.overall] + _BOLD, color
     )
-    lines.append(f"Summary: {summary} — {overall}")
-
+    lines = [f"{label}: {summary} — {overall}"]
     if categories := result.category_counts:
         parts = ", ".join(f"{cat.value}: {n}" for cat, n in categories.items())
         lines.append(f"Root causes: {parts}")
+    return lines
+
+
+def render_interchange_report(
+    result: InterchangeResult,
+    verbose: bool = False,
+    color: bool | None = None,
+) -> str:
+    """Render a multi-document interchange run: a section per document, a
+    file-level section, and the interchange rollup."""
+    if color is None:
+        color = sys.stdout.isatty()
+
+    lines: list[str] = []
+    lines.append(_color("EDI MapCheck — interchange validation report", _BOLD, color))
+    if result.spec_name:
+        lines.append(f"Spec:   {result.spec_path} ({result.spec_name})")
+    else:
+        lines.append(f"Spec:   {result.spec_path}")
+    lines.append(f"Source: {result.source_path}")
+    lines.append(f"Output: {result.output_path}")
+    lines.append(f"Documents: {len(result.documents)} paired")
+    lines.append("")
+
+    for document in result.documents:
+        overall = document.result.overall
+        heading = _color(
+            f"── document {document.key}  [{document.source_ref}]  {overall.value}",
+            _ANSI[overall] + _BOLD,
+            color,
+        )
+        lines.append(heading)
+        lines.extend(_findings_table(document.result.findings, verbose, color))
+        lines.append("")
+
+    lines.append(_color("── interchange (file-level)", _BOLD, color))
+    lines.extend(_findings_table(result.file_findings, verbose, color))
+    lines.append("")
+
+    lines.extend(_summary_lines(result, color, label="Interchange"))
     return "\n".join(lines)
