@@ -1,0 +1,7 @@
+X12 Element,Loop,Target,Condition,Default,Code List
+BEG03,,order.po_number,,,
+BEG01,,order.tx_purpose,,,TX_PURPOSE
+,,order.record_type,,PO_INBOUND,
+CUR02,,order.currency,when CUR01 = BY,,
+PO102,PO1,lines[].qty,,,
+,,order.mystery_field,,,

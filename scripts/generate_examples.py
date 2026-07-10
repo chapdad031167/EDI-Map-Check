@@ -3499,6 +3499,89 @@ def generate_desadv01_files() -> None:
         _write_idoc_pair(nm, segs, _DESADV01_WRITER, "DESADV01", "E1EDL24", "E1EDL4")
 
 
+# --------------------------------------------------------------------------
+# Partner mapping documents for spec import (deliberately messy, synthetic)
+# --------------------------------------------------------------------------
+
+# 1. Tidy but renamed headers + an explicit rule column -> ~100% auto.
+PARTNER_ACME_HEADERS = ["X12 Element", "Loop", "ERP Field", "Rule",
+                        "Logic", "Default", "Lookup", "Type"]
+PARTNER_ACME_ROWS = [
+    ["BEG03", "", "order.po_number", "Direct", "", "", "", "string"],
+    ["BEG01", "", "order.purpose", "Code List", "", "", "TX_PURPOSE", "string"],
+    ["", "", "order.record_type", "Constant", "", "PO_INBOUND", "", "string"],
+    ["N104", "N1[ST]", "ship_to.id", "Conditional", "N103 = 92", "", "", "string"],
+    ["PO102", "PO1", "lines[].qty", "Direct", "", "", "", "integer"],
+]
+
+# 2. No rule-type column: types inferred from evidence; one row unclassifiable.
+PARTNER_GLOBEX_HEADERS = ["X12 Element", "Loop", "Target", "Condition",
+                          "Default", "Code List"]
+PARTNER_GLOBEX_ROWS = [
+    ["BEG03", "", "order.po_number", "", "", ""],
+    ["BEG01", "", "order.tx_purpose", "", "", "TX_PURPOSE"],
+    ["", "", "order.record_type", "", "PO_INBOUND", ""],
+    ["CUR02", "", "order.currency", "when CUR01 = BY", "", ""],
+    ["PO102", "PO1", "lines[].qty", "", "", ""],
+    ["", "", "order.mystery_field", "", "", ""],  # no evidence -> NEEDS REVIEW
+]
+
+# 3. Banner row above the header, prose conditions -> exercises header
+#    auto-location + condition translation; one prose row needs a human.
+PARTNER_INITECH_BANNER = ["Initech EDI — 850 Inbound Field Map  (rev 3, internal use)"]
+PARTNER_INITECH_HEADERS = ["Element", "Loop Context", "Destination Field",
+                           "Business Rule", "Data Type"]
+PARTNER_INITECH_ROWS = [
+    ["BEG03", "", "order.po_number", "", "string"],
+    ["N104", "N1[ST]", "ship_to.id", "only when N103 is 92", "string"],
+    ["DTM02", "DTM[002]", "order.req_date", "when DTM02 is present", "date"],
+    ["REF02", "REF[PD]", "order.promo", "map for promotional deals only", "string"],
+    ["PID05", "PO1", "lines[].description", "", "string"],
+]
+
+# A lookup table document, imported into the CodeLists sheet.
+PARTNER_LOOKUP_HEADERS = ["List", "From", "To", "Notes"]
+PARTNER_LOOKUP_ROWS = [
+    ["TX_PURPOSE", "00", "ORIGINAL", "Original transmission"],
+    ["TX_PURPOSE", "01", "CANCELLATION", "Cancellation"],
+]
+
+
+def generate_partner_specs() -> None:
+    from openpyxl import Workbook
+
+    base = EXAMPLES / "partner_specs"
+    base.mkdir(parents=True, exist_ok=True)
+
+    def write_xlsx(name, banner, headers, rows):
+        wb = Workbook()
+        ws = wb.active
+        if banner:
+            ws.append(banner)
+        ws.append(headers)
+        for row in rows:
+            ws.append(row)
+        path = base / name
+        wb.save(path)
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+    def write_csv(name, headers, rows):
+        import csv as _csv
+
+        path = base / name
+        with path.open("w", newline="", encoding="utf-8") as fh:
+            w = _csv.writer(fh)
+            w.writerow(headers)
+            w.writerows(rows)
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+    write_xlsx("acme_renamed.xlsx", None, PARTNER_ACME_HEADERS, PARTNER_ACME_ROWS)
+    write_csv("globex_mixed.csv", PARTNER_GLOBEX_HEADERS, PARTNER_GLOBEX_ROWS)
+    write_xlsx("initech_prose.xlsx", PARTNER_INITECH_BANNER,
+               PARTNER_INITECH_HEADERS, PARTNER_INITECH_ROWS)
+    write_xlsx("acme_lookup.xlsx", None, PARTNER_LOOKUP_HEADERS, PARTNER_LOOKUP_ROWS)
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -3530,6 +3613,7 @@ def main() -> None:
     generate_invoic02_files()
     generate_desadv01_files()
     generate_usercsv_files()
+    generate_partner_specs()
 
 
 if __name__ == "__main__":
