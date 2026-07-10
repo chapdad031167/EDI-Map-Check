@@ -35,7 +35,14 @@ from mapcheck.engine.formats import (
     normalize_x12,
 )
 from mapcheck.spec.formats import FormatSpec, parse_format
-from mapcheck.engine.results import Category, Finding, RunResult, Status
+from mapcheck.engine.results import (
+    Category,
+    DocumentResult,
+    Finding,
+    InterchangeResult,
+    RunResult,
+    Status,
+)
 from mapcheck.output.adapter import MISSING, CanonicalOutput
 from mapcheck.spec.model import (
     Condition,
@@ -289,6 +296,246 @@ def validate_files(
         )
     output = load_output(output_path)
     return validate(spec, tx, output, source_path=str(source_path))
+
+
+# --------------------------------------------------------------------------
+# Interchange (multi-transaction) validation
+# --------------------------------------------------------------------------
+
+
+def _read_pairing_key(doc: Any, key_ref: str) -> str | None:
+    """Read the pairing key from a source/target document.
+
+    The document type decides how the reference is read: an X12
+    ``TransactionDocument`` takes a ``SEGnn`` element (optionally prefixed
+    by a Loop Context, ``N1[ST] N104``); a ``CanonicalOutput`` takes a
+    dot path. Returns None when the key is absent.
+    """
+    if isinstance(doc, TransactionDocument):
+        context_str, _, field = key_ref.strip().rpartition(" ")
+        scopes = doc.scopes(LoopContext.parse(context_str)) if context_str else [doc.flat_scope()]
+        seg_id, element = split_source_field(field)
+        for scope in scopes:
+            value = scope.value(seg_id, element)
+            if value is not None:
+                return value
+        return None
+    value = doc.get(key_ref)
+    return None if value is MISSING else str(value)
+
+
+def _pair_documents(
+    source_docs: list[Any],
+    target_docs: list[Any],
+    source_key_ref: str | None,
+    target_key_ref: str | None,
+    source_label: str,
+    target_label: str,
+) -> tuple[list[tuple[Any, Any, str]], list[Finding]]:
+    """Match source documents to target documents by key.
+
+    Returns ``(pairs, file_findings)`` where each pair is
+    ``(source_doc, target_doc, key)``. Orphans and duplicate keys become
+    file-level findings; missing source → ``missing_output``, missing
+    target → ``unexpected_output``, duplicates → ``count_mismatch``.
+    """
+    from mapcheck.spec.parser import SpecLoadError
+
+    findings: list[Finding] = []
+
+    if source_key_ref is None or target_key_ref is None:
+        if len(source_docs) == 1 and len(target_docs) == 1:
+            return [(source_docs[0], target_docs[0], "#1")], findings
+        raise SpecLoadError(
+            [
+                f"this interchange pairs {len(source_docs)} source document(s) with "
+                f"{len(target_docs)} output document(s), but the spec declares no "
+                "Pairing Key (source)/(target) in its Meta sheet — multi-document "
+                "pairing cannot be done positionally"
+            ]
+        )
+
+    def index(docs: list[Any], key_ref: str, label: str) -> dict[str, Any]:
+        by_key: dict[str, Any] = {}
+        seen: set[str] = set()
+        for position, doc in enumerate(docs):
+            key = _read_pairing_key(doc, key_ref)
+            if key is None:
+                findings.append(
+                    Finding(
+                        status=Status.FAIL,
+                        category=Category.MISSING_OUTPUT,
+                        source_ref=f"{label} #{position + 1}",
+                        message=(
+                            f"{label} document #{position + 1} has no pairing key "
+                            f"({key_ref}) — cannot be paired"
+                        ),
+                    )
+                )
+                continue
+            if key in by_key:
+                if key not in seen:
+                    seen.add(key)
+                    findings.append(
+                        Finding(
+                            status=Status.FAIL,
+                            category=Category.COUNT_MISMATCH,
+                            source_ref=f"{label} key {key!r}",
+                            message=(
+                                f"two {label} documents share pairing key {key!r} — "
+                                "keys must be unique within an interchange"
+                            ),
+                        )
+                    )
+                continue  # keep the first occurrence
+            by_key[key] = doc
+        return by_key
+
+    source_by_key = index(source_docs, source_key_ref, source_label)
+    target_by_key = index(target_docs, target_key_ref, target_label)
+
+    pairs: list[tuple[Any, Any, str]] = []
+    for key, source_doc in source_by_key.items():
+        target_doc = target_by_key.get(key)
+        if target_doc is None:
+            findings.append(
+                Finding(
+                    status=Status.FAIL,
+                    category=Category.MISSING_OUTPUT,
+                    source_ref=f"{source_label} key {key!r}",
+                    message=(
+                        f"{source_label} document {key!r} has no matching {target_label} "
+                        "document in the output"
+                    ),
+                )
+            )
+            continue
+        pairs.append((source_doc, target_doc, key))
+    for key in target_by_key:
+        if key not in source_by_key:
+            findings.append(
+                Finding(
+                    status=Status.FAIL,
+                    category=Category.UNEXPECTED_OUTPUT,
+                    source_ref=f"{target_label} key {key!r}",
+                    message=(
+                        f"{target_label} document {key!r} has no matching {source_label} "
+                        "transaction in the source"
+                    ),
+                )
+            )
+    return pairs, findings
+
+
+def validate_interchange(
+    spec: MappingSpec,
+    interchange: "Interchange",
+    documents: list[CanonicalOutput],
+    source_path: str,
+    output_path: str,
+) -> InterchangeResult:
+    """Validate every paired (transaction, output document) in an interchange.
+
+    ``interchange`` always holds the X12 transactions and ``documents`` the
+    canonical output documents; the spec's direction decides which side is
+    the pairing source. Each matched pair runs through :func:`validate`.
+    """
+    outbound = spec.direction is Direction.OUTBOUND
+    x12_docs = interchange.documents
+    src_key = spec.meta.get("Pairing Key (source)")
+    tgt_key = spec.meta.get("Pairing Key (target)")
+
+    if outbound:
+        source_docs, target_docs = documents, x12_docs
+        source_label, target_label = "source", "output"
+    else:
+        source_docs, target_docs = x12_docs, documents
+        source_label, target_label = "source", "output"
+
+    pairs, file_findings = _pair_documents(
+        source_docs, target_docs, src_key, tgt_key, source_label, target_label
+    )
+
+    result = InterchangeResult(
+        spec_path=spec.source_path or "",
+        source_path=source_path,
+        output_path=output_path,
+        spec_name=spec.meta.get("Spec Name"),
+    )
+    for note in interchange.control_notes:
+        result.file_findings.append(
+            Finding(
+                status=Status.WARNING,
+                category=Category.CONTROL,
+                source_ref="(envelope)",
+                message=f"interchange control: {note}",
+            )
+        )
+    result.file_findings.extend(file_findings)
+
+    for source_doc, target_doc, key in pairs:
+        tx = target_doc if outbound else source_doc
+        canonical = source_doc if outbound else target_doc
+        run = validate(
+            spec, tx, canonical, source_path=source_path, output_path=output_path
+        )
+        st = tx.envelope.get("st_control", "")
+        result.documents.append(
+            DocumentResult(
+                key=key,
+                result=run,
+                source_ref=f"ST {st}" if st else key,
+                output_ref=key,
+            )
+        )
+    return result
+
+
+def validate_interchange_files(
+    spec_path: str,
+    source_path: str,
+    output_path: str,
+    transaction: str | None = None,
+) -> InterchangeResult:
+    """Load the artifacts and validate a whole interchange.
+
+    Mirrors :func:`validate_files` but pairs many source transactions with
+    many output documents. The spec's direction decides which side is X12.
+    """
+    from mapcheck.output.adapter import load_output_documents
+    from mapcheck.spec.parser import SpecLoadError, load_spec
+    from mapcheck.transactions.registry import UnknownTransactionError, default_registry
+    from mapcheck.x12.parser import X12ParseError, parse_interchange
+
+    spec = load_spec(spec_path)
+    definition = None
+    if transaction is not None:
+        try:
+            definition = default_registry.get(transaction)
+        except UnknownTransactionError as exc:
+            raise X12ParseError(str(exc.args[0])) from exc
+
+    outbound = spec.direction is Direction.OUTBOUND
+    x12_path, x12_role = (output_path, "output") if outbound else (source_path, "source")
+    interchange = parse_interchange(x12_path, definition=definition)
+    if spec.transaction_set:
+        mismatched = {
+            d.definition.set_code
+            for d in interchange.documents
+            if d.definition.set_code != spec.transaction_set
+        }
+        if mismatched:
+            raise SpecLoadError(
+                [
+                    f"spec is for transaction set {spec.transaction_set} but the {x12_role} "
+                    f"interchange also contains: {', '.join(sorted(mismatched))}"
+                ]
+            )
+    canonical_path = source_path if outbound else output_path
+    documents = load_output_documents(canonical_path)
+    return validate_interchange(
+        spec, interchange, documents, source_path=str(source_path), output_path=str(output_path)
+    )
 
 
 # --------------------------------------------------------------------------

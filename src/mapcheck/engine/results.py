@@ -99,3 +99,66 @@ class RunResult:
 
     def sorted_findings(self) -> list[Finding]:
         return sorted(self.findings, key=lambda f: f.sort_key)
+
+
+@dataclass
+class DocumentResult:
+    """One paired (source transaction, output document) result."""
+
+    key: str  # the pairing key value, or a positional label ("#1")
+    result: RunResult
+    source_ref: str = ""  # e.g. "ST #1 (0001)"
+    output_ref: str = ""  # e.g. "document[0]"
+
+
+@dataclass
+class InterchangeResult:
+    """A whole-interchange validation: per-document results plus file-level findings.
+
+    A single-transaction file is just an interchange with one document and
+    no file-level findings; callers that want the old single-`RunResult`
+    shape keep using ``validate_files``.
+    """
+
+    spec_path: str
+    source_path: str
+    output_path: str
+    spec_name: str | None = None
+    documents: list[DocumentResult] = field(default_factory=list)
+    #: Orphans, duplicate keys, and interchange-level control problems.
+    file_findings: list[Finding] = field(default_factory=list)
+    run_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def _all_findings(self) -> list[Finding]:
+        findings = list(self.file_findings)
+        for document in self.documents:
+            findings.extend(document.result.findings)
+        return findings
+
+    @property
+    def counts(self) -> dict[Status, int]:
+        counts = {status: 0 for status in Status}
+        for finding in self._all_findings():
+            counts[finding.status] += 1
+        return counts
+
+    @property
+    def category_counts(self) -> dict[Category, int]:
+        counts: dict[Category, int] = {}
+        for finding in self._all_findings():
+            if finding.category is not None and finding.status is not Status.PASS:
+                counts[finding.category] = counts.get(finding.category, 0) + 1
+        return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
+
+    @property
+    def overall(self) -> Status:
+        counts = self.counts
+        if counts[Status.FAIL]:
+            return Status.FAIL
+        if counts[Status.WARNING]:
+            return Status.WARNING
+        return Status.PASS
+
+    @property
+    def exit_code(self) -> int:
+        return 1 if self.counts[Status.FAIL] else 0

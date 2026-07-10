@@ -9,10 +9,11 @@ segments open which loops, how loops nest, and where the areas begin. The
 transaction set is auto-detected from ST01 against the registry unless a
 definition is passed explicitly.
 
+:func:`parse_interchange` returns every ST/SE transaction in the file;
+:func:`parse_transaction` is a convenience wrapper returning the first.
+
 Known limitations, by design:
 
-* Only the first ST/SE transaction in the interchange is parsed; extra
-  transactions are noted, not validated.
 * Composite elements are kept as raw strings.
 * Segments the definition doesn't know are attached where they appear and
   reported as definition notes (warnings), not errors — real-world files
@@ -36,6 +37,7 @@ from mapcheck.transactions.registry import (
 from mapcheck.transactions.schema import AreaDef, LoopDef, TransactionDefinition
 from mapcheck.x12.model import (
     ENVELOPE_SEGMENTS,
+    Interchange,
     Loop,
     Segment,
     TransactionDocument,
@@ -241,75 +243,123 @@ class _StructureWalker:
         return any(seg.seg_id in level.segments for level in loop_def.levels)
 
 
-def parse_transaction(
+def _build_document(
+    st_seg: Segment,
+    body: list[Segment],
+    shared_envelope: dict[str, str],
+    definition: TransactionDefinition | None,
+    registry: TransactionRegistry | None,
+    path: Path,
+) -> TransactionDocument:
+    """Resolve one ST/SE group's definition and walk its segments."""
+    st01 = st_seg.element(1) or ""
+    if definition is not None:
+        if st01 != definition.set_code:
+            raise X12ParseError(
+                f"{path}: expected transaction set {definition.set_code}, got {st01!r}"
+            )
+        doc_definition = definition
+    else:
+        try:
+            doc_definition = (registry or default_registry).get(st01)
+        except UnknownTransactionError as exc:
+            raise X12ParseError(f"{path}: {exc.args[0]}") from exc
+
+    envelope = dict(shared_envelope)
+    envelope["transaction_set"] = st01
+    envelope["st_control"] = st_seg.element(2) or ""
+
+    doc = TransactionDocument(definition=doc_definition, envelope=envelope)
+    group = envelope.get("functional_group")
+    if group and group != doc_definition.functional_group:
+        doc.control_notes.append(
+            f"functional group {group!r} does not match the "
+            f"{doc_definition.set_code} definition ({doc_definition.functional_group!r})"
+        )
+
+    walker = _StructureWalker(doc)
+    for seg in body:
+        if seg.seg_id in ENVELOPE_SEGMENTS:
+            continue
+        walker.place(seg)
+    return doc
+
+
+def parse_interchange(
     path: str | Path,
     definition: TransactionDefinition | None = None,
     registry: TransactionRegistry | None = None,
-) -> TransactionDocument:
-    """Parse an X12 file into a :class:`TransactionDocument`.
+) -> Interchange:
+    """Parse every ST/SE transaction in an X12 file into an :class:`Interchange`.
 
-    When ``definition`` is None the transaction set is auto-detected from
-    ST01 and resolved against the registry. Raises :class:`X12ParseError`
-    when the file is unreadable, contains no ST, the set is unknown, or a
-    forced definition doesn't match the file.
+    Each transaction resolves its own definition from its ST01 (mixed
+    transaction sets in one interchange are allowed) unless ``definition``
+    forces one for all of them. Raises :class:`X12ParseError` when the file
+    is unreadable, contains no ST, a set is unknown, a forced definition
+    doesn't match, or a transaction is not terminated by an SE.
     """
     path = Path(path)
     if not path.exists():
         raise X12ParseError(f"source file not found: {path}")
 
     segments, control_notes = _raw_segments(path)
-    st = next((s for s in segments if s.seg_id == "ST"), None)
-    if st is None:
-        raise X12ParseError(f"{path}: no ST segment found — not a valid X12 transaction")
-    st01 = st.element(1) or ""
+    shared_envelope = _capture_envelope(segments)
 
-    if definition is not None:
-        if st01 != definition.set_code:
-            raise X12ParseError(
-                f"{path}: expected transaction set {definition.set_code}, got {st01!r}"
-            )
-    else:
-        try:
-            definition = (registry or default_registry).get(st01)
-        except UnknownTransactionError as exc:
-            raise X12ParseError(f"{path}: {exc.args[0]}") from exc
-
-    doc = TransactionDocument(
-        definition=definition,
-        envelope=_capture_envelope(segments),
-        control_notes=control_notes,
-    )
-    group = doc.envelope.get("functional_group")
-    if group and group != definition.functional_group:
-        doc.control_notes.append(
-            f"functional group {group!r} does not match the "
-            f"{definition.set_code} definition ({definition.functional_group!r})"
-        )
-
-    walker = _StructureWalker(doc)
-    in_transaction = False
-    transaction_done = False
+    documents: list[TransactionDocument] = []
+    st_seg: Segment | None = None
+    body: list[Segment] = []
     for seg in segments:
         if seg.seg_id == "ST":
-            if transaction_done:
-                doc.control_notes.append(
-                    f"line {seg.line_number}: additional transaction "
-                    f"(ST*{seg.element(1)}) ignored — only the first transaction is validated"
+            if st_seg is not None:
+                raise X12ParseError(
+                    f"{path}: line {seg.line_number}: ST segment before the previous "
+                    "transaction was terminated by an SE"
                 )
-                continue
-            in_transaction = True
-            continue
-        if seg.seg_id == "SE":
-            if in_transaction:
-                in_transaction = False
-                transaction_done = True
-            continue
-        if seg.seg_id in ENVELOPE_SEGMENTS or not in_transaction:
-            continue
-        walker.place(seg)
+            st_seg = seg
+            body = []
+        elif seg.seg_id == "SE":
+            if st_seg is None:
+                raise X12ParseError(
+                    f"{path}: line {seg.line_number}: SE segment with no open transaction"
+                )
+            documents.append(
+                _build_document(st_seg, body, shared_envelope, definition, registry, path)
+            )
+            st_seg = None
+        elif st_seg is not None:
+            body.append(seg)
 
-    if not transaction_done:
+    if st_seg is not None:
         raise X12ParseError(f"{path}: transaction is not terminated by an SE segment")
+    if not documents:
+        raise X12ParseError(f"{path}: no ST segment found — not a valid X12 transaction")
+
+    return Interchange(
+        documents=documents, envelope=shared_envelope, control_notes=control_notes
+    )
+
+
+def parse_transaction(
+    path: str | Path,
+    definition: TransactionDefinition | None = None,
+    registry: TransactionRegistry | None = None,
+) -> TransactionDocument:
+    """Parse the first ST/SE transaction of an X12 file.
+
+    Convenience wrapper over :func:`parse_interchange` for callers that
+    expect a single transaction; the interchange's file-level control notes
+    are carried on the returned document so behavior matches a
+    single-transaction validation exactly.
+    """
+    interchange = parse_interchange(path, definition=definition, registry=registry)
+    doc = interchange.documents[0]
+    doc.control_notes = interchange.control_notes + doc.control_notes
+    if len(interchange.documents) > 1:
+        extra = interchange.documents[1]
+        doc.control_notes.append(
+            f"additional transaction (ST*{extra.envelope.get('transaction_set')}) "
+            "present — only the first transaction is validated"
+        )
     return doc
 
 

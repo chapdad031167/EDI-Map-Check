@@ -262,5 +262,21 @@ class TransactionDocument:
                 yield from self._walk_loops(child.id, emitted)
 
 
+@dataclass
+class Interchange:
+    """A parsed X12 interchange: every ST/SE transaction plus shared control.
+
+    ``documents`` holds one :class:`TransactionDocument` per ST/SE in file
+    order. ``control_notes`` are pyx12's interchange-level observations (SE
+    counts, control-number agreement) — they belong to the file, not any
+    one transaction. A single-transaction file is just an interchange whose
+    ``documents`` has length one.
+    """
+
+    documents: list[TransactionDocument] = field(default_factory=list)
+    envelope: dict[str, str] = field(default_factory=dict)
+    control_notes: list[str] = field(default_factory=list)
+
+
 #: Backward-compatible alias: the 850 was the first (and once only) document.
 Transaction850 = TransactionDocument

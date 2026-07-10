@@ -15,12 +15,12 @@ import sys
 from pathlib import Path
 
 from mapcheck import __version__
-from mapcheck.engine.validator import validate_files
+from mapcheck.engine.validator import validate_files, validate_interchange_files
 from mapcheck.output.adapter import OutputLoadError
 from mapcheck.report.excel import export_excel
 from mapcheck.report.history import RunHistory
-from mapcheck.report.terminal import render_report
-from mapcheck.spec.parser import SpecLoadError
+from mapcheck.report.terminal import render_interchange_report, render_report
+from mapcheck.spec.parser import SpecLoadError, load_spec
 from mapcheck.spec.template import create_template
 from mapcheck.x12.parser import X12ParseError
 
@@ -96,8 +96,39 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _cmd_validate(args: argparse.Namespace) -> int:
+def _is_interchange(spec, source_path: str, output_path: str) -> bool:
+    """True when either side carries more than one document.
+
+    Detects a JSON-array output container or an X12 file with more than one
+    ST/SE, on whichever side the spec's direction makes the X12 file.
+    """
+    from mapcheck.spec.model import Direction
+    from mapcheck.x12.parser import parse_interchange
+
+    outbound = spec.direction is Direction.OUTBOUND
+    x12_path = output_path if outbound else source_path
+    canonical_path = source_path if outbound else output_path
+    if Path(canonical_path).suffix.lower() == ".json":
+        import json
+
+        try:
+            with open(canonical_path, encoding="utf-8") as fh:
+                if isinstance(json.load(fh), list):
+                    return True
+        except (OSError, json.JSONDecodeError):
+            pass
     try:
+        return len(parse_interchange(x12_path).documents) > 1
+    except X12ParseError:
+        return False
+
+
+def _cmd_validate(args: argparse.Namespace) -> int:
+    color = False if args.no_color else None
+    try:
+        spec = load_spec(args.spec)
+        if _is_interchange(spec, args.source, args.output):
+            return _run_interchange(args, color)
         result = validate_files(
             args.spec, args.source, args.output, transaction=args.transaction
         )
@@ -105,7 +136,6 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         print(f"mapcheck: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
-    color = False if args.no_color else None
     print(render_report(result, verbose=args.verbose, color=color))
 
     if not args.no_history:
@@ -116,6 +146,22 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     if args.export_xlsx:
         path = export_excel(result, args.export_xlsx)
         print(f"Excel report written to {path}")
+    return result.exit_code
+
+
+def _run_interchange(args: argparse.Namespace, color: bool | None) -> int:
+    result = validate_interchange_files(
+        args.spec, args.source, args.output, transaction=args.transaction
+    )
+    print(render_interchange_report(result, verbose=args.verbose, color=color))
+
+    if not args.no_history:
+        with RunHistory(args.db) as history:
+            run_id = history.record_interchange(result)
+        print(f"\nInterchange run #{run_id} ({len(result.documents)} documents) recorded in {args.db}")
+
+    if args.export_xlsx:
+        print("Excel export of interchange runs is not yet supported; skipped.", file=sys.stderr)
     return result.exit_code
 
 

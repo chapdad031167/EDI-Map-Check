@@ -149,10 +149,19 @@ def generate_spec(
     _fill_rows(wb["Mapping"], rows)
     _fill_rows(wb["CodeLists"], code_lists)
     ws_meta = wb["Meta"]
+    written: set = set()
     for r in range(2, ws_meta.max_row + 1):
         key = ws_meta.cell(row=r, column=1).value
         if key in meta:
             ws_meta.cell(row=r, column=2, value=meta[key])
+            written.add(key)
+    # append any meta keys the template doesn't predefine (e.g. Pairing Key)
+    next_row = ws_meta.max_row + 1
+    for key, value in meta.items():
+        if key not in written:
+            ws_meta.cell(row=next_row, column=1, value=key)
+            ws_meta.cell(row=next_row, column=2, value=value)
+            next_row += 1
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     print(f"wrote {path.relative_to(REPO_ROOT)}")
@@ -771,6 +780,26 @@ def build_interchange(
         f"GE*1*{int(control_number)}",
         f"IEA*1*{icn}",
     ]
+    return "~\n".join(segments) + "~\n"
+
+
+def build_multi_interchange(
+    transactions: list[list[str]], control_number: str, st_code: str, gs_code: str
+) -> str:
+    """Wrap several ST/SE transactions in one ISA/GS...GE/IEA interchange."""
+    icn = control_number.zfill(9)
+    segments = [
+        "ISA*00*          *00*          *ZZ*MAPCHECKSND    *ZZ*MAPCHECKRCV    "
+        f"*260715*1200*U*00401*{icn}*0*T*>",
+        f"GS*{gs_code}*MAPCHECKSND*MAPCHECKRCV*20260715*1200*{int(control_number)}*X*004010",
+    ]
+    for index, business_segments in enumerate(transactions, start=1):
+        stc = str(index).zfill(4)
+        segments.append(f"ST*{st_code}*{stc}")
+        segments.extend(business_segments)
+        segments.append(f"SE*{len(business_segments) + 2}*{stc}")
+    segments.append(f"GE*{len(transactions)}*{int(control_number)}")
+    segments.append(f"IEA*1*{icn}")
     return "~\n".join(segments) + "~\n"
 
 
@@ -3003,6 +3032,139 @@ def generate_outbound_855_files() -> None:
         print(f"wrote {path.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# Multi-transaction interchange: three 850s -> JSON array of three orders
+# --------------------------------------------------------------------------
+
+SPEC_MULTI_ROWS: list[tuple[str, ...]] = [
+    ("X-001", "BEG03", "", "order.po_number", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..22", "Customer PO number; also the pairing key."),
+    ("X-002", "BEG05", "", "order.po_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", "PO date, CCYYMMDD in source."),
+    ("X-003", "BEG02", "", "order.po_type", "CODE_LIST", "", "", "", "",
+     "", "PO_TYPE", "string", "", "PO type code."),
+    ("X-004", "N102", "N1[ST]", "ship_to.name", "DIRECT", "", "", "", "",
+     "", "", "string", "len:1..60", "Ship-to party name."),
+    ("X-005", "N401", "N1[ST]", "ship_to.city", "DIRECT", "", "", "", "",
+     "", "", "string", "", ""),
+    ("X-006", "PO101", "PO1", "lines[].line_no", "DIRECT", "", "", "", "",
+     "", "", "integer", "", ""),
+    ("X-007", "PO102", "PO1", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Quantity ordered."),
+    ("X-008", "PO103", "PO1", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", "Unit of measure."),
+    ("X-009", "CTT01", "", "summary.line_count", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "CTT line count."),
+    ("X-010", "PO1", "", "summary.line_count", "LOOP_COUNT", "", "", "", "",
+     "", "", "integer", "", "Actual PO1 loop count must also match."),
+]
+
+CODE_LIST_MULTI_ROWS: list[tuple[str, str, str, str]] = [
+    ("PO_TYPE", "SA", "STANDALONE", "Stand-alone order"),
+    ("PO_TYPE", "NE", "NEW_ORDER", "New order"),
+    ("UOM", "EA", "EACH", "Each"),
+    ("UOM", "CA", "CASE", "Case"),
+    ("UOM", "DZ", "DOZEN", "Dozen"),
+]
+
+SPEC_MULTI_META = {
+    "Transaction Set": "850",
+    "X12 Version": "004010",
+    "Pairing Key (source)": "BEG03",
+    "Pairing Key (target)": "order.po_number",
+    "Spec Name": "Synthetic multi-order interchange - reference example",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-07-10",
+}
+
+
+def _iso(x12_date: str) -> str:
+    """CCYYMMDD -> CCYY-MM-DD, matching the spec's %Y-%m-%d output format."""
+    return f"{x12_date[:4]}-{x12_date[4:6]}-{x12_date[6:]}"
+
+
+def _multi_850(po_number: str, po_date: str, city: str, lines: list[tuple]) -> list[str]:
+    """One 850 transaction body — only elements the spec maps, so a clean
+    run stays silent (no rule-7 unmapped-source noise)."""
+    segs = [
+        f"BEG**SA*{po_number}**{po_date}",  # BEG02 type, BEG03 PO, BEG05 date
+        f"N1*ST*RIVERSIDE MARKET",           # N101 context qualifier, N102 name
+        f"N4*{city}",                        # N401 city
+    ]
+    for line_no, qty, uom in lines:
+        segs.append(f"PO1*{line_no}*{qty}*{uom}")
+    segs.append(f"CTT*{len(lines)}")
+    return segs
+
+
+def _order_doc(po_number: str, po_date: str, city: str, lines: list[tuple]) -> dict:
+    return {
+        "order": {"po_number": po_number, "po_date": _iso(po_date), "po_type": "STANDALONE"},
+        "ship_to": {"name": "RIVERSIDE MARKET", "city": city},
+        "lines": [
+            {"line_no": ln, "qty": qty, "uom": {"EA": "EACH", "CA": "CASE", "DZ": "DOZEN"}[u]}
+            for ln, qty, u in lines
+        ],
+        "summary": {"line_count": len(lines)},
+    }
+
+
+# three orders, distinct PO numbers
+_MULTI_ORDERS = [
+    ("PO7700001", "20260701", "BOULDER", [(1, 12, "EA"), (2, 6, "CA")]),
+    ("PO7700002", "20260702", "DENVER", [(1, 24, "EA")]),
+    ("PO7700003", "20260703", "AURORA", [(1, 5, "DZ"), (2, 10, "EA"), (3, 3, "CA")]),
+]
+
+BASELINE_MULTI_SOURCE = [_multi_850(*o) for o in _MULTI_ORDERS]
+BASELINE_MULTI_OUTPUT = [_order_doc(*o) for o in _MULTI_ORDERS]
+
+# Defective interchange. Planted, across the set:
+#   1. document PO7700002 has a wrong ship_to city  -> per-doc value_mismatch
+#   2. source adds PO7700004 with no output document -> missing_output (file)
+#   3. output adds PO7700009 with no source txn      -> unexpected_output (file)
+#   4. source PO7700001 appears twice (dup key)      -> count_mismatch (file)
+DEFECT_SOURCE_ORDERS = list(_MULTI_ORDERS) + [
+    ("PO7700001", "20260701", "BOULDER", [(1, 12, "EA"), (2, 6, "CA")]),  # dup key
+    ("PO7700004", "20260704", "LONGMONT", [(1, 8, "EA")]),  # no output doc
+]
+DEFECTS_MULTI_SOURCE = [_multi_850(*o) for o in DEFECT_SOURCE_ORDERS]
+
+_DEFECT_DOC_2 = _order_doc(*_MULTI_ORDERS[1])
+_DEFECT_DOC_2["ship_to"]["city"] = "COLORADO SPRINGS"  # wrong city, doc PO7700002
+DEFECTS_MULTI_OUTPUT = [
+    BASELINE_MULTI_OUTPUT[0],
+    _DEFECT_DOC_2,
+    BASELINE_MULTI_OUTPUT[2],
+    _order_doc("PO7700009", "20260709", "GOLDEN", [(1, 1, "EA")]),  # no source txn
+]
+
+
+def generate_multi_interchange_files() -> None:
+    generate_spec(
+        EXAMPLES / "specs" / "850_multi_reference_spec.xlsx",
+        SPEC_MULTI_ROWS, CODE_LIST_MULTI_ROWS, SPEC_MULTI_META,
+    )
+    sources = {
+        "850_multi_baseline.edi": build_multi_interchange(
+            BASELINE_MULTI_SOURCE, "91", "850", "PO"),
+        "850_multi_defects.edi": build_multi_interchange(
+            DEFECTS_MULTI_SOURCE, "92", "850", "PO"),
+    }
+    for name, content in sources.items():
+        path = EXAMPLES / "source" / name
+        path.write_text(content)
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+    outputs = {
+        "orders_multi_baseline.json": BASELINE_MULTI_OUTPUT,
+        "orders_multi_defects.json": DEFECTS_MULTI_OUTPUT,
+    }
+    for name, data in outputs.items():
+        path = EXAMPLES / "output" / name
+        path.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -3030,6 +3192,7 @@ def main() -> None:
     generate_997_files()
     generate_orders05_files()
     generate_outbound_855_files()
+    generate_multi_interchange_files()
 
 
 if __name__ == "__main__":
