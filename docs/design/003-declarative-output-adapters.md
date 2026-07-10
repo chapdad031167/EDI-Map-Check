@@ -1,6 +1,10 @@
 # Design 003 — Config-Driven Output Adapters + DESADV01 / INVOIC02
 
-**Status:** proposed — awaiting review, no code yet
+**Status:** approved 2026-07-10 — all four open questions resolved as
+recommended (CLI `--output-def` + runtime-registration API this PR with
+Streamlit upload as a fast follow; DESADV01/INVOIC02 as declarative
+definitions; ORDERS05 retrofit onto the generic engine guarded by the
+golden-dict test; DESADV01 scoped to the flat E1EDL20→E1EDL24 item list)
 **Roadmap item:** 1.3 (Phase 1, design-first) — closes Phase 1
 
 ## The problem
