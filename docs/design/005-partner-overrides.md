@@ -1,6 +1,9 @@
 # Design 005 — Partner Overrides
 
-**Status:** proposed — awaiting review, no code yet
+**Status:** approved 2026-07-12 — all four open questions resolved as
+recommended (REMOVE sentinel in the delta loader, no template change;
+single delta this PR with stacking as a fast follow; whole-list code-list
+shadow; `origin` field + finding/export tag for provenance)
 **Roadmap item:** 2.2 (Phase 2, design-first)
 
 ## The problem
