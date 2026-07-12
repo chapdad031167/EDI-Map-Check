@@ -1,6 +1,9 @@
 # Design 004 — Spec Import
 
-**Status:** proposed — awaiting review, no code yet
+**Status:** approved 2026-07-10 — all four open questions resolved as
+recommended (CLI `--map` + auto-detect this PR with a Streamlit picker as a
+fast follow; text worklist now, JSON later; conservative inference — flag
+anything thin or conflicting; CodeLists imported in this PR)
 **Roadmap item:** 2.1 (Phase 2, design-first)
 
 ## The problem
