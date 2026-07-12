@@ -217,6 +217,10 @@ class MappingRule:
     format: str | None = None
     notes: str | None = None
     direction: Direction = Direction.INBOUND
+    #: Where this rule came from after any partner-override merge: "base",
+    #: or a partner label like "partner:acme". Default keeps every
+    #: non-overridden spec and test unaffected.
+    origin: str = "base"
 
     @property
     def is_per_line(self) -> bool:

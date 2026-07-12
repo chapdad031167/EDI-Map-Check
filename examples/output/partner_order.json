@@ -1,0 +1,16 @@
+{
+  "order": {
+    "po_number": "PO88001",
+    "promo": "PROMO42"
+  },
+  "ship_to": {
+    "id": "118"
+  },
+  "lines": [
+    {
+      "line_no": 1,
+      "qty": 12,
+      "uom": "EACH"
+    }
+  ]
+}

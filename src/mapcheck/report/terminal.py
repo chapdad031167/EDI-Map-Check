@@ -32,6 +32,8 @@ def _format_finding(finding: Finding, color: bool) -> str:
     detail = finding.message
     if finding.expected is not None and finding.status is Status.FAIL:
         detail = f"expected={finding.expected!r} actual={finding.actual!r} — {finding.message}"
+    if finding.origin and finding.origin != "base":
+        detail = f"[{finding.origin}] {detail}"
     return f"{status} {row:<7} {location:<32} {detail}"
 
 
