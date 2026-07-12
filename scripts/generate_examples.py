@@ -3582,6 +3582,98 @@ def generate_partner_specs() -> None:
     write_xlsx("acme_lookup.xlsx", None, PARTNER_LOOKUP_HEADERS, PARTNER_LOOKUP_ROWS)
 
 
+# --------------------------------------------------------------------------
+# Partner overrides: one base 850 spec + two partner delta workbooks
+# --------------------------------------------------------------------------
+
+SPEC_PARTNER_BASE_ROWS = [
+    ("P-001", "BEG03", "", "order.po_number", "DIRECT", "", "", "", "",
+     "", "", "string", "", "Customer PO number."),
+    ("P-002", "N104", "N1[ST]", "ship_to.id", "CONDITIONAL",
+     "Map the store number only when the ID qualifier is 92.",
+     "N103 = '92'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("P-003", "PO102", "PO1", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Quantity ordered."),
+    ("P-004", "REF02", "REF[PD]", "order.promo", "CONDITIONAL",
+     "Map the promo/deal number when the partner sends one.",
+     "EXISTS(REF02)", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("P-005", "PO103", "PO1", "lines[].uom", "CODE_LIST", "", "", "", "",
+     "", "UOM", "string", "", "Unit of measure."),
+    ("P-006", "PO101", "PO1", "lines[].line_no", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Line number."),
+]
+
+CODE_LIST_PARTNER_BASE = [
+    ("UOM", "EA", "EACH", "Each"),
+    ("UOM", "CA", "CASE", "Case"),
+]
+
+SPEC_PARTNER_BASE_META = {
+    "Transaction Set": "850",
+    "X12 Version": "004010",
+    "Spec Name": "Synthetic 850 base map - partner override reference",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-07-12",
+}
+
+# ACME: assigns store IDs under qualifier 91 (replace P-002), requires a
+# hardcoded channel (add P-100), and uses its own unit codes (shadow UOM).
+SPEC_ACME_DELTA_ROWS = [
+    ("P-002", "N104", "N1[ST]", "ship_to.id", "CONDITIONAL",
+     "ACME assigns store numbers under qualifier 91.",
+     "N103 = '91'", "SOURCE", "SKIP", "", "", "string", "", ""),
+    ("P-100", "", "", "order.channel", "CONSTANT", "", "", "", "",
+     "ACME_EDI", "", "string", "", "ACME routing channel."),
+]
+CODE_LIST_ACME_DELTA = [
+    ("UOM", "EA", "EACH", "Each"),
+    ("UOM", "CA", "CASE", "Case"),
+    ("UOM", "DZ", "DOZEN", "Dozen"),  # ACME also sends dozens
+]
+SPEC_ACME_DELTA_META = {"Transaction Set": "850", "Partner": "ACME"}
+
+# GLOBEX: never sends the promo field (remove P-004) and requires its own
+# hardcoded channel (add P-200).
+SPEC_GLOBEX_DELTA_ROWS = [
+    ("P-004", "", "", "", "REMOVE", "", "", "", "", "", "", "", "",
+     "GLOBEX never sends a promo/deal number."),
+    ("P-200", "", "", "order.channel", "CONSTANT", "", "", "", "",
+     "GLOBEX_EDI", "", "string", "", "GLOBEX routing channel."),
+]
+SPEC_GLOBEX_DELTA_META = {"Transaction Set": "850", "Partner": "GLOBEX"}
+
+# One source; the output matches the BASE map (so base is a clean PASS).
+# REF*PD sits in the header (before N1) so REF[PD] resolves there; only
+# mapped elements are populated to keep the base run rule-7 clean.
+PARTNER_850 = [
+    "BEG***PO88001",
+    "REF*PD*PROMO42",
+    "N1*ST**92*118",
+    "PO1*1*12*EA",
+]
+PARTNER_ORDER_OUTPUT = {
+    "order": {"po_number": "PO88001", "promo": "PROMO42"},
+    "ship_to": {"id": "118"},
+    "lines": [{"line_no": 1, "qty": 12, "uom": "EACH"}],
+}
+
+
+def generate_partner_override_files() -> None:
+    specs = EXAMPLES / "specs"
+    generate_spec(specs / "partner_base_spec.xlsx",
+                  SPEC_PARTNER_BASE_ROWS, CODE_LIST_PARTNER_BASE, SPEC_PARTNER_BASE_META)
+    generate_spec(specs / "partner_acme_delta.xlsx",
+                  SPEC_ACME_DELTA_ROWS, CODE_LIST_ACME_DELTA, SPEC_ACME_DELTA_META)
+    generate_spec(specs / "partner_globex_delta.xlsx",
+                  SPEC_GLOBEX_DELTA_ROWS, [], SPEC_GLOBEX_DELTA_META)
+    src = EXAMPLES / "source" / "850_partner.edi"
+    src.write_text(build_interchange(PARTNER_850, "75", "850", "PO"))
+    print(f"wrote {src.relative_to(REPO_ROOT)}")
+    out = EXAMPLES / "output" / "partner_order.json"
+    out.write_text(json.dumps(PARTNER_ORDER_OUTPUT, indent=2) + "\n")
+    print(f"wrote {out.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -3614,6 +3706,7 @@ def main() -> None:
     generate_desadv01_files()
     generate_usercsv_files()
     generate_partner_specs()
+    generate_partner_override_files()
 
 
 if __name__ == "__main__":

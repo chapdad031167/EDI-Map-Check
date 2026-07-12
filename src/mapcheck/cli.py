@@ -46,6 +46,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_val = sub.add_parser("validate", help="run a validation")
     p_val.add_argument("--spec", required=True, help="mapping spec workbook (.xlsx)")
     p_val.add_argument(
+        "--partner",
+        metavar="DELTA",
+        help="a partner delta workbook (.xlsx) merged onto --spec before validating",
+    )
+    p_val.add_argument(
         "--source",
         required=True,
         help="the translation's input (X12 for inbound specs, internal document for outbound)",
@@ -117,6 +122,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_imp.add_argument("--spec-name", metavar="NAME", help="Meta Spec Name value")
 
+    p_merge = sub.add_parser(
+        "merge-spec", help="merge a partner delta onto a base spec and write the effective spec"
+    )
+    p_merge.add_argument("base", help="base mapping spec workbook (.xlsx)")
+    p_merge.add_argument("--partner", required=True, help="partner delta workbook (.xlsx)")
+    p_merge.add_argument("--output", required=True, help="effective merged spec to write (.xlsx)")
+
     p_hist = sub.add_parser("history", help="list recent validation runs")
     p_hist.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
     p_hist.add_argument("--limit", type=int, default=20, help="number of runs to show")
@@ -155,17 +167,26 @@ def _is_interchange(spec, source_path: str, output_path: str) -> bool:
 def _cmd_validate(args: argparse.Namespace) -> int:
     color = False if args.no_color else None
     output_format = None
+    merged_spec = None
     try:
         if args.output_def:
             from mapcheck.output.idoc import register_output_definition
 
             output_format = register_output_definition(args.output_def).format
-        spec = load_spec(args.spec)
+        if args.partner:
+            from mapcheck.spec.overrides import resolve_spec
+
+            merged_spec, merge_warnings = resolve_spec(args.spec, args.partner)
+            spec = merged_spec
+            for note in merge_warnings:
+                print(f"mapcheck: partner merge note: {note}", file=sys.stderr)
+        else:
+            spec = load_spec(args.spec)
         if _is_interchange(spec, args.source, args.output):
-            return _run_interchange(args, color, output_format)
+            return _run_interchange(args, color, output_format, merged_spec)
         result = validate_files(
             args.spec, args.source, args.output,
-            transaction=args.transaction, output_format=output_format,
+            transaction=args.transaction, output_format=output_format, spec=merged_spec,
         )
     except (SpecLoadError, X12ParseError, OutputLoadError, DefinitionError) as exc:
         print(f"mapcheck: {exc}", file=sys.stderr)
@@ -185,11 +206,12 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 
 def _run_interchange(
-    args: argparse.Namespace, color: bool | None, output_format: str | None = None
+    args: argparse.Namespace, color: bool | None, output_format: str | None = None,
+    spec=None,
 ) -> int:
     result = validate_interchange_files(
         args.spec, args.source, args.output,
-        transaction=args.transaction, output_format=output_format,
+        transaction=args.transaction, output_format=output_format, spec=spec,
     )
     print(render_interchange_report(result, verbose=args.verbose, color=color))
 
@@ -271,6 +293,29 @@ def _cmd_import_spec(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_merge_spec(args: argparse.Namespace) -> int:
+    from mapcheck.spec.overrides import export_spec, resolve_spec
+
+    output = Path(args.output)
+    if output.exists():
+        print(f"mapcheck: {output} already exists, not overwriting", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        merged, warnings = resolve_spec(args.base, args.partner)
+    except SpecLoadError as exc:
+        print(f"mapcheck: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    for note in warnings:
+        print(f"mapcheck: {note}", file=sys.stderr)
+    export_spec(merged, output)
+    overrides = sum(1 for r in merged.rules if r.origin != "base")
+    print(
+        f"Effective spec written to {output} — {len(merged.rules)} rules "
+        f"({overrides} from the partner delta)"
+    )
+    return 0
+
+
 def _cmd_history(args: argparse.Namespace) -> int:
     if not Path(args.db).exists():
         print(f"mapcheck: no history database at {args.db}", file=sys.stderr)
@@ -316,6 +361,7 @@ def main(argv: list[str] | None = None) -> int:
         "validate": _cmd_validate,
         "init-spec": _cmd_init_spec,
         "import-spec": _cmd_import_spec,
+        "merge-spec": _cmd_merge_spec,
         "history": _cmd_history,
         "transactions": _cmd_transactions,
     }

@@ -44,6 +44,8 @@ class Finding:
     expected: str | None = None
     actual: str | None = None
     category: Category | None = None
+    #: Provenance after a partner-override merge: "base" or "partner:<name>".
+    origin: str = "base"
 
     @property
     def sort_key(self) -> tuple[int, str]:

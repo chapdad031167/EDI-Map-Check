@@ -23,6 +23,7 @@ shared, direction-agnostic code.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -245,7 +246,22 @@ def validate(
         _check_reconciliation(tx, result)
         _check_unmapped_source(spec, tx, result)
         _check_unmapped_target(spec, output, result)
+    _stamp_origins(result, spec)
     return result
+
+
+def _stamp_origins(result: RunResult, spec: MappingSpec) -> None:
+    """Tag findings with their rule's origin (partner-override provenance).
+
+    A no-op for a plain (unmerged) spec, where every rule is ``base``.
+    """
+    origins = {r.row_id: r.origin for r in spec.rules if r.origin != "base"}
+    if not origins:
+        return
+    for i, finding in enumerate(result.findings):
+        origin = origins.get(finding.row_id) if finding.row_id else None
+        if origin:
+            result.findings[i] = dataclass_replace(finding, origin=origin)
 
 
 def validate_files(
@@ -254,6 +270,7 @@ def validate_files(
     output_path: str,
     transaction: str | None = None,
     output_format: str | None = None,
+    spec: MappingSpec | None = None,
 ) -> RunResult:
     """Load the three artifacts and validate. Convenience for CLI/UI callers.
 
@@ -263,7 +280,9 @@ def validate_files(
     ``transaction`` forces a specific registered definition. The spec's Meta
     ``Transaction Set`` must agree with the X12 file. ``output_format``
     names a registered output-format definition for the canonical document
-    (used for user-supplied formats that can't be auto-detected).
+    (used for user-supplied formats that can't be auto-detected). Pass a
+    pre-loaded ``spec`` to skip loading ``spec_path`` — used for a
+    partner-override merged spec.
 
     Raises ``SpecLoadError``, ``X12ParseError``, or ``OutputLoadError`` when
     an input cannot be loaded or the spec and X12 file disagree.
@@ -273,7 +292,8 @@ def validate_files(
     from mapcheck.transactions.registry import UnknownTransactionError, default_registry
     from mapcheck.x12.parser import X12ParseError, parse_transaction
 
-    spec = load_spec(spec_path)
+    if spec is None:
+        spec = load_spec(spec_path)
     definition = None
     if transaction is not None:
         try:
@@ -500,18 +520,21 @@ def validate_interchange_files(
     output_path: str,
     transaction: str | None = None,
     output_format: str | None = None,
+    spec: MappingSpec | None = None,
 ) -> InterchangeResult:
     """Load the artifacts and validate a whole interchange.
 
     Mirrors :func:`validate_files` but pairs many source transactions with
     many output documents. The spec's direction decides which side is X12.
+    Pass a pre-loaded ``spec`` for a partner-override merged spec.
     """
     from mapcheck.output.adapter import load_output_documents
     from mapcheck.spec.parser import SpecLoadError, load_spec
     from mapcheck.transactions.registry import UnknownTransactionError, default_registry
     from mapcheck.x12.parser import X12ParseError, parse_interchange
 
-    spec = load_spec(spec_path)
+    if spec is None:
+        spec = load_spec(spec_path)
     definition = None
     if transaction is not None:
         try:
