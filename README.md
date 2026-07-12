@@ -197,6 +197,33 @@ The coded condition grammar is tiny and safe (no `eval`): `=`, `!=`, `IN`,
 `EXISTS`, joined with `AND`. Everything is documented on the template's
 Instructions sheet; `mapcheck init-spec` gives you a blank one.
 
+### Importing an existing partner spec
+
+Nobody retypes a 300-row spec. `mapcheck import-spec` reads the mapping
+document a partner already has — any `.xlsx` or `.csv`, any column
+layout — and turns it into the native template:
+
+```bash
+mapcheck import-spec partner_map.xlsx --output my_spec.xlsx \
+  --transaction 850 --code-lists partner_lookups.xlsx
+```
+
+It locates the header row (skipping banners), maps their columns to ours
+by a synonym matcher (`"X12 Element"` → Source Field, `"ERP Field"` →
+Target Field, `"Business Rule"` → Condition…; override with
+`--map "Target Field=E"`), and infers each row's rule type from the
+evidence in its cells. Simple conditions (`N103 = 92`, `when REF02 is
+present`) are translated to coded conditions and lookup tables import into
+CodeLists.
+
+It is **conservative on purpose**: a row with thin or conflicting
+evidence, or a prose condition it can't mechanically translate, is
+**flagged for review — never silently guessed**. The result is a *draft*
+workbook (review rows highlighted, with a reason in Notes) plus a
+worklist; you finish the flagged handful, then validate as usual. Any
+source column that carried data but matched nothing is reported, so
+nothing is dropped silently.
+
 ## Output formats
 
 The validation engine never reads the output file directly — every format
@@ -352,11 +379,11 @@ tests/             pytest suite (every rule category, every planted defect)
 Both directions — inbound X12 → internal or ERP-native output (JSON,
 keyed flat, config-driven SAP IDoc: ORDERS05 / DESADV01 / INVOIC02, plus
 user-defined layouts) and outbound internal → X12 — with one spec template
-format, single- or multi-transaction interchanges. Not yet: multi-document
-flat/IDoc containers, spec import, partner-specific overrides, regression
-baselines, cross-transaction-set pairing (e.g. 844/849). The layering
-above is built so those grow without rework — see
-[docs/ROADMAP.md](docs/ROADMAP.md).
+format, single- or multi-transaction interchanges, and import of existing
+partner mapping documents. Not yet: multi-document flat/IDoc containers,
+partner-specific overrides, regression baselines, cross-transaction-set
+pairing (e.g. 844/849). The layering above is built so those grow without
+rework — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Development
 
