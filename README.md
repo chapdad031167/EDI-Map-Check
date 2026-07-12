@@ -224,6 +224,31 @@ worklist; you finish the flagged handful, then validate as usual. Any
 source column that carried data but matched nothing is reported, so
 nothing is dropped silently.
 
+### Partner overrides
+
+One base spec, one small delta per partner — not 40 drifting full specs.
+A delta is an ordinary spec workbook that changes rules by **Row ID**:
+
+* a new Row ID **adds** a rule,
+* an existing Row ID **replaces** it wholesale,
+* a `REMOVE` Rule Type **deletes** it,
+* a CodeLists sheet **shadows** the base list of the same name.
+
+```bash
+# validate the same source under one partner's effective spec
+mapcheck validate --spec base.xlsx --partner acme.xlsx --source po.edi --output out.json
+
+# write the fully-resolved effective spec (origins recorded in Notes)
+mapcheck merge-spec base.xlsx --partner acme.xlsx --output effective.xlsx
+```
+
+Every merged rule — and every finding it produces — carries an **origin**
+(`base` or `partner:acme`), so a failure reads as *"the ACME override is
+wrong"* rather than *"the base map is wrong."* The merged export
+round-trips through the loader, so a partner's effective spec is always
+auditable as one sheet. Deltas are spec workbooks, so `import-spec` and
+`init-spec` author them for free.
+
 ## Output formats
 
 The validation engine never reads the output file directly — every format
@@ -379,11 +404,11 @@ tests/             pytest suite (every rule category, every planted defect)
 Both directions — inbound X12 → internal or ERP-native output (JSON,
 keyed flat, config-driven SAP IDoc: ORDERS05 / DESADV01 / INVOIC02, plus
 user-defined layouts) and outbound internal → X12 — with one spec template
-format, single- or multi-transaction interchanges, and import of existing
-partner mapping documents. Not yet: multi-document flat/IDoc containers,
-partner-specific overrides, regression baselines, cross-transaction-set
-pairing (e.g. 844/849). The layering above is built so those grow without
-rework — see [docs/ROADMAP.md](docs/ROADMAP.md).
+format, single- or multi-transaction interchanges, import of existing
+partner mapping documents, and per-partner overrides. Not yet:
+multi-document flat/IDoc containers, regression baselines,
+cross-transaction-set pairing (e.g. 844/849). The layering above is built
+so those grow without rework — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Development
 
