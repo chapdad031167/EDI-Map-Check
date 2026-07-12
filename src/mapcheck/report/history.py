@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS findings (
     message TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_findings_run ON findings(run_id);
+CREATE TABLE IF NOT EXISTS baselines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    baseline_key TEXT NOT NULL UNIQUE,
+    run_id INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    label TEXT,
+    blessed_at TEXT NOT NULL
+);
 """
 
 
@@ -158,3 +165,63 @@ class RunHistory:
         )
         columns = [c[0] for c in cursor.description]
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+    def run(self, run_id: int) -> dict[str, Any] | None:
+        """One run row by id, or None."""
+        cursor = self._connection.execute(
+            "SELECT id, run_at, spec_file, source_file, output_file, result,"
+            " passed, failed, warnings, not_tested, interchange_id, document_key"
+            " FROM runs WHERE id = ?",
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return dict(zip([c[0] for c in cursor.description], row))
+
+    def child_runs(self, parent_run_id: int) -> list[dict[str, Any]]:
+        """Per-document child runs of an interchange parent, in order."""
+        cursor = self._connection.execute(
+            "SELECT id, document_key FROM runs WHERE interchange_id = ? ORDER BY id",
+            (parent_run_id,),
+        )
+        return [dict(zip([c[0] for c in cursor.description], r)) for r in cursor.fetchall()]
+
+    # -- baselines (regression mode) ----------------------------------------
+
+    def bless(self, run_id: int, baseline_key: str, label: str | None = None) -> None:
+        """Mark a recorded run as the golden baseline for ``baseline_key``."""
+        if self.run(run_id) is None:
+            raise ValueError(f"no run #{run_id} in this history database")
+        from datetime import datetime, timezone
+
+        self._connection.execute(
+            "INSERT INTO baselines (baseline_key, run_id, label, blessed_at)"
+            " VALUES (?,?,?,?)"
+            " ON CONFLICT(baseline_key) DO UPDATE SET"
+            " run_id=excluded.run_id, label=excluded.label, blessed_at=excluded.blessed_at",
+            (baseline_key, run_id, label, datetime.now(timezone.utc).isoformat(timespec="seconds")),
+        )
+        self._connection.commit()
+
+    def baseline_for(self, baseline_key: str) -> dict[str, Any] | None:
+        """The blessed baseline for a key, or None."""
+        cursor = self._connection.execute(
+            "SELECT run_id, label, blessed_at FROM baselines WHERE baseline_key = ?",
+            (baseline_key,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return dict(zip([c[0] for c in cursor.description], row))
+
+    def snapshot(self, run_id: int) -> dict[str, list[dict[str, Any]]]:
+        """A run's findings grouped by document key (``""`` = file-level /
+        single-document), reconstructed from the DB for diffing."""
+        run = self.run(run_id)
+        if run is None:
+            raise ValueError(f"no run #{run_id} in this history database")
+        snap: dict[str, list[dict[str, Any]]] = {"": self.findings_for(run_id)}
+        for child in self.child_runs(run_id):
+            snap[child["document_key"] or ""] = self.findings_for(child["id"])
+        return snap
