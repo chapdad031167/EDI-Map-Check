@@ -1,7 +1,16 @@
 # Design 006 — Regression Mode
 
-**Status:** proposed — awaiting review, no code yet
+**Status:** approved — implemented in this PR
 **Roadmap item:** 2.3 (Phase 2, design-first) — closes Phase 2
+
+**Resolved (all four recommendations adopted):** (A) auto-key by the
+`spec|source|output|partner` paths with a `--label` override; (B) finding
+identity is `(document_key, row_id or "", target or source_ref)` — `category`
+stays out of the key and a category change reads as CHANGED; (C) the nonzero
+gate trips on any NEW **FAIL**, any PASS/WARNING→FAIL **CHANGED**, or a
+**DOC REMOVED** — new warnings and improvements are informational; (D) the
+first `regress` with no baseline records the run and prints how to bless it
+(exit 0) rather than auto-blessing.
 
 ## The problem
 
