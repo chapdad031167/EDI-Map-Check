@@ -133,6 +133,36 @@ def _build_parser() -> argparse.ArgumentParser:
     p_hist.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
     p_hist.add_argument("--limit", type=int, default=20, help="number of runs to show")
 
+    p_bless = sub.add_parser(
+        "bless", help="mark a recorded run as the golden baseline for its inputs"
+    )
+    p_bless.add_argument("run_id", type=int, help="run id (from `mapcheck history`) to bless")
+    p_bless.add_argument(
+        "--label",
+        help="name this baseline instead of auto-keying by the run's paths "
+        "(use when paths differ across machines, or for partner baselines)",
+    )
+    p_bless.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
+
+    p_reg = sub.add_parser(
+        "regress", help="validate now and report only the delta from the blessed baseline"
+    )
+    p_reg.add_argument("--spec", required=True, help="mapping spec workbook (.xlsx)")
+    p_reg.add_argument(
+        "--partner", metavar="DELTA", help="a partner delta workbook merged onto --spec"
+    )
+    p_reg.add_argument("--source", required=True, help="the translation's input")
+    p_reg.add_argument("--output", required=True, help="the translation's result")
+    p_reg.add_argument("--transaction", metavar="SET", help="force a transaction set")
+    p_reg.add_argument(
+        "--output-def", metavar="PATH", help="register an output-format definition (.yaml)"
+    )
+    p_reg.add_argument(
+        "--label", help="match the baseline by this name instead of the input paths"
+    )
+    p_reg.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
+    p_reg.add_argument("--no-color", action="store_true", help="disable ANSI colors")
+
     sub.add_parser("transactions", help="list registered transaction definitions")
     return parser
 
@@ -340,6 +370,77 @@ def _cmd_history(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_bless(args: argparse.Namespace) -> int:
+    from mapcheck.report.regression import baseline_key
+
+    if not Path(args.db).exists():
+        print(f"mapcheck: no history database at {args.db}", file=sys.stderr)
+        return EXIT_USAGE
+    with RunHistory(args.db) as history:
+        run = history.run(args.run_id)
+        if run is None:
+            print(f"mapcheck: no run #{args.run_id} in {args.db}", file=sys.stderr)
+            return EXIT_USAGE
+        key = args.label or baseline_key(
+            run["spec_file"], run["source_file"], run["output_file"]
+        )
+        history.bless(args.run_id, key, label=args.label)
+    print(f"Run #{args.run_id} blessed as the baseline for '{key}'.")
+    return 0
+
+
+def _cmd_regress(args: argparse.Namespace) -> int:
+    from mapcheck.report.regression import baseline_key, format_delta, regress
+
+    color = False if args.no_color else None
+    output_format = None
+    merged_spec = None
+    try:
+        if args.output_def:
+            from mapcheck.output.idoc import register_output_definition
+
+            output_format = register_output_definition(args.output_def).format
+        if args.partner:
+            from mapcheck.spec.overrides import resolve_spec
+
+            merged_spec, merge_warnings = resolve_spec(args.spec, args.partner)
+            spec = merged_spec
+            for note in merge_warnings:
+                print(f"mapcheck: partner merge note: {note}", file=sys.stderr)
+        else:
+            spec = load_spec(args.spec)
+        interchange = _is_interchange(spec, args.source, args.output)
+        if interchange:
+            result = validate_interchange_files(
+                args.spec, args.source, args.output,
+                transaction=args.transaction, output_format=output_format, spec=merged_spec,
+            )
+        else:
+            result = validate_files(
+                args.spec, args.source, args.output,
+                transaction=args.transaction, output_format=output_format, spec=merged_spec,
+            )
+    except (SpecLoadError, X12ParseError, OutputLoadError, DefinitionError) as exc:
+        print(f"mapcheck: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    key = args.label or baseline_key(args.spec, args.source, args.output, args.partner)
+    with RunHistory(args.db) as history:
+        current_id = (
+            history.record_interchange(result) if interchange else history.record(result)
+        )
+        baseline = history.baseline_for(key)
+        if baseline is None:
+            label_arg = f" --label {args.label!r}" if args.label else ""
+            print(f"No baseline yet for '{key}'.")
+            print(f"Recorded run #{current_id}. Bless it to establish the baseline:")
+            print(f"    mapcheck bless {current_id}{label_arg}")
+            return 0
+        delta = regress(history, baseline["run_id"], current_id)
+    print(format_delta(delta, color=color))
+    return delta.exit_code
+
+
 def _cmd_transactions(args: argparse.Namespace) -> int:
     from mapcheck.transactions.registry import default_registry
 
@@ -363,6 +464,8 @@ def main(argv: list[str] | None = None) -> int:
         "import-spec": _cmd_import_spec,
         "merge-spec": _cmd_merge_spec,
         "history": _cmd_history,
+        "bless": _cmd_bless,
+        "regress": _cmd_regress,
         "transactions": _cmd_transactions,
     }
     return handlers[args.command](args)
