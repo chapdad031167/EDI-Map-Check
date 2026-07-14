@@ -150,7 +150,7 @@ class Scrubber:
     def __init__(self, profile: Profile, seed: str | None = None) -> None:
         self.profile = profile
         self.salt = seed if seed is not None else secrets.token_hex(8)
-        self._cache: dict[str, str] = {}
+        self._cache: dict[tuple[str, str], str] = {}
         self.report = ScrubReport()
 
     # -- masking primitives -------------------------------------------------
@@ -158,10 +158,11 @@ class Scrubber:
     def _mask_value(self, value: str, strategy: str) -> str:
         if value == "" or value.isspace():
             return value
-        if value in self._cache:
-            return self._cache[value]
+        cache_key = (value, strategy)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
         masked = self._redact(value) if strategy == "redact" else self._pseudonymize(value)
-        self._cache[value] = masked
+        self._cache[cache_key] = masked
         self.report.unique_values += 1
         return masked
 

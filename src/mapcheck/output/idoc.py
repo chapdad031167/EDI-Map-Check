@@ -31,7 +31,7 @@ from typing import Any, Iterator
 
 import yaml
 
-from mapcheck.output.adapter import CanonicalOutput, OutputLoadError
+from mapcheck.output.adapter import CanonicalOutput, OutputLoadError, parse_xml_safely
 
 #: (segment name, {FIELD: value}) — the stream both readers emit.
 _SegmentStream = Iterator[tuple[str, dict[str, str]]]
@@ -309,10 +309,7 @@ def _xml_segments(element: ET.Element, defn: OutputFormatDef) -> _SegmentStream:
 
 def load_idoc_xml(path: Path, defn: OutputFormatDef) -> CanonicalOutput:
     """Parse an IDoc XML file per a format definition."""
-    try:
-        root = ET.parse(path).getroot()
-    except ET.ParseError as exc:
-        raise OutputLoadError(f"{path}: not valid XML — {exc}") from exc
+    root = parse_xml_safely(path)
     expected_root = defn.xml_root or defn.basic_type
     if expected_root and root.tag != expected_root:
         raise OutputLoadError(
