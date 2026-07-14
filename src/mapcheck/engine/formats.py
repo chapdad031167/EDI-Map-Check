@@ -23,6 +23,29 @@ class NormalizationError(Exception):
         super().__init__(reason)
 
 
+#: A real X12 numeric is well under this. Bounding the magnitude stops a
+#: crafted value like ``1E999999999`` — which parses instantly but expands to
+#: gigabytes when rendered with ``format(Decimal, "f")`` — from OOMing an
+#: (often unattended, e.g. ``mapcheck batch``) run.
+_MAX_DECIMAL_DIGITS = 4000
+
+
+def _checked_decimal(text: str) -> Decimal:
+    """``Decimal(text)`` with a guard on absurd magnitude/precision."""
+    try:
+        number = Decimal(text)
+    except InvalidOperation:
+        raise NormalizationError(f"{text!r} is not a valid number") from None
+    _, digits, exponent = number.as_tuple()
+    if isinstance(exponent, str) or len(digits) > _MAX_DECIMAL_DIGITS or abs(
+        exponent
+    ) > _MAX_DECIMAL_DIGITS:
+        raise NormalizationError(
+            f"{text!r} has an out-of-range magnitude (guarding against expansion)"
+        )
+    return number
+
+
 def normalize_source(value: str, data_type: DataType | None, fmt: FormatSpec) -> Any:
     """Convert an X12 element string to a comparable Python value.
 
@@ -37,10 +60,7 @@ def normalize_source(value: str, data_type: DataType | None, fmt: FormatSpec) ->
         except ValueError:
             raise NormalizationError(f"{value!r} is not a valid integer") from None
     if data_type is DataType.DECIMAL:
-        try:
-            number = Decimal(value)
-        except InvalidOperation:
-            raise NormalizationError(f"{value!r} is not a valid number") from None
+        number = _checked_decimal(value)
         if fmt.implied is not None:
             if "." in value:
                 raise NormalizationError(
@@ -121,10 +141,7 @@ def normalize_actual(
             text = repr(value)
         else:
             raise NormalizationError(f"{value!r} is not a valid number")
-        try:
-            number = Decimal(text)
-        except InvalidOperation:
-            raise NormalizationError(f"{value!r} is not a valid number") from None
+        number = _checked_decimal(text)
         if fmt.places is not None and isinstance(value, str):
             _, _, frac = text.partition(".")
             if len(frac) != fmt.places:
@@ -166,10 +183,7 @@ def normalize_x12(value: str, data_type: DataType | None, fmt: FormatSpec) -> tu
         except ValueError:
             raise NormalizationError(f"{value!r} is not a valid integer") from None
     if data_type is DataType.DECIMAL:
-        try:
-            number = Decimal(value)
-        except InvalidOperation:
-            raise NormalizationError(f"{value!r} is not a valid number") from None
+        number = _checked_decimal(value)
         if fmt.implied is not None:
             if "." in value:
                 raise NormalizationError(

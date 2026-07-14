@@ -18,13 +18,8 @@ from xml.sax.saxutils import escape, quoteattr
 import yaml
 
 from mapcheck.engine import Status, validate_files, validate_interchange_files
-from mapcheck.output.adapter import OutputLoadError
-from mapcheck.output.idoc import DefinitionError
 from mapcheck.report.history import RunHistory
-from mapcheck.spec.parser import SpecLoadError, load_spec
-from mapcheck.x12.parser import X12ParseError
-
-_EXEC_ERRORS = (SpecLoadError, X12ParseError, OutputLoadError, DefinitionError, OSError)
+from mapcheck.spec.parser import load_spec
 
 #: Recognized keys on a manifest check (anything else is an error).
 _CHECK_KEYS = {
@@ -269,7 +264,10 @@ def run_batch(
                     outcome = _run_regress(check, history)
                 else:
                     outcome = _run_validate(check, history if record else None)
-            except _EXEC_ERRORS as exc:
+            except Exception as exc:
+                # One malformed check must never abort the whole batch — record
+                # it as a code-2 execution error and keep going. (BaseException,
+                # e.g. KeyboardInterrupt, still propagates.)
                 outcome = CheckOutcome(
                     check.name, "error", "error", detail=str(exc), error=str(exc)
                 )

@@ -32,6 +32,24 @@ class OutputLoadError(Exception):
     """Raised when the output file cannot be loaded into the canonical model."""
 
 
+def parse_xml_safely(path: Path) -> "ET.Element":
+    """Parse an XML file, refusing a DOCTYPE.
+
+    ElementTree does not resolve *external* entities (no XXE), but it does
+    expand *internal* ones, so a DTD entity bomb could amplify memory/CPU.
+    IDoc/EDI XML never needs a DOCTYPE, so any is rejected outright — a
+    dependency-free block on entity-expansion attacks. Raises
+    :class:`OutputLoadError` on a DOCTYPE or malformed XML.
+    """
+    data = path.read_bytes()
+    if b"<!DOCTYPE" in data.upper():
+        raise OutputLoadError(f"{path}: XML DOCTYPE declarations are not allowed")
+    try:
+        return ET.fromstring(data)
+    except ET.ParseError as exc:
+        raise OutputLoadError(f"{path}: not valid XML — {exc}") from exc
+
+
 class _Missing:
     """Sentinel distinguishing 'field absent' from a present null/empty value."""
 
@@ -219,10 +237,7 @@ def load_output(path: str | Path, output_format: str | None = None) -> Canonical
     if path.suffix.lower() == ".json":
         return _load_json(path)
     if path.suffix.lower() == ".xml":
-        try:
-            root = ET.parse(path).getroot()
-        except ET.ParseError as exc:
-            raise OutputLoadError(f"{path}: not valid XML — {exc}") from exc
+        root = parse_xml_safely(path)
         defn = idoc.default_output_registry.detect_xml(root.tag)
         if defn is None:
             raise OutputLoadError(
