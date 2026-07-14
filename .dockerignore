@@ -1,0 +1,22 @@
+# Keep the build context (and image) lean: only ship what the app needs.
+.git
+.github
+.gitignore
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests
+docs
+scripts
+*.db
+mapcheck_history.db
+*.scrubbed.*
+build
+dist
+*.egg-info
+.DS_Store

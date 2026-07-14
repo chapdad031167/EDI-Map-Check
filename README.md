@@ -107,6 +107,38 @@ by status, download the color-coded Excel report:
 
 ![EDI MapCheck Streamlit UI](docs/screenshot_streamlit.png)
 
+### Run it as an app (no terminal)
+
+For non-CLI users, run the whole thing as a web app in a container — one
+command, then open a browser. No Python install, no command line:
+
+```bash
+docker compose up            # then open http://localhost:8501
+```
+
+or with plain Docker:
+
+```bash
+docker build -t edi-mapcheck .
+docker run --rm -p 8501:8501 edi-mapcheck
+```
+
+The image honors `$PORT`, so the same build runs unchanged on any container
+host — **Cloud Run, Render, Railway, Fly.io** — and is published to
+**GitHub Container Registry** on each release
+(`docker run -p 8501:8501 ghcr.io/chapdad031167/edi-map-check:latest`). To put
+it online for free, point **[Streamlit Community Cloud](https://streamlit.io/cloud)**
+at this repo with `app.py` as the entrypoint — users just get a URL.
+
+### Install the CLI (pipx)
+
+For the command-line tool on its own, without cloning:
+
+```bash
+pipx install "git+https://github.com/chapdad031167/EDI-Map-Check.git"
+mapcheck --help
+```
+
 ### Other commands
 
 ```bash

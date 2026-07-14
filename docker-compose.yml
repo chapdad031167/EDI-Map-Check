@@ -1,0 +1,15 @@
+# EDI MapCheck — one command to run the app locally.
+#
+#   docker compose up
+#
+# then open http://localhost:8501. Ctrl-C to stop.
+
+services:
+  mapcheck:
+    build: .
+    image: edi-mapcheck
+    ports:
+      - "8501:8501"
+    environment:
+      - PORT=8501
+    restart: unless-stopped
