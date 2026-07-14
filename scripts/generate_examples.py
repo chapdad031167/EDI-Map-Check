@@ -3798,6 +3798,31 @@ def generate_ergonomics_files() -> None:
         print(f"wrote {path.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# Data scrubber (3.3): a SYNTHETIC 850 that merely *looks* like it carries
+# PII — fake names, address, DEA-shaped REF, contact — for `mapcheck scrub`.
+# The same party name appears twice on purpose (referential consistency).
+# --------------------------------------------------------------------------
+
+SCRUB_PII_SEGMENTS = [
+    "BEG*00*SA*POPII001**20260615",
+    "REF*DEA*AB1234563",              # DEA-shaped registration number
+    "N1*ST*RIVERSIDE MARKET*92*0042",
+    "N3*4501 CASCADE AVE",
+    "N4*BOULDER*CO*80301",
+    "PER*BD*JANE DOE*TE*3035551212",
+    "N1*BT*RIVERSIDE MARKET*92*0001",  # same name as ST -> masks identically
+    "PO1*1*12*EA*8.5**UP*614141007349",
+    "CTT*1",
+]
+
+
+def generate_scrub_files() -> None:
+    src = EXAMPLES / "source" / "850_pii.edi"
+    src.write_text(build_850(SCRUB_PII_SEGMENTS, "0001"))
+    print(f"wrote {src.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -3832,6 +3857,7 @@ def main() -> None:
     generate_partner_specs()
     generate_partner_override_files()
     generate_ergonomics_files()
+    generate_scrub_files()
 
 
 if __name__ == "__main__":
