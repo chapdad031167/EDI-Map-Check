@@ -11,12 +11,18 @@ A Format cell is a small ``;``-separated language:
   places. Checked only when the output value is a string (flat files);
   native JSON numbers can't preserve trailing zeros.
 * ``len:MIN..MAX`` — allowed output string length range.
+* ``tol:0.01`` — decimal comparisons pass within this absolute tolerance
+  (only meaningful on a decimal Data Type).
+* ``shift:+5d`` / ``shift:-30d`` / ``shift:+2w`` — the expected value is the
+  source date shifted by N days (``d``) or weeks (``w``); only meaningful on a
+  date Data Type.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 
 
 class FormatSpecError(ValueError):
@@ -32,11 +38,15 @@ class FormatSpec:
     places: int | None = None  # required decimal places in output string form
     len_min: int | None = None
     len_max: int | None = None
+    tolerance: Decimal | None = None  # absolute decimal comparison tolerance
+    shift_days: int | None = None  # expected = source date + shift_days
 
 
 _LEN_RE = re.compile(r"^len:(\d+)\.\.(\d+)$")
 _IMPLIED_RE = re.compile(r"^implied:(\d+)$")
 _PLACES_RE = re.compile(r"^places:(\d+)$")
+_TOL_RE = re.compile(r"^tol:(\d+(?:\.\d+)?)$")
+_SHIFT_RE = re.compile(r"^shift:([+-]?\d+)([dw])$")
 
 
 def parse_format(text: str | None) -> FormatSpec:
@@ -47,6 +57,7 @@ def parse_format(text: str | None) -> FormatSpec:
     if not text:
         return FormatSpec()
     pattern = implied = places = len_min = len_max = None
+    tolerance = shift_days = None
     for token in (t.strip() for t in text.split(";") if t.strip()):
         if "%" in token:
             pattern = token
@@ -56,11 +67,20 @@ def parse_format(text: str | None) -> FormatSpec:
             places = int(m.group(1))
         elif m := _LEN_RE.match(token):
             len_min, len_max = int(m.group(1)), int(m.group(2))
+        elif m := _TOL_RE.match(token):
+            try:
+                tolerance = Decimal(m.group(1))
+            except InvalidOperation:  # pragma: no cover - regex already guards
+                raise FormatSpecError(f"invalid tolerance {token!r}") from None
+        elif m := _SHIFT_RE.match(token):
+            amount = int(m.group(1))
+            shift_days = amount * (7 if m.group(2) == "w" else 1)
         else:
             raise FormatSpecError(
-                f"unknown format token {token!r} "
-                "(expected a strftime pattern, implied:N, places:N, or len:MIN..MAX)"
+                f"unknown format token {token!r} (expected a strftime pattern, "
+                "implied:N, places:N, len:MIN..MAX, tol:N, or shift:±Nd/±Nw)"
             )
     return FormatSpec(
-        pattern=pattern, implied=implied, places=places, len_min=len_min, len_max=len_max
+        pattern=pattern, implied=implied, places=places, len_min=len_min,
+        len_max=len_max, tolerance=tolerance, shift_days=shift_days,
     )

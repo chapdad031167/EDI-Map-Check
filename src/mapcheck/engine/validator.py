@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -922,27 +923,38 @@ def _judge(
             actual_text=actual_text,
         )
 
+    tol_note = None
     if normalized != expected.value:
-        return finding(
-            Status.FAIL,
-            f"expected {expected_text!r}, output has {display(normalized)!r}"
-            + _why(expected.note),
-            _MISMATCH_CATEGORY[rule.rule_type],
-            expected_text=expected_text,
-            actual_text=actual_text,
-        )
+        if (
+            fmt.tolerance is not None
+            and isinstance(normalized, Decimal)
+            and isinstance(expected.value, Decimal)
+            and abs(normalized - expected.value) <= fmt.tolerance
+        ):
+            delta = abs(normalized - expected.value)
+            tol_note = f"within tol:{display(fmt.tolerance)} (Δ{display(delta)})"
+        else:
+            return finding(
+                Status.FAIL,
+                f"expected {expected_text!r}, output has {display(normalized)!r}"
+                + _why(expected.note),
+                _MISMATCH_CATEGORY[rule.rule_type],
+                expected_text=expected_text,
+                actual_text=actual_text,
+            )
 
     if warnings:
+        extra = "; ".join(([tol_note] if tol_note else []) + warnings)
         return finding(
             Status.WARNING,
-            "value matches, but " + "; ".join(warnings),
+            "value matches, but " + extra,
             Category.FORMAT,
             expected_text=expected_text,
             actual_text=actual_text,
         )
     return finding(
         Status.PASS,
-        "ok" + _why(expected.note),
+        ("ok" + (f" — {tol_note}" if tol_note else "")) + _why(expected.note),
         expected_text=expected_text,
         actual_text=actual_text,
     )
@@ -1033,6 +1045,10 @@ def _source_expected(
         value = source.normalize(raw, rule, fmt)
     except NormalizationError as exc:
         return _Expected(kind="source_defect", note=f"{rule.source_field} {exc.reason}")
+    if fmt.shift_days is not None and isinstance(value, date):
+        value = value + timedelta(days=fmt.shift_days)
+        shift_note = f"source date shifted {fmt.shift_days:+d}d"
+        note = f"{note}; {shift_note}" if note else shift_note
     return _Expected(kind="value", value=value, note=note)
 
 
