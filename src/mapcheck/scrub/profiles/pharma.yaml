@@ -1,0 +1,31 @@
+# Default pharma-oriented scrub profile for `mapcheck scrub`.
+#
+# Each rule masks one element position across every occurrence of a segment,
+# optionally only when a qualifier element matches. Masking is deterministic
+# and length-/character-class-preserving, so a masked NDC still looks like an
+# NDC and a repeated value masks the same way everywhere (pairing keys survive).
+#
+# `envelope: true` also masks the ISA/GS trading-partner IDs.
+
+name: pharma-default
+envelope: true
+
+rules:
+  # Party names and addresses (N1 loop).
+  - { segment: N1, element: 2, strategy: name }   # entity name
+  - { segment: N2, element: 1, strategy: name }   # additional name
+  - { segment: N3, element: 1, strategy: text }   # address line 1
+  - { segment: N3, element: 2, strategy: text }   # address line 2
+  - { segment: N4, element: 1, strategy: text }   # city
+
+  # Contact details (PER).
+  - { segment: PER, element: 2, strategy: name }  # contact name
+  - { segment: PER, element: 4, strategy: text }  # contact number / email
+  - { segment: PER, element: 6, strategy: text }
+  - { segment: PER, element: 8, strategy: text }
+
+  # DEA / HIN registration numbers carried on REF, keyed by qualifier.
+  - segment: REF
+    element: 2
+    strategy: id
+    when: { element: 1, in: [DEA, HN, "1J", "9L"] }

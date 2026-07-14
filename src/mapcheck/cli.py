@@ -180,6 +180,26 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_batch.add_argument("--no-color", action="store_true", help="disable ANSI colors")
 
+    p_scrub = sub.add_parser(
+        "scrub", help="mask sensitive values in an X12 file, preserving structure"
+    )
+    p_scrub.add_argument("input", help="X12 file to scrub (.edi)")
+    p_scrub.add_argument(
+        "-o", "--output", metavar="PATH",
+        help="where to write the scrubbed file (default: INPUT.scrubbed.EXT)",
+    )
+    p_scrub.add_argument(
+        "--profile", metavar="NAME|PATH", default="pharma",
+        help="scrub profile — a bundled name (pharma) or a .yaml path",
+    )
+    p_scrub.add_argument(
+        "--seed", metavar="VALUE",
+        help="salt for reproducible masking (default: random per run)",
+    )
+    p_scrub.add_argument(
+        "--report", action="store_true", help="print a summary of what was masked"
+    )
+
     sub.add_parser("transactions", help="list registered transaction definitions")
     return parser
 
@@ -476,6 +496,30 @@ def _cmd_batch(args: argparse.Namespace) -> int:
     return result.exit_code
 
 
+def _cmd_scrub(args: argparse.Namespace) -> int:
+    from mapcheck.scrub import ProfileError, load_profile
+    from mapcheck.scrub.scrubber import scrub_file
+
+    if not Path(args.input).exists():
+        print(f"mapcheck: input file not found: {args.input}", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        profile = load_profile(args.profile)
+    except ProfileError as exc:
+        print(f"mapcheck: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        out_path, report = scrub_file(args.input, args.output, profile, seed=args.seed)
+    except (OSError, ValueError) as exc:
+        print(f"mapcheck: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    print(f"Scrubbed file written to {out_path} (profile: {profile.name})")
+    if args.report:
+        print()
+        print(report.render())
+    return 0
+
+
 def _cmd_transactions(args: argparse.Namespace) -> int:
     from mapcheck.transactions.registry import default_registry
 
@@ -502,6 +546,7 @@ def main(argv: list[str] | None = None) -> int:
         "bless": _cmd_bless,
         "regress": _cmd_regress,
         "batch": _cmd_batch,
+        "scrub": _cmd_scrub,
         "transactions": _cmd_transactions,
     }
     return handlers[args.command](args)
