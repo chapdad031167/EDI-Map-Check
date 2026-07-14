@@ -1,0 +1,27 @@
+{
+  "order": {
+    "purpose": "00",
+    "po_type": "SA",
+    "po_number": "POERG01",
+    "po_date": "2026-06-15",
+    "promised_ship_date": "2026-07-06",
+    "total_amount": 306.01
+  },
+  "lines": [
+    {
+      "line_no": 1,
+      "qty": 12,
+      "uom_label": "EACH",
+      "unit_price": 8.5
+    },
+    {
+      "line_no": 2,
+      "qty": 6,
+      "uom_label": "CASE",
+      "unit_price": 24
+    }
+  ],
+  "summary": {
+    "line_count": 2
+  }
+}

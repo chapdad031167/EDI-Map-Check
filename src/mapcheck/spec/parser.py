@@ -97,6 +97,50 @@ def _load_code_lists(ws: Worksheet, errors: list[str]) -> dict[str, CodeList]:
     }
 
 
+def _load_code_list_file(rel_path: str, base_dir: Path | None) -> CodeList:
+    """Load an external ``file:`` code list (a CSV beside the spec).
+
+    Columns are positional: ``source,target[,description]``. A header row is
+    skipped when its first cell is the literal ``source`` (case-insensitive).
+    Raises ``OSError`` if the file is missing and ``ValueError`` on bad rows.
+    """
+    import csv
+
+    rel_path = rel_path.strip()
+    if not rel_path:
+        raise ValueError("empty file path after 'file:'")
+    path = Path(rel_path)
+    if not path.is_absolute() and base_dir is not None:
+        path = base_dir / path
+    if not path.exists():
+        raise OSError(f"lookup file not found: {path}")
+
+    entries: dict[str, str] = {}
+    descriptions: dict[str, str] = {}
+    with path.open(newline="", encoding="utf-8-sig") as fh:
+        for line_no, row in enumerate(csv.reader(fh), start=1):
+            if not row or all(not c.strip() for c in row):
+                continue
+            if len(row) < 2:
+                raise ValueError(
+                    f"{path.name} line {line_no}: expected at least source,target columns"
+                )
+            source = row[0].strip()
+            if line_no == 1 and source.lower() == "source":
+                continue  # header row
+            target = row[1].strip()
+            if source in entries:
+                raise ValueError(
+                    f"{path.name} line {line_no}: duplicate source value {source!r}"
+                )
+            entries[source] = target
+            if len(row) >= 3 and row[2].strip():
+                descriptions[source] = row[2].strip()
+    if not entries:
+        raise ValueError(f"{path.name} has no lookup entries")
+    return CodeList(name=f"file:{rel_path}", entries=entries, descriptions=descriptions)
+
+
 _EXPECTED_MAPPING_HEADER = tuple(header for header, _ in MAPPING_COLUMNS)
 _EXPECTED_CODELIST_HEADER = tuple(header for header, _ in CODELIST_COLUMNS)
 
@@ -127,6 +171,7 @@ def _parse_rule(
     errors: list[str],
     direction: Direction = Direction.INBOUND,
     notes_out: list[str] | None = None,
+    base_dir: Path | None = None,
 ) -> MappingRule | None:
     (
         row_id,
@@ -225,9 +270,10 @@ def _parse_rule(
             err(f"Else: {exc}")
             ok = False
 
+    fmt_spec = None
     if format_raw:
         try:
-            parse_format(format_raw)
+            fmt_spec = parse_format(format_raw)
         except FormatSpecError as exc:
             err(f"Format: {exc}")
             ok = False
@@ -243,6 +289,19 @@ def _parse_rule(
             )
             ok = False
 
+    # Format tokens that only make sense for a particular Data Type.
+    if fmt_spec is not None:
+        if fmt_spec.shift_days is not None and data_type is not DataType.DATE:
+            err("Format shift: requires a date Data Type")
+            ok = False
+        if fmt_spec.tolerance is not None and data_type is not DataType.DECIMAL:
+            # Soft: a tolerance on a non-decimal row is inert, not fatal.
+            if notes_out is not None:
+                notes_out.append(
+                    f"Mapping row {idx} ({row_id or '?'}): Format tol: is ignored "
+                    "because the Data Type is not decimal — NEEDS REVIEW"
+                )
+
     # Cross-field requirements per rule type.
     if rule_type is RuleType.DIRECT and not source_field:
         err("DIRECT rule requires a Source Field")
@@ -254,6 +313,15 @@ def _parse_rule(
         if not code_list_ref:
             err("CODE_LIST rule requires a Code List Ref")
             ok = False
+        elif code_list_ref.startswith("file:"):
+            if code_list_ref not in code_lists:  # load once, then cached in the dict
+                try:
+                    code_lists[code_list_ref] = _load_code_list_file(
+                        code_list_ref[len("file:"):], base_dir
+                    )
+                except (OSError, ValueError) as exc:
+                    err(f"Code List Ref {code_list_ref!r}: {exc}")
+                    ok = False
         elif code_list_ref not in code_lists:
             err(
                 f"Code List Ref {code_list_ref!r} not found on the CodeLists sheet "
@@ -424,7 +492,9 @@ def load_spec(path: str | Path) -> MappingSpec:
             cells = tuple(_cell_str(v) for v in row)
             if not any(cells):
                 continue
-            rule = _parse_rule(idx, cells, code_lists, errors, direction, load_notes)
+            rule = _parse_rule(
+                idx, cells, code_lists, errors, direction, load_notes, path.parent
+            )
             if rule is None:
                 continue
             if rule.row_id in seen_ids:
