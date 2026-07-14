@@ -163,6 +163,23 @@ def _build_parser() -> argparse.ArgumentParser:
     p_reg.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
     p_reg.add_argument("--no-color", action="store_true", help="disable ANSI colors")
 
+    p_batch = sub.add_parser(
+        "batch", help="run many checks from a mapcheck.yaml manifest (CI mode)"
+    )
+    p_batch.add_argument(
+        "manifest", nargs="?", default="mapcheck.yaml",
+        help="manifest file (default: ./mapcheck.yaml)",
+    )
+    p_batch.add_argument("--junit", metavar="PATH", help="also write a JUnit-XML report")
+    p_batch.add_argument(
+        "--strict", action="store_true", help="promote any WARNING to a build failure"
+    )
+    p_batch.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
+    p_batch.add_argument(
+        "--no-history", action="store_true", help="do not record these runs in the history db"
+    )
+    p_batch.add_argument("--no-color", action="store_true", help="disable ANSI colors")
+
     sub.add_parser("transactions", help="list registered transaction definitions")
     return parser
 
@@ -441,6 +458,24 @@ def _cmd_regress(args: argparse.Namespace) -> int:
     return delta.exit_code
 
 
+def _cmd_batch(args: argparse.Namespace) -> int:
+    from mapcheck.batch import ManifestError, format_report, load_manifest, run_batch, to_junit
+
+    color = False if args.no_color else None
+    try:
+        manifest = load_manifest(args.manifest)
+    except ManifestError as exc:
+        print(f"mapcheck: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+    db = manifest.db or args.db
+    result = run_batch(manifest, db, strict=args.strict, record=not args.no_history)
+    print(format_report(result, color=color))
+    if args.junit:
+        Path(args.junit).write_text(to_junit(result), encoding="utf-8")
+        print(f"\nJUnit report written to {args.junit}")
+    return result.exit_code
+
+
 def _cmd_transactions(args: argparse.Namespace) -> int:
     from mapcheck.transactions.registry import default_registry
 
@@ -466,6 +501,7 @@ def main(argv: list[str] | None = None) -> int:
         "history": _cmd_history,
         "bless": _cmd_bless,
         "regress": _cmd_regress,
+        "batch": _cmd_batch,
         "transactions": _cmd_transactions,
     }
     return handlers[args.command](args)
