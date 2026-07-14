@@ -3674,6 +3674,130 @@ def generate_partner_override_files() -> None:
     print(f"wrote {out.relative_to(REPO_ROOT)}")
 
 
+# --------------------------------------------------------------------------
+# Rule ergonomics (3.1): tolerances, date arithmetic, external lookup files.
+# A trimmed 850 whose every source element is mapped, so the only findings
+# come from the three new grammar features under test.
+# --------------------------------------------------------------------------
+
+SPEC_ERGO_ROWS: list[tuple[str, ...]] = [
+    ("E-001", "BEG01", "", "order.purpose", "DIRECT", "", "", "", "",
+     "", "", "string", "", "Transaction set purpose."),
+    ("E-002", "BEG02", "", "order.po_type", "DIRECT", "", "", "", "",
+     "", "", "string", "", "PO type code."),
+    ("E-003", "BEG03", "", "order.po_number", "DIRECT", "", "", "", "",
+     "", "", "string", "", "Customer PO number."),
+    ("E-004", "BEG05", "", "order.po_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", "PO date."),
+    # Date arithmetic: promised ship date = requested date + 5 days.
+    ("E-005", "DTM02", "DTM[002]", "order.promised_ship_date", "DIRECT",
+     "", "", "", "", "", "", "date", "%Y-%m-%d; shift:+5d",
+     "Promised ship date is the requested date plus 5 days."),
+    # Tolerance: order total may round to the cent, pass within a penny.
+    ("E-006", "AMT02", "AMT[TT]", "order.total_amount", "DIRECT",
+     "", "", "", "", "", "", "decimal", "tol:0.01",
+     "Total amount, accepted within a one-cent rounding tolerance."),
+    ("E-007", "PO101", "PO1", "lines[].line_no", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Line number."),
+    ("E-008", "PO102", "PO1", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Quantity ordered."),
+    # External lookup file: UOM cross-reference maintained as a CSV.
+    ("E-009", "PO103", "PO1", "lines[].uom_label", "CODE_LIST", "", "", "", "",
+     "", "file:uom_xref.csv", "string", "",
+     "Unit of measure expanded via an external xref file."),
+    ("E-010", "PO104", "PO1", "lines[].unit_price", "DIRECT", "", "", "", "",
+     "", "", "decimal", "", "Unit price."),
+    ("E-011", "CTT01", "", "summary.line_count", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Number of line items (closes the line loops)."),
+]
+
+SPEC_ERGO_META = {
+    "Transaction Set": "850",
+    "Direction": "inbound",
+    "X12 Version": "004010",
+    "Spec Name": "Synthetic 850 - rule ergonomics (tolerance, date shift, file lookup)",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-07-14",
+}
+
+# Source element AMT02 carries three-decimal precision; the output rounds it
+# to the cent — a within-tolerance difference the tol:0.01 rule accepts.
+ERGO_SOURCE_SEGMENTS = [
+    "BEG*00*SA*POERG01**20260615",
+    "DTM*002*20260701",
+    "PO1*1*12*EA*8.5",
+    "PO1*2*6*CA*24",
+    "CTT*2",
+    "AMT*TT*306.005",
+]
+
+ERGO_UOM_XREF = [
+    ("source", "target", "description"),
+    ("EA", "EACH", "Each"),
+    ("CA", "CASE", "Case of units"),
+    ("DZ", "DOZEN", "Dozen (12 units)"),
+]
+
+ERGO_BASELINE_OUTPUT = {
+    "order": {
+        "purpose": "00",
+        "po_type": "SA",
+        "po_number": "POERG01",
+        "po_date": "2026-06-15",
+        "promised_ship_date": "2026-07-06",  # 2026-07-01 + 5 days
+        "total_amount": 306.01,              # rounded to the cent, within tol:0.01
+    },
+    "lines": [
+        {"line_no": 1, "qty": 12, "uom_label": "EACH", "unit_price": 8.5},
+        {"line_no": 2, "qty": 6, "uom_label": "CASE", "unit_price": 24},
+    ],
+    "summary": {"line_count": 2},
+}
+
+# One planted defect per feature: total outside tolerance, promised date off
+# by a day (proves the shift is applied), and a UOM the xref would expand.
+ERGO_DEFECTS_OUTPUT = {
+    "order": {
+        "purpose": "00",
+        "po_type": "SA",
+        "po_number": "POERG01",
+        "po_date": "2026-06-15",
+        "promised_ship_date": "2026-07-05",  # off by one day -> FAIL
+        "total_amount": 306.02,              # 0.015 off -> outside tol -> FAIL
+    },
+    "lines": [
+        {"line_no": 1, "qty": 12, "uom_label": "EA", "unit_price": 8.5},  # not expanded -> FAIL
+        {"line_no": 2, "qty": 6, "uom_label": "CASE", "unit_price": 24},
+    ],
+    "summary": {"line_count": 2},
+}
+
+
+def generate_ergonomics_files() -> None:
+    import csv as _csv
+
+    generate_spec(
+        EXAMPLES / "specs" / "850_ergonomics_spec.xlsx",
+        SPEC_ERGO_ROWS, [], SPEC_ERGO_META,
+    )
+    xref = EXAMPLES / "specs" / "uom_xref.csv"
+    with xref.open("w", newline="", encoding="utf-8") as fh:
+        _csv.writer(fh).writerows(ERGO_UOM_XREF)
+    print(f"wrote {xref.relative_to(REPO_ROOT)}")
+
+    src = EXAMPLES / "source" / "850_ergonomics.edi"
+    src.write_text(build_850(ERGO_SOURCE_SEGMENTS, "0001"))
+    print(f"wrote {src.relative_to(REPO_ROOT)}")
+
+    for name, data in (
+        ("ergonomics_baseline.json", ERGO_BASELINE_OUTPUT),
+        ("ergonomics_defects.json", ERGO_DEFECTS_OUTPUT),
+    ):
+        path = EXAMPLES / "output" / name
+        path.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+
 def main() -> None:
     generate_spec(
         EXAMPLES / "specs" / "850_reference_spec.xlsx",
@@ -3707,6 +3831,7 @@ def main() -> None:
     generate_usercsv_files()
     generate_partner_specs()
     generate_partner_override_files()
+    generate_ergonomics_files()
 
 
 if __name__ == "__main__":

@@ -251,6 +251,27 @@ round-trips through the loader, so a partner's effective spec is always
 auditable as one sheet. Deltas are spec workbooks, so `import-spec` and
 `init-spec` author them for free.
 
+### Rule ergonomics
+
+Three grammar extensions cover patterns real partner guides lean on, all
+opt-in so existing specs are untouched:
+
+| Notation | Where | Meaning |
+|---|---|---|
+| `tol:0.01` | Format column | a decimal passes when it's within this absolute tolerance of the expected value — a within-tolerance match is a PASS carrying the delta (`within tol:0.01 (Δ0.005)`) |
+| `shift:+5d` / `-30d` / `+2w` | Format column | the expected value is the source **date + N days/weeks** — for derived dates like *promised = requested + 5 days* |
+| `file:item_xref.csv` | Code List Ref | load the code list from a CSV beside the spec (`source,target[,description]`, optional header) — for thousand-row cross-references maintained outside the workbook |
+
+```
+# Format:   %Y-%m-%d; shift:+5d      Code List Ref:  file:uom_xref.csv
+```
+
+`tol:` is validated against a decimal Data Type and `shift:` against a date
+one; a missing lookup file fails at spec load, and a source value absent from
+the file is the ordinary `code_translation` finding. The bundled
+`850_ergonomics_spec.xlsx` scenario exercises all three, with a defect variant
+that trips exactly one finding per feature.
+
 ## Output formats
 
 The validation engine never reads the output file directly — every format
@@ -449,8 +470,9 @@ Both directions — inbound X12 → internal or ERP-native output (JSON,
 keyed flat, config-driven SAP IDoc: ORDERS05 / DESADV01 / INVOIC02, plus
 user-defined layouts) and outbound internal → X12 — with one spec template
 format, single- or multi-transaction interchanges, import of existing
-partner mapping documents, per-partner overrides, and regression baselines
-that gate a pipeline on what changed. Not yet: multi-document flat/IDoc
+partner mapping documents, per-partner overrides, regression baselines
+that gate a pipeline on what changed, and rule ergonomics (tolerances, date
+arithmetic, external lookup files). Not yet: multi-document flat/IDoc
 containers, cross-transaction-set pairing (e.g. 844/849). The layering above is built
 so those grow without rework — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
