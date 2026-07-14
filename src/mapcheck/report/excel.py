@@ -10,6 +10,20 @@ from openpyxl.utils import get_column_letter
 
 from mapcheck.engine.results import RunResult, Status
 
+#: Leading characters a spreadsheet treats as the start of a formula. A value
+#: from a partner's file that begins with one of these would execute when the
+#: shared report is opened (CSV/formula injection), so it is neutralized with a
+#: leading apostrophe — the text the user sees is unchanged.
+_FORMULA_LEADERS = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+
+def _safe(value: object) -> object:
+    """Neutralize a value a spreadsheet would interpret as a formula."""
+    if isinstance(value, str) and value[:1] in _FORMULA_LEADERS:
+        return "'" + value
+    return value
+
+
 _STATUS_FILLS = {
     Status.PASS: PatternFill("solid", fgColor="C6EFCE"),
     Status.FAIL: PatternFill("solid", fgColor="FFC7CE"),
@@ -63,7 +77,7 @@ def export_excel(result: RunResult, path: str | Path) -> Path:
             finding.message,
         )
         for col_idx, value in enumerate(values, start=1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell = ws.cell(row=row_idx, column=col_idx, value=_safe(value))
             cell.alignment = Alignment(vertical="top", wrap_text=(col_idx == 8))
         status_cell = ws.cell(row=row_idx, column=1)
         status_cell.fill = _STATUS_FILLS[finding.status]
@@ -77,7 +91,7 @@ def export_excel(result: RunResult, path: str | Path) -> Path:
     def put(row: int, key: str, value: object, bold: bool = False) -> None:
         key_cell = ws_sum.cell(row=row, column=1, value=key)
         key_cell.font = Font(bold=True)
-        value_cell = ws_sum.cell(row=row, column=2, value=value)
+        value_cell = ws_sum.cell(row=row, column=2, value=_safe(value))
         if bold:
             value_cell.font = Font(bold=True)
 
