@@ -5,4 +5,4 @@ specification applied to an X12 source file, and produces a field-level
 pass/fail report.
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
