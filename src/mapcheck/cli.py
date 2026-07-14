@@ -77,6 +77,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="also write a color-coded Excel report to PATH",
     )
     p_val.add_argument(
+        "--export-html",
+        metavar="PATH",
+        help="also write a self-contained HTML report to PATH",
+    )
+    p_val.add_argument(
         "--db",
         default=DEFAULT_DB,
         help=f"SQLite history database (default: ./{DEFAULT_DB})",
@@ -132,6 +137,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p_hist = sub.add_parser("history", help="list recent validation runs")
     p_hist.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
     p_hist.add_argument("--limit", type=int, default=20, help="number of runs to show")
+
+    p_report = sub.add_parser(
+        "report", help="history trends (pass-rate per spec, top root causes)"
+    )
+    p_report.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
+    p_report.add_argument("--html", metavar="PATH", help="write a self-contained HTML dashboard")
+    p_report.add_argument(
+        "--limit", type=int, default=200, help="how many recent runs to aggregate"
+    )
 
     p_bless = sub.add_parser(
         "bless", help="mark a recorded run as the golden baseline for its inputs"
@@ -269,6 +283,12 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     if args.export_xlsx:
         path = export_excel(result, args.export_xlsx)
         print(f"Excel report written to {path}")
+
+    if args.export_html:
+        from mapcheck.report.html import export_html
+
+        path = export_html(result, args.export_html)
+        print(f"HTML report written to {path}")
     return result.exit_code
 
 
@@ -289,6 +309,12 @@ def _run_interchange(
 
     if args.export_xlsx:
         print("Excel export of interchange runs is not yet supported; skipped.", file=sys.stderr)
+
+    if getattr(args, "export_html", None):
+        from mapcheck.report.html import export_html
+
+        path = export_html(result, args.export_html)
+        print(f"HTML report written to {path}")
     return result.exit_code
 
 
@@ -496,6 +522,39 @@ def _cmd_batch(args: argparse.Namespace) -> int:
     return result.exit_code
 
 
+def _cmd_report(args: argparse.Namespace) -> int:
+    from mapcheck.report.trends import compute_trends
+
+    if not Path(args.db).exists():
+        print(f"mapcheck: no history database at {args.db}", file=sys.stderr)
+        return EXIT_USAGE
+    with RunHistory(args.db) as history:
+        trends = compute_trends(history, limit=args.limit)
+    if trends.is_empty:
+        print("No runs recorded yet.")
+        return 0
+
+    if args.html:
+        from mapcheck.report.html import export_trends_html
+
+        path = export_trends_html(trends, args.html)
+        print(f"Trends report written to {path}")
+        return 0
+
+    print(
+        f"{trends.total_runs} runs across {trends.distinct_specs} spec(s) — "
+        f"overall pass rate {trends.overall_pass_rate:.0%}"
+    )
+    print(f"\n{'SPEC':<40} {'PASS%':>6} {'RUNS':>5}  LATEST")
+    for s in trends.specs:
+        print(f"{s.spec[:40]:<40} {s.pass_rate:>6.0%} {s.total:>5}  {s.latest}")
+    if trends.top_categories:
+        print("\nTop root causes:")
+        for cat, n in trends.top_categories[:8]:
+            print(f"  {cat}: {n}")
+    return 0
+
+
 def _cmd_scrub(args: argparse.Namespace) -> int:
     from mapcheck.scrub import ProfileError, load_profile
     from mapcheck.scrub.scrubber import scrub_file
@@ -543,6 +602,7 @@ def main(argv: list[str] | None = None) -> int:
         "import-spec": _cmd_import_spec,
         "merge-spec": _cmd_merge_spec,
         "history": _cmd_history,
+        "report": _cmd_report,
         "bless": _cmd_bless,
         "regress": _cmd_regress,
         "batch": _cmd_batch,

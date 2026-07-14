@@ -22,6 +22,9 @@ from mapcheck.engine import (
 )
 from mapcheck.output.adapter import OutputLoadError
 from mapcheck.report.excel import export_excel
+from mapcheck.report.history import RunHistory
+from mapcheck.report.html import render_run_html, render_trends_html
+from mapcheck.report.trends import compute_trends
 from mapcheck.spec.parser import SpecLoadError, load_spec
 from mapcheck.x12.parser import X12ParseError
 
@@ -205,12 +208,21 @@ def _render_result(result: RunResult) -> None:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
         export_excel(result, tmp.name)
         report_bytes = Path(tmp.name).read_bytes()
-    st.download_button(
-        "Download Excel report",
-        data=report_bytes,
-        file_name="mapcheck_report.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    col_xlsx, col_html = st.columns(2)
+    with col_xlsx:
+        st.download_button(
+            "Download Excel report",
+            data=report_bytes,
+            file_name="mapcheck_report.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    with col_html:
+        st.download_button(
+            "Download HTML report",
+            data=render_run_html(result),
+            file_name="mapcheck_report.html",
+            mime="text/html",
+        )
 
 
 def main() -> None:
@@ -284,6 +296,51 @@ def main() -> None:
             _render_result(stored)
     else:
         st.info("Choose the three inputs in the sidebar, then hit **Run validation**.")
+
+    _render_trends()
+
+
+def _render_trends() -> None:
+    """History-trends panel, shown when a history DB exists in the cwd."""
+    db = Path("mapcheck_history.db")
+    if not db.exists():
+        return
+    with RunHistory(db) as history:
+        trends = compute_trends(history)
+    if trends.is_empty:
+        return
+    with st.expander("📈 History trends", expanded=False):
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Runs", trends.total_runs)
+        c2.metric("Overall pass rate", f"{trends.overall_pass_rate:.0%}")
+        c3.metric("Specs tracked", trends.distinct_specs)
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Spec": s.spec,
+                        "Pass rate": f"{s.pass_rate:.0%}",
+                        "Runs": s.total,
+                        "Latest": s.latest,
+                    }
+                    for s in trends.specs
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+        if trends.top_categories:
+            st.caption("Top root causes")
+            st.bar_chart(
+                pd.DataFrame(trends.top_categories, columns=["category", "count"])
+                .set_index("category")
+            )
+        st.download_button(
+            "Download trends report (HTML)",
+            data=render_trends_html(trends),
+            file_name="mapcheck_trends.html",
+            mime="text/html",
+        )
 
 
 def _render_interchange(result: InterchangeResult) -> None:
