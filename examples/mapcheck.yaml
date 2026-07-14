@@ -1,0 +1,29 @@
+# Example EDI MapCheck batch manifest (roadmap 3.2 / design 008).
+#
+# One YAML file lists every check to run in a pipeline. Every path below is
+# resolved relative to THIS file's directory, so the manifest is portable.
+# Run it with:
+#
+#     mapcheck batch examples/mapcheck.yaml --junit report.xml
+#
+# Exit code: 0 = all passed, 1 = a check has findings (or a regression),
+# 2 = an execution error (bad path / unloadable spec) in any check.
+
+checks:
+  # A clean translation — expected to pass.
+  - name: 850-clean
+    spec: specs/850_reference_spec.xlsx
+    source: source/850_baseline.edi
+    output: output/po_baseline.json
+
+  # The same source translated with planted defects — expected to fail.
+  - name: 850-defects
+    spec: specs/850_reference_spec.xlsx
+    source: source/850_baseline.edi
+    output: output/po_baseline_defects.json
+
+  # A different spec exercising the 3.1 ergonomics rules — expected to pass.
+  - name: 850-ergonomics
+    spec: specs/850_ergonomics_spec.xlsx
+    source: source/850_ergonomics.edi
+    output: output/ergonomics_baseline.json
