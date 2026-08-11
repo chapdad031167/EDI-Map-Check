@@ -23,10 +23,13 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install ".[ui]"
 
-# App entrypoint script, bundled synthetic examples, and Streamlit config.
+# App entrypoint script, bundled synthetic examples, Streamlit config, and
+# the interface identity (stylesheet, favicon, bundled fonts + served copies).
 COPY app.py ./
 COPY examples ./examples
 COPY .streamlit ./.streamlit
+COPY assets ./assets
+COPY static ./static
 
 # Run as an unprivileged user.
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser /app
