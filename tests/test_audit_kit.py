@@ -458,3 +458,45 @@ class TestRobustness:
         baseline = _run(harness_dir, "850_01_clean")
         assert run.overall is Status.PASS
         assert self._signature(run) == self._signature(baseline)
+
+    def test_non_ascii_bytes_rejected_gracefully(self, tmp_path: Path):
+        """A BOM (or any non-ASCII byte) is not X12: clean reject, no crash."""
+        bom_file = tmp_path / "850_01_bom.edi"
+        bom_file.write_bytes(
+            b"\xef\xbb\xbf" + (KIT / "850_01_clean.edi").read_bytes()
+        )
+        with pytest.raises(X12ParseError) as excinfo:
+            parse_transaction(bom_file)
+        assert str(excinfo.value).endswith(
+            "file is not valid X12 (non-ASCII bytes at position 0)"
+        )
+
+    def test_version_mismatch_warns_but_validates(
+        self, harness_dir: Path, tmp_path: Path
+    ):
+        """A 5010-declared file is validated against the 4010 definition,
+        with the mismatch called out as a warning."""
+        text = (KIT / "850_01_clean.edi").read_text(encoding="utf-8")
+        variant = tmp_path / "850_01_5010.edi"
+        variant.write_text(
+            text.replace("*U*00401*", "*U*00501*").replace(
+                "*X*004010~", "*X*005010~"
+            ),
+            encoding="utf-8",
+        )
+        run = validate_files(
+            str(harness_dir / "audit_spec.xlsx"),
+            str(variant),
+            str(harness_dir / "850_01_clean.json"),
+        )
+        assert run.overall is Status.WARNING
+        assert run.exit_code == 0  # still validates; the mismatch is advisory
+        warnings = [f for f in run.findings if f.status is Status.WARNING]
+        assert len(warnings) == 1
+        assert warnings[0].message == (
+            "interchange control: file declares version 005010 (GS08) but the "
+            "850 definition is 004010 — validated against the 004010 structure"
+        )
+        # Every rule still evaluated exactly as on the 4010 file.
+        assert run.counts[Status.PASS] == 40
+        assert run.counts[Status.FAIL] == 0
