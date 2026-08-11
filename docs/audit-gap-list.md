@@ -25,8 +25,10 @@ output> --no-history --no-color` with:
   (the repo's existing "naive translator" convention), empty sources
   omitted. Any finding therefore reflects the tool's view of the *source*.
 
-Harness files (spec generator + four outputs) are session-local for this
-phase; Phase 2 commits them as the permanent regression harness.
+Harness files (spec generator + four outputs) were session-local for this
+phase; Phase 2 committed the harness as the permanent regression suite in
+`tests/test_audit_kit.py` (spec rows, faithful outputs, and exact expected
+finding sets, inline and reviewable).
 
 ## Per-file findings record
 

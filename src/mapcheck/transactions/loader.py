@@ -21,6 +21,7 @@ from mapcheck.transactions.schema import (
     Operand,
     OutputPairing,
     ReconRule,
+    RequiredElementDef,
     TransactionDefinition,
 )
 
@@ -284,6 +285,31 @@ def _parse_recon(node: Any, index: int, ctx: _Ctx) -> ReconRule | None:
     )
 
 
+def _parse_required(node: Any, index: int, ctx: _Ctx) -> RequiredElementDef | None:
+    path = f"required_elements[{index}]"
+    if not isinstance(node, dict):
+        ctx.err(path, "expected a mapping with segment and element")
+        return None
+    segment = ctx.str_at(node, path, "segment")
+    element = ctx.int_at(node, path, "element")
+    if not segment or element is None:
+        return None
+    if element < 1:
+        ctx.err(f"{path}.element", "expected a 1-based element position")
+        return None
+    when_present = ctx.int_at(node, path, "when_present", default=None)
+    if when_present is not None and when_present < 1:
+        ctx.err(f"{path}.when_present", "expected a 1-based element position")
+        when_present = None
+    return RequiredElementDef(
+        segment=segment.upper(),
+        element=element,
+        name=ctx.str_at(node, path, "name", required=False) or "",
+        when_present=when_present,
+        when_name=ctx.str_at(node, path, "when_name", required=False) or "",
+    )
+
+
 def parse_definition(data: Any, source: str) -> TransactionDefinition:
     """Build a validated :class:`TransactionDefinition` from parsed YAML data.
 
@@ -355,6 +381,16 @@ def parse_definition(data: Any, source: str) -> TransactionDefinition:
             ctx.err("reconciliation", f"duplicate rule id {rule.id!r}")
         seen_ids.add(rule.id)
 
+    required: list[RequiredElementDef] = []
+    required_node = data.get("required_elements", []) or []
+    if not isinstance(required_node, list):
+        ctx.err("required_elements", "expected a list")
+        required_node = []
+    for index, req_node in enumerate(required_node):
+        parsed_req = _parse_required(req_node, index, ctx)
+        if parsed_req:
+            required.append(parsed_req)
+
     if ctx.errors or not (set_code and name and group):
         if not ctx.errors:
             ctx.err("transaction", "set, name and functional_group are required")
@@ -368,6 +404,7 @@ def parse_definition(data: Any, source: str) -> TransactionDefinition:
         areas=tuple(areas),
         output_pairing=pairing,
         reconciliation=tuple(recon),
+        required_elements=tuple(required),
         source=source,
     )
 

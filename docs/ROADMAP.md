@@ -198,3 +198,40 @@ original multi-transaction-set expansion in scope, and each produces a
 design doc that deserves real review. Phase 2 items are a few days' scale
 each. Phase 3 items are each roughly a single-PR effort. The 3-3-4 split
 front-loads all schema risk, which is exactly where you want it.
+
+---
+
+## Post-1.0 — from the audit (docs/audit-gap-list.md)
+
+The five-file audit kit measured what the validator actually catches; these
+items came out of that gate.
+
+### Next major: partner-rule overlay
+
+The audit's headline scope finding (file 4): MapCheck cannot enforce a
+companion guide. "DTM*002 is required for this partner", "every PO1 must
+carry a UP qualifier pair" are *presence* obligations, and required-ness
+cannot currently be declared per partner — `merge-spec` deltas override
+mappings, not obligations. Design sketch: per-partner required
+segments/elements/qualifier-pairs declared in a delta-like overlay and
+merged the way spec deltas already are. This is the item that turns "valid
+X12" into "valid for this partner."
+
+### Backlog
+
+- **N402 state-code list.** Usage varies across the industry (US states,
+  Canadian provinces, country codes, arbitrary partner codes); an invalid
+  value doesn't break translation and the fix belongs upstream with the
+  trading partner. If shipped: a `STATE` code list covering US states plus
+  Canadian provinces, surfacing as a **warning**, never a failure. Spec
+  authors can do this today with a `CODE_LIST` rule.
+- **UPC / GTIN check-digit validation** (length is already enforced).
+- **Source-only audit verb** — run the envelope, truncation, and
+  required-element layers against a lone `.edi` with no spec, so MapCheck
+  is useful before a map exists.
+- **Segment-level required-ness** — the required-elements layer checks
+  elements within present segments; "this segment must appear at least
+  once" (e.g. a missing BEG entirely) is the natural next step of the same
+  mechanism.
+- **Extend required-element tables** beyond the 850's BEG03 and
+  PO102-when-PO103 — pure definition data now that the mechanism exists.

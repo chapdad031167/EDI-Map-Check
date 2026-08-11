@@ -44,6 +44,7 @@ class TestStructure:
 
     def test_clean_file_has_no_control_notes(self, baseline: Transaction850):
         assert baseline.control_notes == []
+        assert baseline.control_errors == []
 
     def test_element_access(self, baseline: Transaction850):
         beg = baseline.heading[0]
@@ -92,8 +93,12 @@ class TestScopes:
 
 
 class TestDefectiveFile:
-    def test_control_notes_catch_bad_se_count(self, defects: Transaction850):
-        assert any("SE count" in note for note in defects.control_notes)
+    def test_control_errors_catch_bad_se_count(self, defects: Transaction850):
+        issues = defects.control_errors
+        assert len(issues) == 1
+        assert "SE01 segment count mismatch" in issues[0].message
+        assert "claims 24" in issues[0].message and "contains 22" in issues[0].message
+        assert issues[0].expected == "22" and issues[0].actual == "24"
 
     def test_structure_still_parses(self, defects: Transaction850):
         assert len(defects.po1_loops) == 3

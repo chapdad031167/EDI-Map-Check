@@ -1,9 +1,10 @@
 """Generic, definition-driven X12 transaction parser.
 
 pyx12's :class:`~pyx12.x12file.X12Reader` does the low-level work —
-delimiter detection, segment tokenization, and interchange control checks
-(SE counts, control number agreement). This module builds the transaction
-structure on top, driven entirely by a
+delimiter detection and segment tokenization. Envelope auditing (SE/GE/IEA
+counts, control-number agreement, truncation) is MapCheck's own, in
+:mod:`mapcheck.x12.envelope`, with strict severity and precise messages.
+This module builds the transaction structure on top, driven entirely by a
 :class:`~mapcheck.transactions.schema.TransactionDefinition`: which
 segments open which loops, how loops nest, and where the areas begin. The
 transaction set is auto-detected from ST01 against the registry unless a
@@ -35,6 +36,7 @@ from mapcheck.transactions.registry import (
     default_registry,
 )
 from mapcheck.transactions.schema import AreaDef, LoopDef, TransactionDefinition
+from mapcheck.x12.envelope import check_envelope, scan_raw_tail
 from mapcheck.x12.model import (
     ENVELOPE_SEGMENTS,
     Interchange,
@@ -48,15 +50,20 @@ class X12ParseError(Exception):
     """Raised when the file cannot be read as an X12 interchange."""
 
 
-def _raw_segments(path: Path) -> tuple[list[Segment], list[str]]:
-    """Tokenize the file with pyx12; return segments and control notes."""
+def _raw_segments(path: Path) -> list[Segment]:
+    """Tokenize the file with pyx12 into :class:`Segment` values.
+
+    Envelope auditing is NOT pyx12's job here — MapCheck's own
+    reconciliation (:mod:`mapcheck.x12.envelope`) checks SE/GE/IEA counts,
+    control-number agreement, and truncation, with precise messages and
+    strict severity.
+    """
     try:
         reader = pyx12.x12file.X12Reader(str(path))
     except pyx12.errors.X12Error as exc:
         raise X12ParseError(f"{path}: {exc}") from exc
 
     segments: list[Segment] = []
-    notes: list[str] = []
     ele_term = "*"
     seg_term = "~"
     try:
@@ -76,12 +83,7 @@ def _raw_segments(path: Path) -> tuple[list[Segment], list[str]]:
             )
     except pyx12.errors.X12Error as exc:
         raise X12ParseError(f"{path}: {exc}") from exc
-
-    for err in reader.pop_errors():
-        # pyx12 error tuples: (category, code, message, ...)
-        message = err[2] if len(err) > 2 else str(err)
-        notes.append(str(message))
-    return segments, notes
+    return segments
 
 
 def _capture_envelope(segments: list[Segment]) -> dict[str, str]:
@@ -302,7 +304,10 @@ def parse_interchange(
     if not path.exists():
         raise X12ParseError(f"source file not found: {path}")
 
-    segments, control_notes = _raw_segments(path)
+    segments = _raw_segments(path)
+    envelope_report = check_envelope(segments, scan_raw_tail(path))
+    if envelope_report.fatal:
+        raise X12ParseError(f"{path}: {envelope_report.fatal}")
     shared_envelope = _capture_envelope(segments)
 
     documents: list[TransactionDocument] = []
@@ -330,12 +335,15 @@ def parse_interchange(
             body.append(seg)
 
     if st_seg is not None:
+        # Defensive: check_envelope reports open transactions as fatal first.
         raise X12ParseError(f"{path}: transaction is not terminated by an SE segment")
     if not documents:
         raise X12ParseError(f"{path}: no ST segment found — not a valid X12 transaction")
 
     return Interchange(
-        documents=documents, envelope=shared_envelope, control_notes=control_notes
+        documents=documents,
+        envelope=shared_envelope,
+        control_errors=list(envelope_report.issues),
     )
 
 
@@ -354,6 +362,7 @@ def parse_transaction(
     interchange = parse_interchange(path, definition=definition, registry=registry)
     doc = interchange.documents[0]
     doc.control_notes = interchange.control_notes + doc.control_notes
+    doc.control_errors = interchange.control_errors + doc.control_errors
     if len(interchange.documents) > 1:
         extra = interchange.documents[1]
         doc.control_notes.append(

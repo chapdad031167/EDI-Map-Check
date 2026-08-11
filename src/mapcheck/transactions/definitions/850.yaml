@@ -51,3 +51,18 @@ reconciliation:
     check: equals
     when: { exists: CTT01 }
     severity: warning
+
+# Base-standard mandatory elements. Spec-independent: an 850 without these
+# is defective no matter what any mapping spec says, so an empty value is a
+# FAILURE, never NOT TESTED.
+required_elements:
+  - segment: BEG
+    element: 3
+    name: PO number
+  # X12 850 syntax note C0302: if a unit of measure is sent, the quantity
+  # is required with it.
+  - segment: PO1
+    element: 2
+    name: quantity ordered
+    when_present: 3
+    when_name: unit of measure
