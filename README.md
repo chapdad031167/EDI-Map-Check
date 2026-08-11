@@ -57,7 +57,11 @@ file, independent of the spec:
   SE/GE/IEA trailers, an unterminated final segment — is reported as
   `interchange truncated: ...` naming the last complete segment, never a
   stack trace. Delimiters are read from the ISA's fixed byte positions, not
-  assumed.
+  assumed. Input that is not X12 at all (non-ASCII bytes, a UTF-8 BOM) is
+  rejected with a clean message, and a file that declares a different
+  version than the definition (a 5010 file against the 4010 definition) is
+  still validated, with the mismatch called out as a warning naming the
+  structure it was validated against.
 - **Required elements.** Transaction definitions declare base-standard
   mandatory elements (for the 850: BEG03, and PO102 whenever PO103 is
   present, per X12 condition C0302). An empty required element is a

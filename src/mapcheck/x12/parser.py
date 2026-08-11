@@ -62,6 +62,10 @@ def _raw_segments(path: Path) -> list[Segment]:
         reader = pyx12.x12file.X12Reader(str(path))
     except pyx12.errors.X12Error as exc:
         raise X12ParseError(f"{path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise X12ParseError(
+            f"{path}: file is not valid X12 (non-ASCII bytes at position {exc.start})"
+        ) from exc
 
     segments: list[Segment] = []
     ele_term = "*"
@@ -83,6 +87,10 @@ def _raw_segments(path: Path) -> list[Segment]:
             )
     except pyx12.errors.X12Error as exc:
         raise X12ParseError(f"{path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise X12ParseError(
+            f"{path}: file is not valid X12 (non-ASCII bytes at position {exc.start})"
+        ) from exc
     return segments
 
 
@@ -277,6 +285,19 @@ def _build_document(
         doc.control_notes.append(
             f"functional group {group!r} does not match the "
             f"{doc_definition.set_code} definition ({doc_definition.functional_group!r})"
+        )
+    # Version drift is common in the wild (e.g. 5010 traffic against a 4010
+    # definition): call it out, but keep validating against the definition.
+    declared = envelope.get("version")
+    if (
+        declared
+        and doc_definition.version
+        and not declared.startswith(doc_definition.version)
+    ):
+        doc.control_notes.append(
+            f"file declares version {declared} (GS08) but the "
+            f"{doc_definition.set_code} definition is {doc_definition.version} — "
+            f"validated against the {doc_definition.version} structure"
         )
 
     walker = _StructureWalker(doc)
