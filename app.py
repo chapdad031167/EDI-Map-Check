@@ -1,11 +1,16 @@
 """EDI MapCheck — Streamlit UI.
 
+Rendering only: the engine decides, this file draws (Design 013). Identity
+lives in .streamlit/config.toml (tokens, fonts) plus assets/styles.css
+(chrome removal, wordmark, verdict strip, findings table), injected once.
+
 Run with:
     streamlit run app.py
 """
 
 from __future__ import annotations
 
+import html
 import tempfile
 from pathlib import Path
 
@@ -28,7 +33,21 @@ from mapcheck.report.trends import compute_trends
 from mapcheck.spec.parser import SpecLoadError, load_spec
 from mapcheck.x12.parser import X12ParseError
 
+ASSETS = Path(__file__).parent / "assets"
 EXAMPLES = Path(__file__).parent / "examples"
+
+#: Design 013 tokens, mirrored from .streamlit/config.toml and
+#: assets/styles.css. The test suite computes WCAG contrast from these.
+TOKENS = {
+    "paper": "#F6F8F7",
+    "panel": "#EDF1EF",
+    "ink": "#1A2421",
+    "petrol": "#0F5468",
+    "pass": "#1E7A46",
+    "fail": "#B42D22",
+    "warn": "#8A6100",
+    "slate": "#5C6B66",
+}
 
 #: scenario -> (spec, source, output)
 EXAMPLE_SCENARIOS = {
@@ -126,12 +145,75 @@ EXAMPLE_SCENARIOS = {
         "desadv01_reference_spec.xlsx", "856_sap.edi", "desadv01_defects.xml"),
 }
 
-_STATUS_COLORS = {
-    "PASS": "background-color: #c6efce; color: #006100",
-    "FAIL": "background-color: #ffc7ce; color: #9c0006",
-    "WARNING": "background-color: #ffeb9c; color: #9c6500",
-    "NOT TESTED": "background-color: #d9d9d9; color: #595959",
+#: Findings-table columns rendered in mono (X12 refs, ids, wire values).
+_MONO_COLUMNS = {"Row ID", "Source", "Target", "Expected", "Actual", "Category"}
+
+_STATUS_CLASS = {
+    "PASS": "status-pass",
+    "FAIL": "status-fail",
+    "WARNING": "status-warning",
+    "NOT TESTED": "status-not-tested",
 }
+
+
+def load_css() -> None:
+    """Inject the identity stylesheet once at startup."""
+    css = (ASSETS / "styles.css").read_text(encoding="utf-8")
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+
+
+def render_verdict_strip(counts: dict[Status, int], result: Status) -> str:
+    """The verdict strip: a full-width test-equipment readout.
+
+    Returns the HTML; callers pass it to ``st.markdown(...,
+    unsafe_allow_html=True)``. Left edge carries the result color; the
+    counts and result render in Plex Mono.
+    """
+    tone = {
+        Status.PASS: "verdict-pass",
+        Status.FAIL: "verdict-fail",
+        Status.WARNING: "verdict-warning",
+    }.get(result, "")
+    counts_text = (
+        f"{counts[Status.PASS]} PASS / {counts[Status.FAIL]} FAIL / "
+        f"{counts[Status.WARNING]} WARNING / "
+        f"{counts[Status.NOT_TESTED]} NOT TESTED"
+    )
+    return (
+        f'<div class="verdict-strip {tone}">{counts_text}'
+        f'<span class="verdict-result">RESULT: {result.value}</span></div>'
+    )
+
+
+def findings_table_html(frame: pd.DataFrame) -> str:
+    """Render a findings DataFrame as a semantic HTML table.
+
+    Status cells show a dot plus the word (never color alone); X12
+    reference and value columns render in mono; every cell is escaped.
+    """
+    columns = list(frame.columns)
+    head = "".join(f"<th>{html.escape(col)}</th>" for col in columns)
+    rows: list[str] = []
+    for record in frame.itertuples(index=False):
+        cells: list[str] = []
+        for col, value in zip(columns, record):
+            text = html.escape(str(value))
+            if col == "Status":
+                cls = _STATUS_CLASS.get(str(value), "status-not-tested")
+                cells.append(
+                    f'<td class="status-cell {cls}">'
+                    f'<span class="status-dot"></span>{text}</td>'
+                )
+            elif col in _MONO_COLUMNS:
+                cells.append(f'<td class="mono">{text}</td>')
+            else:
+                cells.append(f"<td>{text}</td>")
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+    return (
+        '<div class="findings-wrap"><table class="findings">'
+        f"<thead><tr>{head}</tr></thead><tbody>{''.join(rows)}</tbody>"
+        "</table></div>"
+    )
 
 
 def _save_upload(upload, suffix: str) -> str:
@@ -158,34 +240,31 @@ def _findings_frame(result: RunResult) -> pd.DataFrame:
     )
 
 
-def _render_result(result: RunResult) -> None:
-    counts = result.counts
-    overall = result.overall.value
+def _render_findings(frame: pd.DataFrame) -> None:
+    if frame.empty:
+        st.caption(
+            "No findings match the selected statuses. Add PASS to the filter "
+            "to see every evaluated row."
+        )
+        return
+    st.markdown(findings_table_html(frame), unsafe_allow_html=True)
 
+
+def _render_result(result: RunResult) -> None:
     st.subheader("Result")
     if result.transaction_set:
         st.caption(
-            f"Detected transaction: **{result.transaction_set}"
-            + (f" — {result.transaction_name}**" if result.transaction_name else "**")
+            f"Detected transaction: `{result.transaction_set}`"
+            + (f" — {result.transaction_name}" if result.transaction_name else "")
         )
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Overall", overall)
-    m2.metric("PASS", counts[Status.PASS])
-    m3.metric("FAIL", counts[Status.FAIL])
-    m4.metric("WARNING", counts[Status.WARNING])
-    m5.metric("NOT TESTED", counts[Status.NOT_TESTED])
-
-    if result.overall is Status.PASS:
-        st.success("Output matches the mapping spec.")
-    elif result.overall is Status.FAIL:
-        st.error("Output does not match the mapping spec — see findings below.")
-    else:
-        st.warning("Output matches, with warnings.")
+    st.markdown(
+        render_verdict_strip(result.counts, result.overall), unsafe_allow_html=True
+    )
 
     if categories := result.category_counts:
         st.caption(
             "Root causes: "
-            + ", ".join(f"{cat.value}: {n}" for cat, n in categories.items())
+            + ", ".join(f"`{cat.value}`: {n}" for cat, n in categories.items())
         )
 
     st.subheader("Findings")
@@ -195,15 +274,7 @@ def _render_result(result: RunResult) -> None:
         [s.value for s in Status],
         default=["FAIL", "WARNING", "NOT TESTED"],
     )
-    filtered = frame[frame["Status"].isin(selected)]
-    st.dataframe(
-        filtered.style.map(
-            lambda v: _STATUS_COLORS.get(v, ""), subset=["Status"]
-        ),
-        use_container_width=True,
-        hide_index=True,
-        height=420,
-    )
+    _render_findings(frame[frame["Status"].isin(selected)])
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
         export_excel(result, tmp.name)
@@ -226,14 +297,20 @@ def _render_result(result: RunResult) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="EDI MapCheck", page_icon="✅", layout="wide")
-    st.title("EDI MapCheck")
+    st.set_page_config(
+        page_title="EDI MapCheck",
+        page_icon=str(ASSETS / "favicon.png"),
+        layout="wide",
+    )
+    load_css()
+    st.markdown('<div class="wordmark">EDI MapCheck</div>', unsafe_allow_html=True)
     st.markdown(
-        "Vendor-neutral validation for EDI mapping work: upload a **mapping spec**, "
-        "the **translation's source file**, and its **translated output** — get a "
-        "field-level pass/fail report. Inbound specs validate X12 → internal "
-        "(JSON, keyed flat, SAP IDoc); outbound specs validate internal → X12. "
-        "The transaction set is auto-detected from the X12 file's ST01."
+        "Vendor-neutral validation for EDI mapping work: a **mapping spec**, "
+        "the **translation's source file**, and its **translated output** "
+        "produce a field-level pass/fail report. Inbound specs validate "
+        "X12 to internal (JSON, keyed flat, SAP IDoc); outbound specs "
+        "validate internal to X12. The transaction set is auto-detected "
+        "from the X12 file's `ST01`."
     )
 
     with st.sidebar:
@@ -247,7 +324,10 @@ def main() -> None:
             spec_path = str(EXAMPLES / "specs" / spec_name)
             source_path = str(EXAMPLES / "source" / source_name)
             output_path = str(EXAMPLES / "output" / output_name)
-            st.caption(f"Spec: {spec_name}\n\nSource: {source_name}\n\nOutput: {output_name}")
+            st.caption(
+                f"Spec: `{spec_name}`\n\nSource: `{source_name}`\n\n"
+                f"Output: `{output_name}`"
+            )
         else:
             spec_upload = st.file_uploader("Mapping spec (.xlsx)", type=["xlsx"])
             source_upload = st.file_uploader(
@@ -284,7 +364,7 @@ def main() -> None:
             else:
                 result = validate_files(spec_path, source_path, output_path)
         except (SpecLoadError, X12ParseError, OutputLoadError) as exc:
-            st.error(f"Could not run validation:\n\n```\n{exc}\n```")
+            st.error(f"Validation did not run:\n\n```\n{exc}\n```")
             return
         st.session_state["result"] = result
 
@@ -295,7 +375,7 @@ def main() -> None:
         else:
             _render_result(stored)
     else:
-        st.info("Choose the three inputs in the sidebar, then hit **Run validation**.")
+        st.info("Select a scenario or upload a spec, source, and output to begin.")
 
     _render_trends()
 
@@ -309,7 +389,7 @@ def _render_trends() -> None:
         trends = compute_trends(history)
     if trends.is_empty:
         return
-    with st.expander("📈 History trends", expanded=False):
+    with st.expander("History trends", expanded=False):
         c1, c2, c3 = st.columns(3)
         c1.metric("Runs", trends.total_runs)
         c2.metric("Overall pass rate", f"{trends.overall_pass_rate:.0%}")
@@ -344,27 +424,16 @@ def _render_trends() -> None:
 
 
 def _render_interchange(result: InterchangeResult) -> None:
-    counts = result.counts
     st.subheader("Interchange result")
-    st.caption(f"**{len(result.documents)}** documents paired")
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Overall", result.overall.value)
-    m2.metric("PASS", counts[Status.PASS])
-    m3.metric("FAIL", counts[Status.FAIL])
-    m4.metric("WARNING", counts[Status.WARNING])
-    m5.metric("NOT TESTED", counts[Status.NOT_TESTED])
-
-    if result.overall is Status.PASS:
-        st.success("Every document matches the mapping spec and all pair up.")
-    elif result.overall is Status.FAIL:
-        st.error("The interchange has failures — see the document and file-level findings.")
-    else:
-        st.warning("The interchange matches, with warnings.")
+    st.caption(f"{len(result.documents)} documents paired")
+    st.markdown(
+        render_verdict_strip(result.counts, result.overall), unsafe_allow_html=True
+    )
 
     if categories := result.category_counts:
         st.caption(
             "Root causes: "
-            + ", ".join(f"{cat.value}: {n}" for cat, n in categories.items())
+            + ", ".join(f"`{cat.value}`: {n}" for cat, n in categories.items())
         )
 
     if result.file_findings:
@@ -372,27 +441,13 @@ def _render_interchange(result: InterchangeResult) -> None:
         file_result = RunResult(
             spec_path="", source_path="", output_path="", findings=result.file_findings
         )
-        st.dataframe(
-            _findings_frame(file_result).style.map(
-                lambda v: _STATUS_COLORS.get(v, ""), subset=["Status"]
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
+        _render_findings(_findings_frame(file_result))
 
     st.subheader("Documents")
     for document in result.documents:
         overall = document.result.overall.value
-        icon = {"PASS": "✅", "FAIL": "❌", "WARNING": "⚠️"}.get(overall, "•")
-        with st.expander(f"{icon} {document.key} — {document.source_ref} — {overall}"):
-            frame = _findings_frame(document.result)
-            st.dataframe(
-                frame.style.map(
-                    lambda v: _STATUS_COLORS.get(v, ""), subset=["Status"]
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
+        with st.expander(f"{document.key} — {document.source_ref} — {overall}"):
+            _render_findings(_findings_frame(document.result))
 
 
 if __name__ == "__main__":
