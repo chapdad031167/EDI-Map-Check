@@ -24,6 +24,19 @@ ENVELOPE_SEGMENTS = frozenset({"ISA", "GS", "ST", "SE", "GE", "IEA", "TA1"})
 
 
 @dataclass(frozen=True)
+class ControlIssue:
+    """One strict envelope-control failure (native reconciliation).
+
+    ``expected`` is what the envelope should say, ``actual`` what it does
+    say — both optional display strings for the report's columns.
+    """
+
+    message: str
+    expected: str | None = None
+    actual: str | None = None
+
+
+@dataclass(frozen=True)
 class Segment:
     """One X12 segment: id plus positional elements (element 1 first)."""
 
@@ -108,9 +121,13 @@ class TransactionDocument:
     #: Loop occurrences per loop id, in document order.
     loop_occurrences: dict[str, list[Loop]] = field(default_factory=dict)
     envelope: dict[str, str] = field(default_factory=dict)
-    #: Structural/control problems reported by pyx12 (SE counts, control
-    #: number mismatches, ...). Surfaced as warnings by the engine.
+    #: Advisory control observations (functional-group mismatch, additional
+    #: transactions present, ...). Surfaced as warnings by the engine.
     control_notes: list[str] = field(default_factory=list)
+    #: Strict envelope-control failures from MapCheck's native envelope
+    #: reconciliation (SE/GE/IEA counts, control-number agreement,
+    #: truncation). Surfaced as FAILURES by the engine.
+    control_errors: list[ControlIssue] = field(default_factory=list)
     #: Deviations from the transaction definition (unknown segments,
     #: repeat limits). Surfaced as source-data warnings by the engine.
     definition_notes: list[str] = field(default_factory=list)
@@ -267,15 +284,18 @@ class Interchange:
     """A parsed X12 interchange: every ST/SE transaction plus shared control.
 
     ``documents`` holds one :class:`TransactionDocument` per ST/SE in file
-    order. ``control_notes`` are pyx12's interchange-level observations (SE
-    counts, control-number agreement) — they belong to the file, not any
-    one transaction. A single-transaction file is just an interchange whose
-    ``documents`` has length one.
+    order. ``control_errors`` are the interchange-level envelope failures
+    (SE/GE/IEA counts, control-number agreement, truncation) from MapCheck's
+    native reconciliation — they belong to the file, not any one
+    transaction; ``control_notes`` are advisory observations. A
+    single-transaction file is just an interchange whose ``documents`` has
+    length one.
     """
 
     documents: list[TransactionDocument] = field(default_factory=list)
     envelope: dict[str, str] = field(default_factory=dict)
     control_notes: list[str] = field(default_factory=list)
+    control_errors: list[ControlIssue] = field(default_factory=list)
 
 
 #: Backward-compatible alias: the 850 was the first (and once only) document.

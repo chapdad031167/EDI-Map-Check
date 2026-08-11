@@ -206,11 +206,12 @@ class TestBadSourceRun:
         assert "ITD" in findings[0].source_ref
         assert "ITD01='01'" in findings[0].message
 
-    def test_control_note_surfaces(self, bad_source_run):
+    def test_control_failure_surfaces(self, bad_source_run):
         findings = [f for f in bad_source_run.findings if f.category is Category.CONTROL]
         assert len(findings) == 1
-        assert findings[0].status is Status.WARNING
-        assert "SE count" in findings[0].message
+        assert findings[0].status is Status.FAIL
+        assert "SE01 segment count mismatch" in findings[0].message
+        assert findings[0].expected == "22" and findings[0].actual == "24"
 
 
 class TestMinimalRun:

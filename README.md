@@ -42,9 +42,33 @@ For every row of the mapping spec, the engine evaluates:
 Statuses are **PASS / FAIL / WARNING / NOT TESTED**, each failure tagged with a
 root cause (`value_mismatch`, `condition_logic`, `code_translation`,
 `constant_default`, `format`, `count_mismatch`, `source_data`,
-`unmapped_source`, `unmapped_target`, `control`). Interchange-level control
-problems (SE counts, control numbers) surface as warnings via
-[pyx12](https://github.com/azoner/pyx12).
+`unmapped_source`, `unmapped_target`, `control`).
+
+On top of the per-rule checks, three document-level layers run on every X12
+file, independent of the spec:
+
+- **Envelope reconciliation — strict.** MapCheck natively audits SE01
+  segment counts, SE02 ↔ ST02, GE01 transaction counts, GE02 ↔ GS06, IEA01
+  group counts, and IEA02 ↔ ISA13. A mismatch is a **failure** (exit code
+  1), not a warning, and the message states both sides: `SE01 segment count
+  mismatch: SE claims 9 segments but transaction 0001 contains 11 (ST
+  through SE)`.
+- **Truncation detection.** A file that dies mid-transfer — missing
+  SE/GE/IEA trailers, an unterminated final segment — is reported as
+  `interchange truncated: ...` naming the last complete segment, never a
+  stack trace. Delimiters are read from the ISA's fixed byte positions, not
+  assumed.
+- **Required elements.** Transaction definitions declare base-standard
+  mandatory elements (for the 850: BEG03, and PO102 whenever PO103 is
+  present, per X12 condition C0302). An empty required element is a
+  failure no matter what the mapping spec says — a PO without a PO number
+  is defective, full stop.
+
+These checks are exercised end to end by the five-file audit kit under
+`tests/fixtures/audit_kit/` (five 850s with documented seeded defects; the
+test suite asserts the exact expected finding set for each, including
+"no findings" for the clean file). The measured audit record lives in
+[docs/audit-gap-list.md](docs/audit-gap-list.md).
 
 ## Quickstart
 
@@ -602,7 +626,7 @@ generator and asserted in the test suite).
 src/mapcheck/
 ├── spec/          Excel template, rule model, condition grammar, spec loader
 ├── transactions/  declarative transaction definitions (YAML) + registry
-├── x12/           pyx12-backed generic parser, driven by the definitions
+├── x12/           pyx12-backed generic parser + native envelope reconciliation
 ├── output/        JSON, keyed-flat, and declarative SAP IDoc adapters
 │                  (definitions/*.yaml: ORDERS05, DESADV01, INVOIC02)
 ├── engine/        rule evaluation, format checks, reconciliation, findings
@@ -611,7 +635,8 @@ src/mapcheck/
 app.py             Streamlit UI
 examples/          synthetic specs + source files + outputs (clean and defective)
 scripts/           example-set generator
-tests/             pytest suite (every rule category, every planted defect)
+tests/             pytest suite (every rule category, every planted defect,
+                   the five-file audit kit under fixtures/audit_kit/)
 ```
 
 ## Scope
@@ -628,6 +653,39 @@ self-contained HTML reports with history trends. Not yet: multi-document
 flat/IDoc containers, cross-transaction-set pairing (e.g. 844/849). The
 layering above is built
 so those grow without rework — see [docs/ROADMAP.md](docs/ROADMAP.md).
+
+### The partner-rule gap (roadmap)
+
+MapCheck validates against the **base X12 standard** plus whatever the
+mapping spec expresses. It cannot yet enforce a partner's companion guide:
+"Acme requires `DTM*002`", "every PO1 must carry a UPC" are rules about
+*presence*, and today required-ness cannot be declared per partner — not
+even in a `merge-spec` delta, which overrides mappings, not obligations.
+Audit file 4 (`tests/fixtures/audit_kit/850_04_partner_rules.edi`) exists
+precisely to document this: it is 100% valid base X12 that violates a
+fictional companion guide, and MapCheck passes it. The gap between "valid
+X12" and "valid for this partner" is the reason EDI analysts exist, and a
+partner-rule overlay layer (per-partner required segments/elements/
+qualifier pairs, merged like spec deltas) is the next major roadmap item.
+
+### Backlog
+
+Deliberately not implemented, with reasons — see
+[docs/audit-gap-list.md](docs/audit-gap-list.md) for the measurements:
+
+- **N402 state-code validation.** N402 usage varies across the industry —
+  US states, Canadian provinces, country codes, even arbitrary partner
+  codes. An invalid value does not break translation, and the fix belongs
+  upstream with the trading partner. A future `STATE` code list (US states
+  *plus* Canadian provinces) could flag it as a **warning**; until then,
+  spec authors who want it today can add a `CODE_LIST` rule — the same
+  mechanism that already catches invalid units of measure.
+- **UPC check-digit validation.** Length is checked; the GS1 check digit
+  is not.
+- **Source-only audit mode.** Every run today validates a (spec, source,
+  output) triple; a verb that runs the envelope, truncation, and
+  required-element layers against a lone `.edi` — no spec needed — would
+  make MapCheck useful before a map exists.
 
 ## Development
 
