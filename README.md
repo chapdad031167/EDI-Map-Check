@@ -730,6 +730,9 @@ pytest                              # full suite
 python scripts/generate_examples.py # regenerate the synthetic example set
 ```
 
+MapCheck is built with AI-assisted development tooling; every change is
+reviewed and gated by the full test suite.
+
 ## License
 
 MIT
