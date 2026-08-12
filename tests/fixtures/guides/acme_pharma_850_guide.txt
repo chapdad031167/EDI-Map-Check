@@ -1,0 +1,163 @@
+Acme Pharma - EDI Vendor Guidelines
+Purchase Order - 850 (004010)
+All content fictional. Synthetic fixture in the templated guide layout.
+
+BEG Beginning Segment for Purchase Order Pos: 020 Max: 1
+Heading - Mandatory
+Loop: N/A Elements: 6
+User Option (Usage): Must use
+Purpose: To indicate the beginning of the Purchase Order Transaction Set
+
+Element Summary:
+BEG01 353 Transaction Set Purpose Code M ID 2/2 Must use
+Description: Code identifying purpose of transaction set
+Code List Summary (Total Codes: 65, Included: 1)
+Code Name
+00 Original
+BEG02 92 Purchase Order Type Code M ID 2/2 Must use
+Description: Code specifying the type of Purchase Order
+Code List Summary (Total Codes: 69, Included: 1)
+Code Name
+NE New Order
+BEG03 324 Purchase Order Number M AN 1/22 Must use
+Description: Identifying number for Purchase Order assigned by the orderer
+BEG04 328 Release Number O AN 1/30 Not used
+BEG05 373 Date M DT 8/8 Must use
+Description: Date expressed as CCYYMMDD
+Acme Note: This is the date assigned by Acme Pharma to the purchase order.
+
+Example:
+BEG*00*NE*PO-2026-0810**20260810
+
+CUR Currency Pos: 040 Max: 1
+Heading - Optional
+Loop: N/A Elements: 2
+User Option (Usage): Used
+
+Element Summary:
+CUR01 98 Entity Identifier Code M ID 2/3 Used
+CUR02 100 Currency Code M ID 3/3 Used
+
+REF Reference Identification Pos: 050 Max: 1
+Heading - Mandatory
+Loop: N/A Elements: 2
+User Option (Usage): Must use
+Purpose: To specify identifying information
+
+Element Summary:
+REF01 128 Reference Identification Qualifier M ID 2/3 Must use
+Code List Summary (Total Codes: 320, Included: 1)
+Code Name
+IA Internal Vendor Number
+REF02 127 Reference Identification M AN 1/30 Must use
+Acme Note: The internal vendor number is required in the heading of every order.
+
+PER Administrative Communications Contact Pos: 060 Max: 3
+Heading - Optional
+Loop: N/A Elements: 4
+User Option (Usage): Used
+
+Element Summary:
+PER01 366 Contact Function Code M ID 2/2 Used
+PER02 93 Name O AN 1/60 Used
+PER03 365 Communication Number Qualifier O ID 2/2 Used
+PER04 364 Communication Number O AN 1/80 Used
+
+DTM Date/Time Reference Pos: 150 Max: 10
+Heading - Mandatory
+Loop: N/A Elements: 2
+User Option (Usage): Must use
+Purpose: To specify pertinent dates and times
+
+Element Summary:
+DTM01 374 Date/Time Qualifier M ID 3/3 Must use
+Code List Summary (Total Codes: 1112, Included: 1)
+Code Name
+002 Requested Delivery
+DTM02 373 Date M DT 8/8 Must use
+Acme Note: The requested delivery date is required on every order.
+
+N1 Name Pos: 310 Max: 1
+Heading - Mandatory
+Loop: N1 Elements: 4
+User Option (Usage): Must use
+
+Element Summary:
+N101 98 Entity Identifier Code M ID 2/3 Must use
+N102 93 Name O AN 1/60 Must use
+N103 66 Identification Code Qualifier O ID 1/2 Used
+N104 67 Identification Code O AN 2/80 Used
+
+N3 Address Information Pos: 330 Max: 2
+Heading - Optional
+Loop: N1 Elements: 2
+User Option (Usage): Used
+
+Element Summary:
+N301 166 Address Information M AN 1/55 Used
+N302 166 Address Information O AN 1/55 Used
+
+N4 Geographic Location Pos: 340 Max: 1
+Heading - Optional
+Loop: N1 Elements: 3
+User Option (Usage): Used
+
+Element Summary:
+N401 19 City Name O AN 2/30 Used
+N402 156 State or Province Code O ID 2/2 Used
+N403 116 Postal Code O ID 3/15 Used
+
+PO1 Baseline Item Data Pos: 010 Max: 1
+Detail - Mandatory
+Loop: PO1 Elements: 9
+User Option (Usage): Must use
+Purpose: To specify basic and most frequently used line item data
+
+Element Summary:
+PO101 350 Assigned Identification O AN 1/20 Must use
+PO102 330 Quantity Ordered M R 1/15 Must use
+PO103 355 Unit or Basis for Measurement Code M ID 2/2 Must use
+PO104 212 Unit Price M R 1/17 Must use
+PO105 639 Basis of Unit Price Code O ID 2/2 Not used
+PO106 235 Product/Service ID Qualifier O ID 2/2 Must use
+Code List Summary (Total Codes: 477, Included: 1)
+Code Name
+VN Vendor Part Number
+PO107 234 Product/Service ID O AN 1/48 Must use
+PO108 235 Product/Service ID Qualifier O ID 2/2 Must use
+Code List Summary (Total Codes: 477, Included: 1)
+Code Name
+UP UPC Consumer Package Code
+PO109 234 Product/Service ID O AN 1/48 Must use
+Acme Note: Every PO1 line must carry a UP qualifier pair with the UPC.
+
+PID Product/Item Description Pos: 050 Max: 1
+Detail - Optional
+Loop: PO1 Elements: 5
+User Option (Usage): Used
+
+Element Summary:
+PID01 349 Item Description Type M ID 1/1 Used
+Code List Summary (Total Codes: 3, Included: 1)
+Code Name
+F Free-form
+PID05 352 Description O AN 1/80 Used
+
+SAC Service, Promotion, Allowance, or Charge Information Pos: 130 Max: 25
+Heading - Optional
+Loop: N/A Elements: 5
+User Option (Usage): Not used
+
+Element Summary:
+SAC01 248 Allowance or Charge Indicator M ID 1/1 Not used
+SAC02 1300 Service, Promotion, Allowance, or Charge Code O ID 4/4 Not used
+SAC05 610 Amount O N2 1/15 Not used
+
+CTT Transaction Totals Pos: 010 Max: 1
+Summary - Mandatory
+Loop: N/A Elements: 2
+User Option (Usage): Must use
+
+Element Summary:
+CTT01 354 Number of Line Items M N0 1/6 Must use
+CTT02 347 Hash Total O R 1/10 Must use

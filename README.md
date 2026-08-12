@@ -174,6 +174,8 @@ mapcheck transactions             # list registered transaction definitions
 mapcheck init-spec my_spec.xlsx   # blank spec template with instructions sheet
 mapcheck draft-spec --transaction 850 --target orders05 \
     --output draft.xlsx           # definition-driven draft spec (see below)
+mapcheck import-guide acme_850.pdf --transaction 850 --partner acme \
+    --profile acme_profile.yaml   # parse a partner implementation guide (see below)
 mapcheck history                  # recent runs from the SQLite audit trail
 mapcheck bless 7                  # mark run #7 as the golden baseline for its inputs
 mapcheck regress --spec … --source … --output …   # diff vs baseline; exit 1 on a regression
@@ -269,8 +271,63 @@ mapcheck draft-spec --transaction 850 --target orders05 --output draft.xlsx
 - Extend or override with your own file: repeated `--crosswalk` flags
   merge by target path, later files winning. `--fill-unmapped` also emits
   TODO rows for optional targets.
+- `--guide acme_profile.yaml` (or a raw guide file) partner-flavors the
+  draft — see the next section.
 - The **Draft spec** page in the UI does the same with a preview and a
   download button.
+
+## Implementation guides (`import-guide`)
+
+Partners hand you their 850 requirements as an implementation guide —
+usually a PDF in one of the templated layouts the big spec-authoring
+tools emit (segment blocks with `Pos:`/`Max:`, `User Option (Usage)`
+lines, an Element Summary table per segment, code-list subsets, partner
+notes). `import-guide` parses that family into a reviewable **guide
+profile** (YAML — diffable, deterministic, and the single input to
+everything downstream):
+
+```bash
+mapcheck import-guide acme_850.pdf --transaction 850 --partner acme_pharma \
+    --profile acme_profile.yaml --overlay acme_rules.yaml
+# Parsed: 12 segment(s), 40 element(s) — parse coverage 1.00 (64/64 facts)
+```
+
+- **Scope is the templated family, stated honestly.** A guide that fails
+  family detection is rejected naming the missing fingerprints — never
+  half-parsed. Scanned/image PDFs and free-form Word documents are out of
+  scope. `.txt` exports work with no extra dependency; PDF extraction
+  needs `pip install "edi-mapcheck[guides]"` (pdfplumber).
+- **Flag-never-guess.** A line that looks like data but does not match
+  the family grammar lands in the profile's `review` list with page
+  context — never in the data. The **parse coverage** metric
+  (confident facts / detected facts) tells you how much of the guide the
+  parser would swear to.
+- **Consumer one — partner-flavored drafts.** `draft-spec --guide`
+  narrows and annotates: elements the guide marks *Not used* leave the
+  Unmapped Source sheet, the ones it marks *Must use* are labeled so the
+  analyst sees which unmapped elements are load-bearing, partner notes
+  flow into the draft's Notes column, and CODE_LIST code lists are
+  filtered to the partner's code subsets (a partner code with no
+  crosswalk translation becomes a review row, not a guess).
+- **Consumer two — partner presence rules.** `--overlay` emits a
+  **partner-rules overlay** (`required_segments` / `required_elements`
+  in the transaction-definition schema), and `validate --partner-rules
+  acme_rules.yaml` enforces it on top of the base standard:
+
+  ```
+  FAIL  DTM*002  source data invalid: required segment DTM*002
+        (Requested Delivery) is missing — required by partner acme_pharma
+  ```
+
+  Overlay entries the base definition already enforces are skipped;
+  rules the overlay schema cannot express yet (qualifier-scoped element
+  requirements) are named in its `review` list and echoed at validate
+  time — surfaced, never silently dropped.
+- The **Draft spec** page in the UI takes the guide as an optional
+  upload (plus a partner-name field), shows the parse coverage and
+  review entries, and offers the profile as a download.
+- `examples/partner_rules/` carries a worked pair (profile + overlay)
+  generated from the synthetic guide fixture.
 
 ## The spec template
 
@@ -669,11 +726,12 @@ src/mapcheck/
 ├── output/        JSON, keyed-flat, and declarative SAP IDoc adapters
 │                  (definitions/*.yaml: ORDERS05, DESADV01, INVOIC02)
 ├── engine/        rule evaluation, format checks, reconciliation, findings
+├── guides/        implementation-guide parser, profile, partner-rules overlay
 ├── report/        terminal report, Excel export, SQLite history
 └── cli.py         the mapcheck command
 app.py             Streamlit UI
 examples/          synthetic specs + source files + outputs (clean and defective)
-scripts/           example-set generator
+scripts/           example-set + guide-fixture generators
 tests/             pytest suite (every rule category, every planted defect,
                    the five-file audit kit under fixtures/audit_kit/)
 ```
@@ -684,7 +742,8 @@ Both directions — inbound X12 → internal or ERP-native output (JSON,
 keyed flat, config-driven SAP IDoc: ORDERS05 / DESADV01 / INVOIC02, plus
 user-defined layouts) and outbound internal → X12 — with one spec template
 format, single- or multi-transaction interchanges, import of existing
-partner mapping documents, per-partner overrides, regression baselines
+partner mapping documents and templated implementation guides (with
+per-partner presence-rule enforcement), per-partner overrides, regression baselines
 that gate a pipeline on what changed, rule ergonomics (tolerances, date
 arithmetic, external lookup files), a manifest-driven batch/CI mode with
 JUnit-XML output, a structure-preserving X12 data scrubber, and shareable
@@ -693,19 +752,25 @@ flat/IDoc containers, cross-transaction-set pairing (e.g. 844/849). The
 layering above is built
 so those grow without rework — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
-### The partner-rule gap (roadmap)
+### The partner-rule gap (mostly closed)
 
 MapCheck validates against the **base X12 standard** plus whatever the
-mapping spec expresses. It cannot yet enforce a partner's companion guide:
-"Acme requires `DTM*002`", "every PO1 must carry a UPC" are rules about
-*presence*, and today required-ness cannot be declared per partner — not
-even in a `merge-spec` delta, which overrides mappings, not obligations.
-Audit file 4 (`tests/fixtures/audit_kit/850_04_partner_rules.edi`) exists
-precisely to document this: it is 100% valid base X12 that violates a
-fictional companion guide, and MapCheck passes it. The gap between "valid
-X12" and "valid for this partner" is the reason EDI analysts exist, and a
-partner-rule overlay layer (per-partner required segments/elements/
-qualifier pairs, merged like spec deltas) is the next major roadmap item.
+mapping spec expresses. Partner *presence* rules — "Acme requires
+`DTM*002`", "the header needs a `REF*IA`", "PO108/PO109 must be filled
+on every line" — are now enforceable through a partner-rules overlay
+(`import-guide --overlay` + `validate --partner-rules`, above). Audit
+file 4 (`tests/fixtures/audit_kit/850_04_partner_rules.edi`) measures
+this: 100% valid base X12 that violates a fictional companion guide, it
+passes a base run and FAILs on all three seeded defects once the overlay
+is applied — the regression test pins both halves.
+
+What remains open, named in each overlay's `review` list rather than
+silently dropped: **qualifier-scoped rules** — "REF02 is required *within
+the REF*IA occurrence*" enforces today as segment presence only, and
+"every PO1 must carry a UP qualifier *pair*" enforces positionally
+(PO108/PO109 presence) rather than as a pair rule that would catch the
+UPC arriving in PO106/PO107. Those need a qualifier-scoped rule shape in
+the overlay schema — backlogged until a real guide demands it.
 
 ### Backlog
 

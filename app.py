@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import yaml
 
 from mapcheck.cli import _is_interchange
 from mapcheck.engine import (
@@ -482,7 +483,9 @@ def _draft_page() -> None:
         "structural walk fills what the bundled crosswalk knows, every other "
         "required target becomes a `TODO` row for the analyst, and source "
         "elements no rule references land on the Unmapped Source sheet. "
-        "The draft loads straight into Validate once curated."
+        "Upload a partner implementation guide and the draft is "
+        "partner-flavored: their notes, their code subsets, their "
+        "requiredness. The draft loads straight into Validate once curated."
     )
 
     transactions = [d for d in default_registry.all() if d.elements]
@@ -510,6 +513,17 @@ def _draft_page() -> None:
         type=["yaml", "yml"],
         accept_multiple_files=True,
     )
+    guide_upload = st.file_uploader(
+        "Implementation guide (optional, .pdf/.txt in the templated layout, "
+        "or a saved guide profile .yaml) — flavors the draft with the "
+        "partner's notes, code subsets, and not-used elements",
+        type=["pdf", "txt", "yaml", "yml"],
+    )
+    partner_name = st.text_input(
+        "Partner name (with a guide)",
+        help="Stamped into the guide profile; findings from its rules name "
+        "this partner. A profile upload keeps the name it was saved with.",
+    )
     fill_unmapped = st.toggle(
         "Include optional targets as TODO rows",
         help="The draft always carries every required target. This adds the "
@@ -517,6 +531,8 @@ def _draft_page() -> None:
     )
 
     if st.button("Draft spec", type="primary"):
+        from mapcheck.guides.parser import GuideParseError, parse_guide
+        from mapcheck.guides.profile import GuideProfile, GuideProfileError
         from mapcheck.spec.draft import CrosswalkError, DraftSpecError
 
         definition = default_registry.get(tx_code)
@@ -527,6 +543,23 @@ def _draft_page() -> None:
             *(_save_upload_named(upload) for upload in override_uploads or []),
         ]
         try:
+            guide = None
+            if guide_upload is not None:
+                guide_path = Path(_save_upload_named(guide_upload))
+                if guide_path.suffix.lower() in (".yaml", ".yml"):
+                    guide = GuideProfile.load(guide_path)
+                else:
+                    guide = parse_guide(
+                        guide_path,
+                        transaction=tx_code,
+                        partner=partner_name.strip(),
+                    )
+                if guide.transaction != tx_code:
+                    st.error(
+                        f"The guide profile is for transaction set "
+                        f"{guide.transaction} but the draft is a {tx_code}."
+                    )
+                    return
             with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
                 result = generate_draft(
                     definition,
@@ -534,13 +567,15 @@ def _draft_page() -> None:
                     crosswalks,
                     tmp.name,
                     include_optional_todos=fill_unmapped,
+                    guide=guide,
                 )
                 st.session_state["draft"] = (
                     result,
                     Path(tmp.name).read_bytes(),
                     f"draft_{tx_code}_{short_target}.xlsx",
+                    guide,
                 )
-        except (CrosswalkError, DraftSpecError) as exc:
+        except (CrosswalkError, DraftSpecError, GuideParseError, GuideProfileError) as exc:
             st.error(f"Draft did not run:\n\n```\n{exc}\n```")
             return
 
@@ -549,7 +584,7 @@ def _draft_page() -> None:
         _render_template_download()
         return
 
-    result, draft_bytes, file_name = st.session_state["draft"]
+    result, draft_bytes, file_name, guide = st.session_state["draft"]
     filled = sum(1 for row in result.rows if row.filled)
     tone = "verdict-pass" if result.prefill >= 0.70 else "verdict-warning"
     st.markdown(
@@ -563,13 +598,43 @@ def _draft_page() -> None:
         f"({result.filled_required}/{result.total_required}). "
         f"Crosswalk: `{', '.join(Path(f).name for f in result.crosswalk_files) or '(none)'}`"
     )
+    if guide is not None:
+        partner_label = guide.partner or "(unnamed partner)"
+        st.caption(
+            f"Guide: `{guide.source or '(uploaded)'}` for `{partner_label}` — "
+            f"parse coverage {guide.parse_coverage:.2f} "
+            f"({guide.facts_confident}/{guide.facts_detected} facts). "
+            "Not-used elements left Unmapped Source; code lists carry only "
+            "the partner's codes."
+        )
     st.markdown(draft_preview_html(result.rows), unsafe_allow_html=True)
+    review_notes = [
+        *(f"Guide parse: {note}" for note in (guide.review if guide else [])),
+        *result.guide_review,
+    ]
+    if review_notes:
+        st.subheader(f"Needs review ({len(review_notes)})")
+        st.caption(
+            "Facts the guide parse would not swear to, and decisions the "
+            "draft cannot settle mechanically. Each one is a human call."
+        )
+        st.markdown(guide_review_table_html(review_notes), unsafe_allow_html=True)
     st.download_button(
         "Download draft (.xlsx)",
         data=draft_bytes,
         file_name=file_name,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+    if guide is not None:
+        partner_slug = (guide.partner or "partner").replace(" ", "_")
+        st.download_button(
+            "Download guide profile (.yaml)",
+            data=yaml.safe_dump(guide.to_dict(), sort_keys=False, allow_unicode=True),
+            file_name=f"{partner_slug}_{result.transaction}_profile.yaml",
+            mime="text/yaml",
+            help="The reviewable record of what the guide asserted — re-upload "
+            "it here later instead of re-parsing the guide.",
+        )
     _render_template_download()
 
 
@@ -624,6 +689,27 @@ def worklist_table_html(rows) -> str:
     return (
         '<div class="findings-wrap"><table class="findings">'
         f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody>"
+        "</table></div>"
+    )
+
+
+def guide_review_table_html(notes: list[str]) -> str:
+    """Guide review entries in the worklist pattern: one amber row per
+    human decision. Reuses the findings-table classes; zero new CSS."""
+    head = "".join(
+        f"<th>{html.escape(col)}</th>" for col in ("Status", "What needs deciding")
+    )
+    body = "".join(
+        "<tr>"
+        '<td class="status-cell status-warning">'
+        '<span class="status-dot"></span>REVIEW</td>'
+        f"<td>{html.escape(note)}</td>"
+        "</tr>"
+        for note in notes
+    )
+    return (
+        '<div class="findings-wrap"><table class="findings">'
+        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody>"
         "</table></div>"
     )
 

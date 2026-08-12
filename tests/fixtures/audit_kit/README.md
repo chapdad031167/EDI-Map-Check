@@ -56,7 +56,9 @@ It violates a fictional companion guide. Pretend Acme Pharma's 850 spec says:
 
 This file omits all three.
 
-**Expected result:** MapCheck almost certainly passes it, because base-standard validation cannot see companion guide rules. That is not a failure. That is **the finding**. The gap between "valid X12" and "valid for this partner" is the entire reason EDI analysts exist, and a partner-rule overlay layer is the roadmap item that showcases 20 years of domain knowledge instead of generic parsing.
+**Expected result, base run:** MapCheck passes it, because base-standard validation cannot see companion guide rules. The gap between "valid X12" and "valid for this partner" is the entire reason EDI analysts exist.
+
+**Expected result, with partner rules (Design 014):** the fictional guide above exists as a synthetic fixture (`tests/fixtures/guides/acme_pharma_850_guide.txt`); `import-guide --overlay` derives a partner-rules overlay from it, and `validate --partner-rules` then FAILs this file on all three seeded defects — missing `DTM*002`, missing `REF*IA`, and empty `PO108`/`PO109` on both lines (the UP pair, enforced positionally; a true qualifier-*pair* rule is still backlog). Both halves are pinned by `tests/test_audit_kit.py::TestFile4PartnerRules`.
 
 ---
 
@@ -73,7 +75,7 @@ Dies mid-element in the first PO1. No PID, CTT, SE, GE, or IEA. No trailing term
 - [ ] Run File 1. Confirm clean pass.
 - [ ] Run File 2. Record findings. Compare to the four seeded defects.
 - [ ] Run File 3. Record findings. Compare to the six seeded defects.
-- [ ] Run File 4. Confirm it passes. Note the partner-rule gap.
+- [ ] Run File 4. Confirm it passes bare, and FAILs with `--partner-rules`.
 - [ ] Run File 5. Record whether failure is graceful or a stack trace.
 - [ ] Write the gap list: everything missed, everything falsely flagged, everything the README claims that the tool did not do.
 

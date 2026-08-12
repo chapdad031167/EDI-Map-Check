@@ -204,13 +204,41 @@ material, this design stops and says so.
   asserted as the named backlog gap.
 - Determinism and family-detection rejection tests.
 
-## Open questions
+## Open questions — answered (2026-08-12)
 
-1. Which real guide does the spike run against, and can a redacted copy
-   live in the repo as a fixture (or must it stay local-only)?
-2. Overlay file home: `examples/partner_specs/` beside the delta
-   workbooks, or a new `examples/partner_rules/`?
-3. Is `pdfplumber` acceptable as the extraction dependency (pure-Python
-   alternatives are materially worse at column layout)?
-4. Does the audit-kit README's file 4 section get updated to point at the
-   overlay once it exists, or stay frozen as the historical answer key?
+1. *Which real guide does the spike run against?* Two public vendor
+   guides named by the maintainer: the Insight EDI vendor 850 guidelines
+   (insight.com) and the Arnecom 850 004010 spec (iconnect-corp.com).
+   Both are published on the vendors' public domains; the maintainer is
+   comfortable with them as spike material, redacted as appropriate if
+   anything is kept. Resolution: spike against them locally, commit only
+   the synthetic fixtures — the repo stays vendor-neutral.
+2. *Overlay file home?* A separate `examples/partner_rules/` folder —
+   maintainer's call, "to keep it clean". A worked profile + overlay pair
+   generated from the synthetic fixture lives there.
+3. *Is pdfplumber acceptable?* Yes — accepted on the condition that it
+   functionally works; it ships as the `guides` extra so the core stays
+   lean.
+4. *Audit-kit README file 4?* Updated to describe both halves: passes
+   bare, FAILs with `--partner-rules`, qualifier-pair rule named as
+   backlog.
+
+## Implementation status (2026-08-12)
+
+Shipped: `mapcheck.guides` package (extractor + line grammar + profile +
+overlay), `import-guide` verb, `draft-spec --guide` (profile or raw
+guide), `validate --partner-rules`, engine `required_segments`
+(qualified segment presence) with partner-named findings, Draft page
+guide upload with profile download and worklist-pattern review display,
+`guides` extra, synthetic `.txt`/`.pdf` fixture pair
+(`scripts/generate_guide_fixture.py` regenerates the PDF twin), and the
+audit file-4 closure test. Synthetic-fixture parse coverage is 1.00
+(64/64 facts) with byte-identical .txt/.pdf profiles.
+
+**Feasibility spike: still owed.** The container's network egress could
+not reach either vendor domain, so the real-guide spike is pending the
+maintainer supplying the two PDFs (a `spike-guides` branch was agreed).
+Until it runs, the family assumption is validated only against the
+synthetic layout typed from a real guide's screenshot; the measured
+real-guide parse coverage still goes here when the spike lands, per this
+design's own rule.

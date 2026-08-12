@@ -22,6 +22,7 @@ from mapcheck.transactions.schema import (
     OutputPairing,
     ReconRule,
     RequiredElementDef,
+    RequiredSegmentDef,
     TransactionDefinition,
 )
 
@@ -310,6 +311,28 @@ def _parse_required(node: Any, index: int, ctx: _Ctx) -> RequiredElementDef | No
     )
 
 
+def _parse_required_segment(node: Any, index: int, ctx: _Ctx) -> RequiredSegmentDef | None:
+    path = f"required_segments[{index}]"
+    if not isinstance(node, dict):
+        ctx.err(path, "expected a mapping with segment")
+        return None
+    segment = ctx.str_at(node, path, "segment")
+    if not segment:
+        return None
+    qualifier = ctx.str_at(node, path, "qualifier", required=False)
+    qualifier_element = ctx.int_at(node, path, "qualifier_element", default=1)
+    if qualifier_element is None or qualifier_element < 1:
+        ctx.err(f"{path}.qualifier_element", "expected a 1-based element position")
+        qualifier_element = 1
+    return RequiredSegmentDef(
+        segment=segment.upper(),
+        qualifier=qualifier,
+        qualifier_element=qualifier_element,
+        name=ctx.str_at(node, path, "name", required=False) or "",
+        origin=ctx.str_at(node, path, "origin", required=False) or "",
+    )
+
+
 def parse_definition(data: Any, source: str) -> TransactionDefinition:
     """Build a validated :class:`TransactionDefinition` from parsed YAML data.
 
@@ -391,6 +414,16 @@ def parse_definition(data: Any, source: str) -> TransactionDefinition:
         if parsed_req:
             required.append(parsed_req)
 
+    required_segments: list[RequiredSegmentDef] = []
+    required_seg_node = data.get("required_segments", []) or []
+    if not isinstance(required_seg_node, list):
+        ctx.err("required_segments", "expected a list")
+        required_seg_node = []
+    for index, seg_node in enumerate(required_seg_node):
+        parsed_seg = _parse_required_segment(seg_node, index, ctx)
+        if parsed_seg:
+            required_segments.append(parsed_seg)
+
     elements: dict[str, tuple[str, ...]] = {}
     elements_node = data.get("elements", {}) or {}
     if not isinstance(elements_node, dict):
@@ -416,6 +449,7 @@ def parse_definition(data: Any, source: str) -> TransactionDefinition:
         output_pairing=pairing,
         reconciliation=tuple(recon),
         required_elements=tuple(required),
+        required_segments=tuple(required_segments),
         elements=elements,
         source=source,
     )

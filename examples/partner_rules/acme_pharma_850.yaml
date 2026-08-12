@@ -1,0 +1,72 @@
+partner: acme_pharma
+transaction: '850'
+source_guide: acme_pharma_850_guide.txt
+required_segments:
+- segment: BEG
+  name: Beginning Segment for Purchase Order
+- segment: REF
+  qualifier: IA
+  name: Internal Vendor Number
+- segment: DTM
+  qualifier: '002'
+  name: Requested Delivery
+- segment: N1
+  name: Name
+- segment: PO1
+  name: Baseline Item Data
+- segment: CTT
+  name: Transaction Totals
+required_elements:
+- segment: BEG
+  element: 1
+  name: Transaction Set Purpose Code
+- segment: BEG
+  element: 2
+  name: Purchase Order Type Code
+- segment: BEG
+  element: 3
+  name: Purchase Order Number
+- segment: BEG
+  element: 5
+  name: Date
+- segment: N1
+  element: 1
+  name: Entity Identifier Code
+- segment: N1
+  element: 2
+  name: Name
+- segment: PO1
+  element: 1
+  name: Assigned Identification
+- segment: PO1
+  element: 2
+  name: Quantity Ordered
+- segment: PO1
+  element: 3
+  name: Unit or Basis for Measurement Code
+- segment: PO1
+  element: 4
+  name: Unit Price
+- segment: PO1
+  element: 6
+  name: Product/Service ID Qualifier
+- segment: PO1
+  element: 7
+  name: Product/Service ID
+- segment: PO1
+  element: 8
+  name: Product/Service ID Qualifier
+- segment: PO1
+  element: 9
+  name: Product/Service ID
+- segment: CTT
+  element: 1
+  name: Number of Line Items
+- segment: CTT
+  element: 2
+  name: Hash Total
+review:
+- 'REF*IA: element requirements (REF02) cannot yet be scoped to a qualifier — enforced
+  only as segment presence'
+- 'DTM*002: element requirements (DTM02) cannot yet be scoped to a qualifier — enforced
+  only as segment presence'
