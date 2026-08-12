@@ -175,8 +175,8 @@ naming the install command.
 `parse coverage = facts extracted at full confidence / facts detected`,
 printed by every `import-guide` run and stored in the profile. No target
 number is invented here: the feasibility spike (below) measures it on
-real material first, and the number goes in this doc's acceptance
-criteria at review.
+real material first. *Measured: 1.0000 on the real in-family guide (140/
+140 facts) — see the spike section.*
 
 ## Feasibility spike, before any merge
 
@@ -235,10 +235,46 @@ guide upload with profile download and worklist-pattern review display,
 audit file-4 closure test. Synthetic-fixture parse coverage is 1.00
 (64/64 facts) with byte-identical .txt/.pdf profiles.
 
-**Feasibility spike: still owed.** The container's network egress could
-not reach either vendor domain, so the real-guide spike is pending the
-maintainer supplying the two PDFs (a `spike-guides` branch was agreed).
-Until it runs, the family assumption is validated only against the
-synthetic layout typed from a real guide's screenshot; the measured
-real-guide parse coverage still goes here when the spike lands, per this
-design's own rule.
+## Feasibility spike — run and measured (2026-08-12)
+
+The maintainer supplied both real guides directly (network egress could
+not reach the vendor domains). Neither PDF is committed — the repo stays
+vendor-neutral; the layout behaviors they exposed are pinned by synthetic
+fixtures instead.
+
+**Insight Direct USA 850 v4010 (33 pages, the SpecBuilder family):
+parse coverage 1.0000 — 140/140 facts, zero review entries.** All 26
+segment blocks (including one block per loop occurrence: N1 ship-to /
+bill-to / ship-from with distinct N101 qualifiers), 88 element rows,
+code subsets up to 15 codes, and the Insight Note partner notes all
+extract into the profile. Two real-layout behaviors the synthetic
+fixture had not predicted were found and fixed:
+
+1. **Split header boxes.** The two-column header renders as a
+   standalone `Pos: 020 Max: 1` line, then the `BEG Beginning Segment
+   for` name line, the name's wrapped tail landing as a prefix on the
+   `Loop:` line. The parser now accepts both the one-line and split
+   forms; a `Pos:` line not followed by a name line is a review entry.
+2. **Bold overstrike.** Bold text (partner notes, examples) extracts as
+   doubled glyphs (`IInnssiigghhtt NNoottee::`); extraction now runs
+   pdfplumber's `dedupe_chars()`, and a generated-PDF regression test
+   pins the behavior.
+
+Per-occurrence blocks sharpen the overlay: distinct qualifiers emit
+distinct rules (`N1*ST`, `N1*BT`), identical duplicates emit once.
+Recorded limitation: the flat draft-annotation table
+(`element_usage()`) is last-block-wins when duplicate blocks disagree
+on an element's usage — affects draft annotation only, never
+enforcement.
+
+**Arnecom 850 004010 (18 pages): cleanly rejected**, naming all three
+missing fingerprints. It is a different authoring family (`Segment BEG
+– …` key-value blocks, `ID / ELEMENT NAME / FEATURES / COMMENTS`
+tables, requiredness as M/O/C/N codes, no usage wording) — exactly the
+designed out-of-scope outcome: a load error naming what is missing,
+never a half-parse. A second family grammar is possible future work if
+partner demand shows; it is not part of Design 014.
+
+**Verdict: the family assumption holds on real material.** One of the
+two real guides is the family and parses completely; the other is a
+structurally different document the tool refuses honestly.

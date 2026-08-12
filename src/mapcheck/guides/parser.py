@@ -68,7 +68,9 @@ def extract_lines(path: str | Path) -> list[tuple[int, str]]:
         try:
             with pdfplumber.open(str(path)) as pdf:
                 for page_number, page in enumerate(pdf.pages, start=1):
-                    text = page.extract_text() or ""
+                    # Bold text in these guides is printed as overstruck
+                    # duplicate glyphs ("IInnssiigghhtt"); dedupe restores it.
+                    text = page.dedupe_chars().extract_text() or ""
                     lines.extend(
                         (page_number, line.rstrip()) for line in text.splitlines()
                     )
@@ -90,14 +92,22 @@ def extract_lines(path: str | Path) -> list[tuple[int, str]]:
 # Line grammar
 # --------------------------------------------------------------------------
 
-#: Segment header: "BEG Beginning Segment for Purchase Order Pos: 020 Max: 1"
+#: Segment header, one-line form: "BEG Beginning Segment ... Pos: 020 Max: 1"
 _SEGMENT_HEADER = re.compile(
     r"^(?P<id>[A-Z][A-Z0-9]{1,2})\s+(?P<name>.+?)\s+Pos:\s*(?P<pos>\S+)\s+Max:\s*(?P<max>\S+)\s*$"
 )
+#: Split form: real PDFs render the header box as two columns that extract
+#: as "Pos: 020 Max: 1" on its own line, then "BEG Beginning Segment for"
+#: (name possibly wrapping onto the Loop line).
+_POS_MAX_LINE = re.compile(r"^Pos:\s*(?P<pos>\S+)\s+Max:\s*(?P<max>\S+)\s*$")
+_SEGMENT_NAME_LINE = re.compile(r"^(?P<id>[A-Z][A-Z0-9]{1,2})\s+(?P<name>[A-Z(].*?)\s*$")
 #: Continuation of the header box: "Heading - Mandatory" / "Detail - Optional"
 _AREA_LINE = re.compile(r"^(Heading|Detail|Summary)\s*-\s*(Mandatory|Optional)\s*$")
-#: "Loop: N/A Elements: 6" or "Loop: PO1 Elements: 9"
-_LOOP_LINE = re.compile(r"^Loop:\s*(?P<loop>\S+)(?:\s+Elements:\s*\d+)?\s*$")
+#: "Loop: N/A Elements: 6" — a split-form segment's wrapped name may extract
+#: as a prefix on this line ("Sequence/Transit Time) Loop: N/A Elements: 5").
+_LOOP_LINE = re.compile(
+    r"^(?P<prefix>.*?)\s*Loop:\s*(?P<loop>\S+)(?:\s+Elements:\s*\d+)?\s*$"
+)
 #: "User Option (Usage): Must use"
 _USAGE_LINE = re.compile(r"^User Option \(Usage\):\s*(?P<usage>.+?)\s*$")
 _ELEMENT_SUMMARY = re.compile(r"^Element Summary:?\s*$")
@@ -143,7 +153,8 @@ def parse_guide(
 
     fingerprints = {
         "segment header block (e.g. 'BEG … Pos: 020 Max: 1')": any(
-            _SEGMENT_HEADER.match(line) for _, line in lines
+            _SEGMENT_HEADER.match(line) or _POS_MAX_LINE.match(line)
+            for _, line in lines
         ),
         "'Element Summary' marker": any(
             _ELEMENT_SUMMARY.match(line) for _, line in lines
@@ -168,6 +179,8 @@ def parse_guide(
     element: dict | None = None  # mutable accumulator for the last element
     in_element_summary = False
     in_code_list = False
+    #: A "Pos: … Max: …" line waiting for its segment-name line (split form).
+    pending_header: tuple[str, str, int] | None = None
 
     def close_element() -> None:
         nonlocal element
@@ -215,6 +228,7 @@ def parse_guide(
 
         if header := _SEGMENT_HEADER.match(line):
             close_segment()
+            pending_header = None
             segment = {
                 "id": header["id"],
                 "name": header["name"].strip(),
@@ -224,10 +238,47 @@ def parse_guide(
                 "usage": "",
                 "notes": [],
                 "elements": [],
+                "split_header": False,
             }
             profile.facts_detected += 1
             profile.facts_confident += 1
             continue
+
+        if pos_max := _POS_MAX_LINE.match(line):
+            if pending_header is not None:
+                profile.review.append(
+                    f"page {pending_header[2]}: 'Pos: {pending_header[0]} "
+                    f"Max: {pending_header[1]}' was not followed by a segment "
+                    "name line — verify by hand"
+                )
+                profile.facts_detected += 1
+            pending_header = (pos_max["pos"], pos_max["max"], page)
+            continue
+
+        if pending_header is not None:
+            pos, max_use, header_page = pending_header
+            pending_header = None
+            profile.facts_detected += 1
+            if name_line := _SEGMENT_NAME_LINE.match(line):
+                close_segment()
+                segment = {
+                    "id": name_line["id"],
+                    "name": name_line["name"].strip(),
+                    "pos": pos,
+                    "max": max_use,
+                    "loop": "",
+                    "usage": "",
+                    "notes": [],
+                    "elements": [],
+                    "split_header": True,
+                }
+                profile.facts_confident += 1
+                continue
+            profile.review.append(
+                f"page {header_page}: 'Pos: {pos} Max: {max_use}' was not "
+                f"followed by a segment name line — verify by hand: {line!r}"
+            )
+            # fall through: the line may still be meaningful on its own
 
         if segment is None:
             continue  # front matter, page headers, tables of contents
@@ -238,6 +289,16 @@ def parse_guide(
         if loop_line := _LOOP_LINE.match(line):
             loop = loop_line["loop"]
             segment["loop"] = "" if loop.upper() == "N/A" else loop
+            prefix = loop_line["prefix"].strip()
+            if prefix:
+                if segment.get("split_header"):
+                    # the wrapped tail of the segment name (two-column layout)
+                    segment["name"] = f"{segment['name']} {prefix}"
+                else:
+                    profile.review.append(
+                        f"page {page}: segment {segment['id']}: unexpected text "
+                        f"before 'Loop:' — verify by hand: {prefix!r}"
+                    )
             continue
         if usage_line := _USAGE_LINE.match(line):
             usage = _normalize_usage(usage_line["usage"])

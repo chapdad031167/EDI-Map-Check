@@ -225,6 +225,11 @@ def emit_partner_rules(profile: GuideProfile) -> PartnerRules:
         transaction=profile.transaction,
         source_guide=profile.source,
     )
+    # Real guides render one segment block per loop occurrence (three N1
+    # blocks for ship-to / bill-to / ship-from). Distinct qualifiers emit
+    # distinct rules; identical (segment, qualifier) pairs emit once.
+    seen_segments: set[tuple[str, str | None]] = set()
+    seen_elements: set[tuple[str, int]] = set()
     for segment in profile.segments:
         if segment.usage != "must_use":
             continue
@@ -232,6 +237,9 @@ def emit_partner_rules(profile: GuideProfile) -> PartnerRules:
         codes = [c.code for c in first.codes] if first is not None else []
         qualified = segment.id in _QUALIFIED_SEGMENTS and len(codes) == 1
         if qualified:
+            if (segment.id, codes[0]) in seen_segments:
+                continue
+            seen_segments.add((segment.id, codes[0]))
             code_name = first.codes[0].name if first is not None else ""
             rules.required_segments.append(
                 RequiredSegmentDef(
@@ -259,15 +267,20 @@ def emit_partner_rules(profile: GuideProfile) -> PartnerRules:
                 f"{segment.id}: multiple qualifier codes ({', '.join(codes)}) — "
                 "emitted unqualified; qualify by hand if one is the requirement"
             )
-        rules.required_segments.append(
-            RequiredSegmentDef(
-                segment=segment.id, name=segment.name, origin=profile.partner
+        if (segment.id, None) not in seen_segments:
+            seen_segments.add((segment.id, None))
+            rules.required_segments.append(
+                RequiredSegmentDef(
+                    segment=segment.id, name=segment.name, origin=profile.partner
+                )
             )
-        )
         for el in segment.elements:
             if el.usage != "must_use":
                 continue
             position = int(el.ref[len(segment.id):])
+            if (segment.id, position) in seen_elements:
+                continue
+            seen_elements.add((segment.id, position))
             rules.required_elements.append(
                 RequiredElementDef(
                     segment=segment.id,

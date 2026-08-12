@@ -151,6 +151,159 @@ class TestPdfParity:
 
 
 # --------------------------------------------------------------------------
+# Split-form headers: how real PDFs of this family extract (two-column
+# header boxes flatten to a "Pos: … Max: …" line, then the name line, the
+# name's wrapped tail landing on the Loop line)
+# --------------------------------------------------------------------------
+
+SPLIT_FORM_GUIDE = """Fixture Guide
+Purchase Order - 850
+
+Pos: 020 Max: 1
+BEG Beginning Segment for
+Heading - Mandatory
+Purchase Order Loop: N/A Elements: 2
+User Option (Usage): Must use
+
+Element Summary:
+BEG01 353 Transaction Set Purpose Code M ID 2/2 Must use
+BEG03 324 Purchase Order Number M AN 1/22 Must use
+
+Pos: 240 Max: 1
+TD5 Carrier Details (Routing
+Heading - Mandatory
+Sequence/Transit Time) Loop: N/A Elements: 1
+User Option (Usage): Must use
+
+Element Summary:
+TD501 133 Routing Sequence Code O ID 1/2 Used
+
+Pos: 310 Max: 1
+N1 Name
+Heading - Mandatory
+Loop: N1 Elements: 2
+User Option (Usage): Must use
+
+Element Summary:
+N101 98 Entity Identifier Code M ID 2/3 Must use
+Code List Summary (Total Codes: 1312, Included: 1)
+Code Name
+ST Ship To
+N102 93 Name O AN 1/60 Must use
+
+Pos: 310 Max: 1
+N1 Name
+Heading - Mandatory
+Loop: N1 Elements: 2
+User Option (Usage): Must use
+
+Element Summary:
+N101 98 Entity Identifier Code M ID 2/3 Must use
+Code List Summary (Total Codes: 1312, Included: 1)
+Code Name
+BT Bill To
+N102 93 Name O AN 1/60 Must use
+"""
+
+
+class TestSplitFormHeaders:
+    def _parse(self, tmp_path: Path, text: str) -> GuideProfile:
+        guide = tmp_path / "split.txt"
+        guide.write_text(text, encoding="utf-8")
+        return parse_guide(guide, transaction="850", partner="x")
+
+    def test_split_header_block_parses(self, tmp_path: Path):
+        profile = self._parse(tmp_path, SPLIT_FORM_GUIDE)
+        assert profile.review == []
+        assert profile.parse_coverage == 1.0
+        beg = profile.segment("BEG")
+        assert beg.pos == "020"
+        assert beg.max_use == "1"
+        assert beg.usage == "must_use"
+
+    def test_wrapped_name_reassembles_from_loop_line(self, tmp_path: Path):
+        profile = self._parse(tmp_path, SPLIT_FORM_GUIDE)
+        assert profile.segment("BEG").name == "Beginning Segment for Purchase Order"
+        assert (
+            profile.segment("TD5").name
+            == "Carrier Details (Routing Sequence/Transit Time)"
+        )
+        assert profile.segment("N1").name == "Name"  # no tail, nothing appended
+
+    def test_one_block_per_loop_occurrence(self, tmp_path: Path):
+        profile = self._parse(tmp_path, SPLIT_FORM_GUIDE)
+        n1_blocks = [seg for seg in profile.segments if seg.id == "N1"]
+        assert len(n1_blocks) == 2
+        assert [b.element("N101").codes[0].code for b in n1_blocks] == ["ST", "BT"]
+
+    def test_occurrence_blocks_emit_distinct_qualified_rules(self, tmp_path: Path):
+        profile = self._parse(tmp_path, SPLIT_FORM_GUIDE)
+        rules = emit_partner_rules(profile)
+        n1_rules = [(r.segment, r.qualifier) for r in rules.required_segments if r.segment == "N1"]
+        assert n1_rules == [("N1", "ST"), ("N1", "BT")]
+
+    def test_identical_duplicate_blocks_emit_once(self, tmp_path: Path):
+        doubled = SPLIT_FORM_GUIDE + SPLIT_FORM_GUIDE
+        profile = self._parse(tmp_path, doubled)
+        rules = emit_partner_rules(profile)
+        pairs = [(r.segment, r.qualifier) for r in rules.required_segments]
+        assert len(pairs) == len(set(pairs))
+        elements = [(r.segment, r.element) for r in rules.required_elements]
+        assert len(elements) == len(set(elements))
+
+    def test_pos_line_without_name_line_is_review(self, tmp_path: Path):
+        profile = self._parse(
+            tmp_path,
+            "Pos: 020 Max: 1\n12/5/2023 page header\n" + SPLIT_FORM_GUIDE,
+        )
+        assert any(
+            "'Pos: 020 Max: 1' was not followed by a segment name" in note
+            for note in profile.review
+        )
+        assert profile.parse_coverage < 1.0
+        assert profile.segment("BEG") is not None  # the real block still parses
+
+    def test_loop_prefix_on_one_line_header_is_review(self, tmp_path: Path):
+        guide = tmp_path / "g.txt"
+        guide.write_text(
+            "BEG Beginning Segment for Purchase Order Pos: 020 Max: 1\n"
+            "Stray tail Loop: N/A Elements: 2\n"
+            "User Option (Usage): Must use\n\n"
+            "Element Summary:\n"
+            "BEG01 353 Transaction Set Purpose Code M ID 2/2 Must use\n",
+            encoding="utf-8",
+        )
+        profile = parse_guide(guide, transaction="850", partner="x")
+        assert profile.segment("BEG").name == "Beginning Segment for Purchase Order"
+        assert any("unexpected text before 'Loop:'" in note for note in profile.review)
+
+
+class TestOverstrikeDedupe:
+    def test_bold_overstrike_text_extracts_once(self, tmp_path: Path):
+        """Real guides print bold lines as overstruck duplicate glyphs;
+        extraction must collapse them or notes come out doubled."""
+        pytest.importorskip("pdfplumber")
+        fpdf = pytest.importorskip("fpdf")
+        from mapcheck.guides.parser import extract_lines
+
+        pdf = fpdf.FPDF()
+        pdf.add_page()
+        pdf.set_font("Courier", size=10)
+        pdf.text(10, 20, "Plain line stays intact")
+        # simulate bold-by-overprint: same string twice, offset well inside
+        # dedupe tolerance
+        pdf.text(10, 30, "Insight Note: required on every order.")
+        pdf.text(10.05, 30, "Insight Note: required on every order.")
+        path = tmp_path / "overstrike.pdf"
+        pdf.output(str(path))
+
+        lines = [line for _, line in extract_lines(path)]
+        assert "Plain line stays intact" in lines
+        assert "Insight Note: required on every order." in lines
+        assert not any("IInnssiigghhtt" in line for line in lines)
+
+
+# --------------------------------------------------------------------------
 # Flag-never-guess: uncertain lines go to review, never into the data
 # --------------------------------------------------------------------------
 
