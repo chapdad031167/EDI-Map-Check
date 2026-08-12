@@ -142,6 +142,10 @@ class RequiredElementDef:
     Base-standard requiredness is spec-independent: it lives here in the
     transaction definition, not in any mapping spec, and an empty required
     element is a FAILURE, never NOT TESTED.
+
+    ``origin`` is empty for base-standard rules; a partner-rules overlay
+    (Design 014) sets it to the partner name so findings say whose rule
+    failed.
     """
 
     segment: str
@@ -149,6 +153,29 @@ class RequiredElementDef:
     name: str = ""
     when_present: int | None = None
     when_name: str = ""
+    origin: str = ""
+
+
+@dataclass(frozen=True)
+class RequiredSegmentDef:
+    """A segment that must appear at least once in the transaction.
+
+    With ``qualifier`` set, only occurrences whose ``qualifier_element``
+    (1-based, element 01 by default) equals the qualifier count — the shape
+    of X12 qualified families like ``DTM*002`` or ``REF*IA``. ``name`` is
+    the human name for messages ("Requested Delivery"). ``origin`` names
+    the partner whose rules require it (empty for base-standard rules).
+
+    The base 004010 standard makes almost no business segment mandatory
+    beyond ST/BEG-class openers the parser already enforces, so in practice
+    these come from partner-rules overlays (Design 014).
+    """
+
+    segment: str
+    qualifier: str | None = None
+    qualifier_element: int = 1
+    name: str = ""
+    origin: str = ""
 
 
 @dataclass(frozen=True)
@@ -177,6 +204,7 @@ class TransactionDefinition:
     output_pairing: OutputPairing | None = None
     reconciliation: tuple[ReconRule, ...] = ()
     required_elements: tuple[RequiredElementDef, ...] = ()
+    required_segments: tuple[RequiredSegmentDef, ...] = ()
     #: Element dictionary for draft-spec's source walk (Design 012):
     #: segment id -> element names in positional order (element 01 first).
     #: Covers the commonly used commercial subset, not the exhaustive

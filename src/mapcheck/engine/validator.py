@@ -26,7 +26,10 @@ from dataclasses import dataclass
 from dataclasses import replace as dataclass_replace
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # import cycle guard: guides depends on transactions only
+    from mapcheck.guides.overlay import PartnerRules
 
 from mapcheck.engine.formats import (
     NormalizationError,
@@ -238,6 +241,7 @@ def validate(
             )
         )
     _check_required_elements(tx, result, structure_category, structure_side)
+    _check_required_segments(tx, result, structure_category, structure_side)
 
     for rule in spec.rules:
         if rule.rule_type is RuleType.TODO:
@@ -299,6 +303,7 @@ def validate_files(
     transaction: str | None = None,
     output_format: str | None = None,
     spec: MappingSpec | None = None,
+    partner_rules: "PartnerRules | None" = None,
 ) -> RunResult:
     """Load the three artifacts and validate. Convenience for CLI/UI callers.
 
@@ -310,7 +315,8 @@ def validate_files(
     names a registered output-format definition for the canonical document
     (used for user-supplied formats that can't be auto-detected). Pass a
     pre-loaded ``spec`` to skip loading ``spec_path`` — used for a
-    partner-override merged spec.
+    partner-override merged spec. ``partner_rules`` (Design 014) appends a
+    partner overlay's presence rules to the definition for this run.
 
     Raises ``SpecLoadError``, ``X12ParseError``, or ``OutputLoadError`` when
     an input cannot be loaded or the spec and X12 file disagree.
@@ -340,6 +346,8 @@ def validate_files(
                 f"file is a {tx.definition.set_code} ({tx.definition.name})"
             ]
         )
+    if partner_rules is not None:
+        tx.definition = partner_rules.apply(tx.definition)
     if spec.direction is Direction.OUTBOUND:
         doc = load_output(source_path, output_format=output_format)
         return validate(
@@ -560,12 +568,14 @@ def validate_interchange_files(
     transaction: str | None = None,
     output_format: str | None = None,
     spec: MappingSpec | None = None,
+    partner_rules: "PartnerRules | None" = None,
 ) -> InterchangeResult:
     """Load the artifacts and validate a whole interchange.
 
     Mirrors :func:`validate_files` but pairs many source transactions with
     many output documents. The spec's direction decides which side is X12.
-    Pass a pre-loaded ``spec`` for a partner-override merged spec.
+    Pass a pre-loaded ``spec`` for a partner-override merged spec;
+    ``partner_rules`` applies a partner overlay to every document.
     """
     from mapcheck.output.adapter import load_output_documents
     from mapcheck.spec.parser import SpecLoadError, load_spec
@@ -597,6 +607,9 @@ def validate_interchange_files(
                     f"interchange also contains: {', '.join(sorted(mismatched))}"
                 ]
             )
+    if partner_rules is not None:
+        for doc in interchange.documents:
+            doc.definition = partner_rules.apply(doc.definition)
     canonical_path = source_path if outbound else output_path
     documents = load_output_documents(canonical_path, output_format=output_format)
     return validate_interchange(
@@ -1171,6 +1184,11 @@ def _check_required_elements(
                     f"{ref}{name} is required when {when_ref}{when_name} "
                     f"is present, but is empty"
                 )
+            elif req.origin:
+                core = (
+                    f"{ref}{name} is required by partner {req.origin} "
+                    f"but is empty"
+                )
             else:
                 core = (
                     f"{ref}{name} is a mandatory element in the "
@@ -1186,6 +1204,51 @@ def _check_required_elements(
                     message=f"{side}data invalid: {core}",
                 )
             )
+
+
+def _check_required_segments(
+    tx: TransactionDocument,
+    result: RunResult,
+    category: Category,
+    structure_side: str,
+) -> None:
+    """Enforce the definition's segment-presence rules.
+
+    A required segment must appear at least once in the transaction; with
+    a ``qualifier`` set, at least one occurrence must carry that code in
+    its qualifier element (``DTM*002``, ``REF*IA``). In practice these
+    come from partner-rules overlays (Design 014), so the finding names
+    the partner whose rule failed via ``origin``.
+    """
+    if not tx.definition.required_segments:
+        return
+    side = structure_side or "source "
+    for req in tx.definition.required_segments:
+        found = False
+        for _label, seg in tx.business_segments():
+            if seg.seg_id != req.segment:
+                continue
+            if req.qualifier is None or seg.element(req.qualifier_element) == req.qualifier:
+                found = True
+                break
+        if found:
+            continue
+        ref = req.segment if req.qualifier is None else f"{req.segment}*{req.qualifier}"
+        name = f" ({req.name})" if req.name else ""
+        origin = f" — required by partner {req.origin}" if req.origin else ""
+        result.findings.append(
+            Finding(
+                status=Status.FAIL,
+                category=category,
+                source_ref=ref,
+                expected="at least one occurrence",
+                actual="(absent)",
+                message=(
+                    f"{side}data invalid: required segment {ref}{name} "
+                    f"is missing{origin}"
+                ),
+            )
+        )
 
 
 def _check_line_counts(tx: TransactionDocument, output: CanonicalOutput, result: RunResult) -> None:

@@ -85,11 +85,15 @@ non-findings: missing `DTM*002` and `REF*IA` → NOT TESTED, missing `UP`
 qualifier pairs → conditional rules silently (and correctly) SKIP.
 
 **Scope finding, not a bug:** base-standard validation cannot see
-companion-guide rules. Today the gap is structural: required-ness does not
-exist in the spec model, so even a partner delta merged with `merge-spec`
-(Design 005) can change *mappings* but cannot enforce *presence*. A
-partner-rule overlay layer ("this element is required for this partner")
-is the roadmap item this file exists to expose.
+companion-guide rules. At audit time the gap was structural: required-ness
+did not exist in the spec model, so even a partner delta merged with
+`merge-spec` (Design 005) could change *mappings* but not enforce
+*presence*. Design 014 closed the presence half: `import-guide --overlay`
+derives partner rules from an implementation guide and
+`validate --partner-rules` FAILs this file on all three seeded defects
+(pinned in `TestFile4PartnerRules`). Qualifier-*pair* rules ("the UP pair
+may arrive in either qualifier slot") remain backlog — today's enforcement
+of PO108/PO109 is positional.
 
 ### File 5 — `850_05_truncated.edi`
 
@@ -150,6 +154,7 @@ clarifications, not falsehoods):
    natural roadmap candidate.)
 3. The partner-rule gap (file 4) should be stated as an explicit roadmap
    item: "valid X12" ≠ "valid for this partner", and today required-ness
-   cannot be expressed even in a partner delta.
+   cannot be expressed even in a partner delta. *(Since closed for
+   presence rules by Design 014 — see the file 4 section above.)*
 4. UPC check digits are not validated (file 1's are valid, so nothing was
    missed; scope note only).

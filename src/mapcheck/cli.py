@@ -4,6 +4,7 @@ Subcommands:
 
 * ``mapcheck validate --spec spec.xlsx --source po.edi --output out.json``
 * ``mapcheck init-spec new_spec.xlsx`` — write a blank spec template
+* ``mapcheck import-guide guide.pdf`` — parse a partner implementation guide
 * ``mapcheck history`` — list recent validation runs
 * ``mapcheck transactions`` — list registered transaction definitions
 """
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from mapcheck import __version__
 from mapcheck.engine.validator import validate_files, validate_interchange_files
+from mapcheck.guides.overlay import PartnerRulesError
 from mapcheck.output.adapter import OutputLoadError
 from mapcheck.output.idoc import DefinitionError
 from mapcheck.report.excel import export_excel
@@ -64,6 +66,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--transaction",
         metavar="SET",
         help="force a transaction set (default: auto-detect from the X12 file's ST01)",
+    )
+    p_val.add_argument(
+        "--partner-rules",
+        metavar="OVERLAY",
+        help="a partner-rules overlay (.yaml, from import-guide) whose presence "
+        "rules are enforced on top of the base standard",
     )
     p_val.add_argument(
         "--output-def",
@@ -155,6 +163,36 @@ def _build_parser() -> argparse.ArgumentParser:
     p_draft.add_argument(
         "--fill-unmapped", action="store_true",
         help="also emit TODO rows for optional (non-required) target paths",
+    )
+    p_draft.add_argument(
+        "--guide",
+        metavar="PROFILE",
+        help="a guide profile (.yaml, from import-guide) that flavors the "
+        "draft: partner notes, code subsets, and not-used elements",
+    )
+
+    p_guide = sub.add_parser(
+        "import-guide",
+        help="parse a partner implementation guide (.pdf/.txt) into a reviewable profile",
+    )
+    p_guide.add_argument(
+        "input", help="implementation guide in the templated layout (.pdf or .txt)"
+    )
+    p_guide.add_argument(
+        "--transaction", required=True, metavar="SET",
+        help="transaction set the guide describes (e.g. 850) — stated, never guessed",
+    )
+    p_guide.add_argument(
+        "--partner", required=True, metavar="NAME",
+        help="partner name stamped into the profile and its findings",
+    )
+    p_guide.add_argument(
+        "--profile", required=True, metavar="PATH",
+        help="guide profile to write (.yaml)",
+    )
+    p_guide.add_argument(
+        "--overlay", metavar="PATH",
+        help="also write a partner-rules overlay (.yaml) for validate --partner-rules",
     )
 
     p_hist = sub.add_parser("history", help="list recent validation runs")
@@ -272,11 +310,20 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     color = False if args.no_color else None
     output_format = None
     merged_spec = None
+    partner_rules = None
     try:
         if args.output_def:
             from mapcheck.output.idoc import register_output_definition
 
             output_format = register_output_definition(args.output_def).format
+        if args.partner_rules:
+            from mapcheck.guides.overlay import PartnerRules
+
+            partner_rules = PartnerRules.load(args.partner_rules)
+            # Rules the overlay could not express are not enforced — say so
+            # at the moment someone relies on the overlay.
+            for note in partner_rules.review:
+                print(f"mapcheck: partner rules note (not enforced): {note}", file=sys.stderr)
         if args.partner:
             from mapcheck.spec.overrides import resolve_spec
 
@@ -287,12 +334,15 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         else:
             spec = load_spec(args.spec)
         if _is_interchange(spec, args.source, args.output):
-            return _run_interchange(args, color, output_format, merged_spec)
+            return _run_interchange(args, color, output_format, merged_spec, partner_rules)
         result = validate_files(
             args.spec, args.source, args.output,
             transaction=args.transaction, output_format=output_format, spec=merged_spec,
+            partner_rules=partner_rules,
         )
-    except (SpecLoadError, X12ParseError, OutputLoadError, DefinitionError) as exc:
+    except (
+        SpecLoadError, X12ParseError, OutputLoadError, DefinitionError, PartnerRulesError,
+    ) as exc:
         print(f"mapcheck: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
@@ -317,11 +367,12 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 def _run_interchange(
     args: argparse.Namespace, color: bool | None, output_format: str | None = None,
-    spec=None,
+    spec=None, partner_rules=None,
 ) -> int:
     result = validate_interchange_files(
         args.spec, args.source, args.output,
         transaction=args.transaction, output_format=output_format, spec=spec,
+        partner_rules=partner_rules,
     )
     print(render_interchange_report(result, verbose=args.verbose, color=color))
 
@@ -356,7 +407,33 @@ def _resolve_draft_target(name: str):
     raise DefinitionError(f"unknown target format {name!r} (registered: {known})")
 
 
+def _load_draft_guide(guide_arg: str, set_code: str):
+    """Resolve draft-spec's --guide: a profile .yaml or a raw guide file.
+
+    A raw guide parses with the draft's transaction set and no partner
+    name (the profile is transient here — import-guide is the verb that
+    names and keeps one). A profile for a different transaction set is an
+    error, never silently flavored onto the wrong draft.
+    """
+    from mapcheck.guides.parser import parse_guide
+    from mapcheck.guides.profile import GuideProfile, GuideProfileError
+
+    path = Path(guide_arg)
+    if path.suffix.lower() in (".yaml", ".yml"):
+        profile = GuideProfile.load(path)
+    else:
+        profile = parse_guide(path, transaction=set_code, partner="")
+    if profile.transaction != set_code:
+        raise GuideProfileError(
+            f"{path}: guide profile is for transaction set {profile.transaction} "
+            f"but the draft is a {set_code}"
+        )
+    return profile
+
+
 def _cmd_draft_spec(args: argparse.Namespace) -> int:
+    from mapcheck.guides.parser import GuideParseError
+    from mapcheck.guides.profile import GuideProfileError
     from mapcheck.spec.draft import (
         CrosswalkError,
         DraftSpecError,
@@ -372,6 +449,9 @@ def _cmd_draft_spec(args: argparse.Namespace) -> int:
     try:
         definition = default_registry.get(args.transaction)
         target_def = _resolve_draft_target(args.target)
+        guide = (
+            _load_draft_guide(args.guide, definition.set_code) if args.guide else None
+        )
         short_target = target_def.format.rsplit("-", 1)[-1]
         crosswalks = [
             *bundled_crosswalks(definition.set_code, short_target),
@@ -383,8 +463,12 @@ def _cmd_draft_spec(args: argparse.Namespace) -> int:
             crosswalks,
             output,
             include_optional_todos=args.fill_unmapped,
+            guide=guide,
         )
-    except (UnknownTransactionError, DefinitionError, CrosswalkError, DraftSpecError) as exc:
+    except (
+        UnknownTransactionError, DefinitionError, CrosswalkError, DraftSpecError,
+        GuideParseError, GuideProfileError,
+    ) as exc:
         print(f"mapcheck: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
@@ -399,6 +483,82 @@ def _cmd_draft_spec(args: argparse.Namespace) -> int:
         f"Prefill: {result.prefill:.2f} "
         f"({result.filled_required}/{result.total_required} required targets filled)"
     )
+    if guide is not None:
+        partner = f"partner {guide.partner}" if guide.partner else "the partner guide"
+        print(
+            f"Guide: flavored by {partner} ({guide.source or args.guide}) — "
+            f"parse coverage {guide.parse_coverage:.2f}"
+        )
+        for note in guide.review:
+            print(f"  - guide review: {note}")
+        if result.guide_review:
+            print(
+                f"{len(result.guide_review)} decision(s) need review "
+                "(see the Guide Review sheet):"
+            )
+            for note in result.guide_review:
+                print(f"  - {note}")
+    return 0
+
+
+def _cmd_import_guide(args: argparse.Namespace) -> int:
+    from mapcheck.guides.overlay import emit_partner_rules
+    from mapcheck.guides.parser import GuideParseError, parse_guide
+    from mapcheck.transactions.registry import default_registry
+
+    profile_path = Path(args.profile)
+    if profile_path.exists():
+        print(f"mapcheck: {profile_path} already exists, not overwriting", file=sys.stderr)
+        return EXIT_USAGE
+    overlay_path = Path(args.overlay) if args.overlay else None
+    if overlay_path is not None and overlay_path.exists():
+        print(f"mapcheck: {overlay_path} already exists, not overwriting", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        profile = parse_guide(
+            args.input, transaction=args.transaction, partner=args.partner
+        )
+    except GuideParseError as exc:
+        print(f"mapcheck: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    registered = sorted(d.set_code for d in default_registry.all())
+    if profile.transaction not in registered:
+        print(
+            f"mapcheck: note: transaction set {profile.transaction} has no "
+            f"registered definition (registered: {', '.join(registered)}) — the "
+            "profile will still write, but validate and draft-spec need a "
+            "registered set",
+            file=sys.stderr,
+        )
+
+    profile.save(profile_path)
+    element_count = sum(len(seg.elements) for seg in profile.segments)
+    print(f"Guide profile written to {profile_path}")
+    print(
+        f"Parsed: {len(profile.segments)} segment(s), {element_count} element(s) — "
+        f"parse coverage {profile.parse_coverage:.2f} "
+        f"({profile.facts_confident}/{profile.facts_detected} facts)"
+    )
+    if profile.review:
+        print(
+            f"\n{len(profile.review)} item(s) need review "
+            "(kept in the profile's review list):"
+        )
+        for note in profile.review:
+            print(f"  - {note}")
+
+    if overlay_path is not None:
+        rules = emit_partner_rules(profile)
+        rules.save(overlay_path)
+        print(f"\nPartner rules overlay written to {overlay_path}")
+        print(
+            f"Rules: {len(rules.required_segments)} required segment(s), "
+            f"{len(rules.required_elements)} required element(s)"
+        )
+        for note in rules.review:
+            print(f"  - review (not enforced): {note}")
+        print(f"Enforce with: mapcheck validate ... --partner-rules {overlay_path}")
     return 0
 
 
@@ -683,6 +843,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {
         "validate": _cmd_validate,
         "draft-spec": _cmd_draft_spec,
+        "import-guide": _cmd_import_guide,
         "init-spec": _cmd_init_spec,
         "import-spec": _cmd_import_spec,
         "merge-spec": _cmd_merge_spec,

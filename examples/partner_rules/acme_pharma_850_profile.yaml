@@ -1,0 +1,402 @@
+transaction: '850'
+partner: acme_pharma
+source: acme_pharma_850_guide.txt
+version: ''
+parse_coverage: 1.0
+facts_confident: 64
+facts_detected: 64
+segments:
+- id: BEG
+  name: Beginning Segment for Purchase Order
+  pos: '020'
+  max_use: '1'
+  loop: ''
+  usage: must_use
+  elements:
+  - ref: BEG01
+    name: Transaction Set Purpose Code
+    req: M
+    type: ID
+    min: 2
+    max: 2
+    usage: must_use
+    codes:
+    - code: '00'
+      name: Original
+  - ref: BEG02
+    name: Purchase Order Type Code
+    req: M
+    type: ID
+    min: 2
+    max: 2
+    usage: must_use
+    codes:
+    - code: NE
+      name: New Order
+  - ref: BEG03
+    name: Purchase Order Number
+    req: M
+    type: AN
+    min: 1
+    max: 22
+    usage: must_use
+  - ref: BEG04
+    name: Release Number
+    req: O
+    type: AN
+    min: 1
+    max: 30
+    usage: not_used
+  - ref: BEG05
+    name: Date
+    req: M
+    type: DT
+    min: 8
+    max: 8
+    usage: must_use
+    notes:
+    - This is the date assigned by Acme Pharma to the purchase order.
+- id: CUR
+  name: Currency
+  pos: '040'
+  max_use: '1'
+  loop: ''
+  usage: used
+  elements:
+  - ref: CUR01
+    name: Entity Identifier Code
+    req: M
+    type: ID
+    min: 2
+    max: 3
+    usage: used
+  - ref: CUR02
+    name: Currency Code
+    req: M
+    type: ID
+    min: 3
+    max: 3
+    usage: used
+- id: REF
+  name: Reference Identification
+  pos: '050'
+  max_use: '1'
+  loop: ''
+  usage: must_use
+  elements:
+  - ref: REF01
+    name: Reference Identification Qualifier
+    req: M
+    type: ID
+    min: 2
+    max: 3
+    usage: must_use
+    codes:
+    - code: IA
+      name: Internal Vendor Number
+  - ref: REF02
+    name: Reference Identification
+    req: M
+    type: AN
+    min: 1
+    max: 30
+    usage: must_use
+    notes:
+    - The internal vendor number is required in the heading of every order.
+- id: PER
+  name: Administrative Communications Contact
+  pos: '060'
+  max_use: '3'
+  loop: ''
+  usage: used
+  elements:
+  - ref: PER01
+    name: Contact Function Code
+    req: M
+    type: ID
+    min: 2
+    max: 2
+    usage: used
+  - ref: PER02
+    name: Name
+    req: O
+    type: AN
+    min: 1
+    max: 60
+    usage: used
+  - ref: PER03
+    name: Communication Number Qualifier
+    req: O
+    type: ID
+    min: 2
+    max: 2
+    usage: used
+  - ref: PER04
+    name: Communication Number
+    req: O
+    type: AN
+    min: 1
+    max: 80
+    usage: used
+- id: DTM
+  name: Date/Time Reference
+  pos: '150'
+  max_use: '10'
+  loop: ''
+  usage: must_use
+  elements:
+  - ref: DTM01
+    name: Date/Time Qualifier
+    req: M
+    type: ID
+    min: 3
+    max: 3
+    usage: must_use
+    codes:
+    - code: '002'
+      name: Requested Delivery
+  - ref: DTM02
+    name: Date
+    req: M
+    type: DT
+    min: 8
+    max: 8
+    usage: must_use
+    notes:
+    - The requested delivery date is required on every order.
+- id: N1
+  name: Name
+  pos: '310'
+  max_use: '1'
+  loop: N1
+  usage: must_use
+  elements:
+  - ref: N101
+    name: Entity Identifier Code
+    req: M
+    type: ID
+    min: 2
+    max: 3
+    usage: must_use
+  - ref: N102
+    name: Name
+    req: O
+    type: AN
+    min: 1
+    max: 60
+    usage: must_use
+  - ref: N103
+    name: Identification Code Qualifier
+    req: O
+    type: ID
+    min: 1
+    max: 2
+    usage: used
+  - ref: N104
+    name: Identification Code
+    req: O
+    type: AN
+    min: 2
+    max: 80
+    usage: used
+- id: N3
+  name: Address Information
+  pos: '330'
+  max_use: '2'
+  loop: N1
+  usage: used
+  elements:
+  - ref: N301
+    name: Address Information
+    req: M
+    type: AN
+    min: 1
+    max: 55
+    usage: used
+  - ref: N302
+    name: Address Information
+    req: O
+    type: AN
+    min: 1
+    max: 55
+    usage: used
+- id: N4
+  name: Geographic Location
+  pos: '340'
+  max_use: '1'
+  loop: N1
+  usage: used
+  elements:
+  - ref: N401
+    name: City Name
+    req: O
+    type: AN
+    min: 2
+    max: 30
+    usage: used
+  - ref: N402
+    name: State or Province Code
+    req: O
+    type: ID
+    min: 2
+    max: 2
+    usage: used
+  - ref: N403
+    name: Postal Code
+    req: O
+    type: ID
+    min: 3
+    max: 15
+    usage: used
+- id: PO1
+  name: Baseline Item Data
+  pos: '010'
+  max_use: '1'
+  loop: PO1
+  usage: must_use
+  elements:
+  - ref: PO101
+    name: Assigned Identification
+    req: O
+    type: AN
+    min: 1
+    max: 20
+    usage: must_use
+  - ref: PO102
+    name: Quantity Ordered
+    req: M
+    type: R
+    min: 1
+    max: 15
+    usage: must_use
+  - ref: PO103
+    name: Unit or Basis for Measurement Code
+    req: M
+    type: ID
+    min: 2
+    max: 2
+    usage: must_use
+  - ref: PO104
+    name: Unit Price
+    req: M
+    type: R
+    min: 1
+    max: 17
+    usage: must_use
+  - ref: PO105
+    name: Basis of Unit Price Code
+    req: O
+    type: ID
+    min: 2
+    max: 2
+    usage: not_used
+  - ref: PO106
+    name: Product/Service ID Qualifier
+    req: O
+    type: ID
+    min: 2
+    max: 2
+    usage: must_use
+    codes:
+    - code: VN
+      name: Vendor Part Number
+  - ref: PO107
+    name: Product/Service ID
+    req: O
+    type: AN
+    min: 1
+    max: 48
+    usage: must_use
+  - ref: PO108
+    name: Product/Service ID Qualifier
+    req: O
+    type: ID
+    min: 2
+    max: 2
+    usage: must_use
+    codes:
+    - code: UP
+      name: UPC Consumer Package Code
+  - ref: PO109
+    name: Product/Service ID
+    req: O
+    type: AN
+    min: 1
+    max: 48
+    usage: must_use
+    notes:
+    - Every PO1 line must carry a UP qualifier pair with the UPC.
+- id: PID
+  name: Product/Item Description
+  pos: '050'
+  max_use: '1'
+  loop: PO1
+  usage: used
+  elements:
+  - ref: PID01
+    name: Item Description Type
+    req: M
+    type: ID
+    min: 1
+    max: 1
+    usage: used
+    codes:
+    - code: F
+      name: Free-form
+  - ref: PID05
+    name: Description
+    req: O
+    type: AN
+    min: 1
+    max: 80
+    usage: used
+- id: SAC
+  name: Service, Promotion, Allowance, or Charge Information
+  pos: '130'
+  max_use: '25'
+  loop: ''
+  usage: not_used
+  elements:
+  - ref: SAC01
+    name: Allowance or Charge Indicator
+    req: M
+    type: ID
+    min: 1
+    max: 1
+    usage: not_used
+  - ref: SAC02
+    name: Service, Promotion, Allowance, or Charge Code
+    req: O
+    type: ID
+    min: 4
+    max: 4
+    usage: not_used
+  - ref: SAC05
+    name: Amount
+    req: O
+    type: N2
+    min: 1
+    max: 15
+    usage: not_used
+- id: CTT
+  name: Transaction Totals
+  pos: '010'
+  max_use: '1'
+  loop: ''
+  usage: must_use
+  elements:
+  - ref: CTT01
+    name: Number of Line Items
+    req: M
+    type: N0
+    min: 1
+    max: 6
+    usage: must_use
+  - ref: CTT02
+    name: Hash Total
+    req: O
+    type: R
+    min: 1
+    max: 10
+    usage: must_use
+review: []

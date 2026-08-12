@@ -25,18 +25,23 @@ embeds save timestamps).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from dataclasses import replace as dataclass_replace
 from pathlib import Path
 
 import yaml
 from openpyxl.styles import PatternFill
 
 from mapcheck import __version__
+from mapcheck.guides.profile import GuideProfile
 from mapcheck.output.idoc import DraftTarget, OutputFormatDef
 from mapcheck.spec.conditions import ConditionSyntaxError, parse_condition, parse_outcome
 from mapcheck.spec.formats import FormatSpecError, parse_format
 from mapcheck.spec.model import LoopContext, RuleType, split_source_field
 from mapcheck.spec.template import build_template
 from mapcheck.transactions.schema import TransactionDefinition
+
+#: Display form of the guide's normalized usage values.
+_USAGE_DISPLAY = {"must_use": "Must use", "used": "Used", "not_used": "Not used"}
 
 #: Directory of bundled starter crosswalks, one file per
 #: (transaction, target) pair: ``850_orders05.yaml``.
@@ -353,6 +358,7 @@ class SourceElement:
     field: str  # e.g. "BEG03"
     context: str  # "" for area segments, the loop id ("PO1") for loop members
     name: str  # human name from the element dictionary
+    partner_usage: str = ""  # "Must use"/"Used" from a guide, "" without one
 
 
 def walk_source_elements(definition: TransactionDefinition) -> tuple[SourceElement, ...]:
@@ -442,6 +448,14 @@ class DraftResult:
     crosswalk_files: tuple[str, ...]
     filled_required: int
     total_required: int
+    #: Guide flavoring (Design 014): set when a profile shaped this draft.
+    guided: bool = False
+    guide_partner: str = ""
+    guide_source: str = ""
+    #: Decisions the guide surfaced that no rule can settle mechanically
+    #: (partner codes with no crosswalk translation, mapped-but-not-used
+    #: elements) — written to the Guide Review sheet, never dropped.
+    guide_review: tuple[str, ...] = ()
 
     @property
     def prefill(self) -> float:
@@ -459,6 +473,7 @@ def assemble_draft(
     output_def: OutputFormatDef,
     crosswalk: Crosswalk,
     include_optional_todos: bool = False,
+    guide: GuideProfile | None = None,
 ) -> DraftResult:
     """Join the two walks through the crosswalk.
 
@@ -467,11 +482,21 @@ def assemble_draft(
     crosswalked (or, with ``include_optional_todos``, as TODO rows too).
     Source elements never referenced by a placed rule go on the Unmapped
     Source list. prefill = filled required rows / total required rows.
+
+    With a ``guide`` profile (Design 014) the draft is partner-flavored:
+    guide notes flow into filled rows' Notes, ``not_used`` elements leave
+    Unmapped Source (the partner said no — they are not triage), remaining
+    unmapped elements show the partner's usage, and CODE_LIST code lists
+    are filtered to the partner's code subset. Partner codes with no
+    crosswalk translation, and mapped elements the guide marks not-used,
+    land in ``guide_review`` — surfaced, never resolved by guesswork.
     """
     rows: list[DraftRow] = []
     referenced: set[tuple[str, int]] = set()
     filled_required = 0
     total_required = 0
+    guide_elements = guide.element_usage() if guide is not None else {}
+    guide_review: list[str] = []
 
     def mark(field_ref: str | None) -> None:
         if not field_ref:
@@ -482,6 +507,15 @@ def assemble_draft(
             return
         referenced.add((seg_id, element))
 
+    def guide_element(field_ref: str | None):
+        if not field_ref:
+            return None
+        try:
+            key = split_source_field(field_ref)
+        except ValueError:
+            return None
+        return guide_elements.get(key)
+
     for target in walk_target_paths(output_def):
         if target.required:
             total_required += 1
@@ -489,6 +523,17 @@ def assemble_draft(
         if hit is not None:
             if target.required:
                 filled_required += 1
+            notes = hit.note or target.name
+            source_el = guide_element(hit.source)
+            if source_el is not None:
+                if source_el.notes:
+                    suffix = f"Partner note: {'; '.join(source_el.notes)}"
+                    notes = f"{notes} — {suffix}" if notes else suffix
+                if source_el.usage == "not_used":
+                    guide_review.append(
+                        f"{hit.source} is mapped to {target.path} but the guide "
+                        "marks it Not used — confirm the mapping with the partner"
+                    )
             rows.append(
                 DraftRow(
                     row_id=f"D-{len(rows) + 1:03d}",
@@ -503,7 +548,7 @@ def assemble_draft(
                     code_list=hit.code_list or "",
                     data_type=target.data_type or "",
                     format=hit.format if hit.format is not None else (target.format or ""),
-                    notes=hit.note or target.name,
+                    notes=notes,
                     filled=True,
                     required=target.required,
                 )
@@ -532,22 +577,60 @@ def assemble_draft(
                 )
             )
 
-    unmapped = tuple(
-        element
-        for element in walk_source_elements(definition)
-        if (split_source_field(element.field)) not in referenced
-    )
+    code_lists = dict(crosswalk.code_lists)
+    if guide is not None:
+        # Partner code subsets: rows in draft order, codes in guide order.
+        subsets: dict[str, dict[str, str]] = {}
+        for row in rows:
+            if row.rule != RuleType.CODE_LIST.value or not row.code_list:
+                continue
+            el = guide_element(row.source)
+            if el is None or not el.codes:
+                continue
+            bucket = subsets.setdefault(row.code_list, {})
+            for code in el.codes:
+                bucket.setdefault(code.code, code.name)
+        for list_name, partner_codes in subsets.items():
+            entries = code_lists.get(list_name, ())
+            known = {entry.source for entry in entries}
+            code_lists[list_name] = tuple(
+                entry for entry in entries if entry.source in partner_codes
+            )
+            for code, code_name in partner_codes.items():
+                if code not in known:
+                    label = f"{code} ({code_name})" if code_name else code
+                    guide_review.append(
+                        f"code list {list_name}: partner code {label} has no "
+                        "crosswalk translation — decide its target value"
+                    )
+
+    unmapped: list[SourceElement] = []
+    for element in walk_source_elements(definition):
+        key = split_source_field(element.field)
+        if key in referenced:
+            continue
+        el = guide_elements.get(key)
+        if el is not None and el.usage == "not_used":
+            continue  # the partner said no — not triage
+        usage = _USAGE_DISPLAY.get(el.usage, "") if el is not None else ""
+        unmapped.append(
+            element if not usage else dataclass_replace(element, partner_usage=usage)
+        )
 
     return DraftResult(
         transaction=definition.set_code,
         transaction_version=definition.version or "",
         target_format=output_def.format,
         rows=tuple(rows),
-        unmapped_source=unmapped,
-        code_lists=dict(crosswalk.code_lists),
+        unmapped_source=tuple(unmapped),
+        code_lists=code_lists,
         crosswalk_files=crosswalk.files,
         filled_required=filled_required,
         total_required=total_required,
+        guided=guide is not None,
+        guide_partner=guide.partner if guide is not None else "",
+        guide_source=guide.source if guide is not None else "",
+        guide_review=tuple(guide_review),
     )
 
 
@@ -607,16 +690,22 @@ def write_draft(result: DraftResult, path: str | Path) -> Path:
         "Tool Version": __version__,
         "Prefill": f"{result.prefill:.2f}",
     }
+    if result.guided:
+        guide_label = result.guide_source or "(unnamed guide)"
+        if result.guide_partner:
+            guide_label = f"{result.guide_partner} — {guide_label}"
+        extra["Guide"] = guide_label
     next_row = ws_meta.max_row + 1
     for key, value in extra.items():
         ws_meta.cell(row=next_row, column=1, value=key)
         ws_meta.cell(row=next_row, column=2, value=value)
         next_row += 1
 
+    unmapped_headers = [("Source Field", 14), ("Loop Context", 14), ("Element Name", 44)]
+    if result.guided:
+        unmapped_headers.append(("Partner Usage", 14))
     ws_unmapped = wb.create_sheet("Unmapped Source")
-    for c, (header, width) in enumerate(
-        (("Source Field", 14), ("Loop Context", 14), ("Element Name", 44)), start=1
-    ):
+    for c, (header, width) in enumerate(unmapped_headers, start=1):
         ws_unmapped.cell(row=1, column=c, value=header)
         ws_unmapped.column_dimensions[chr(ord("A") + c - 1)].width = width
     ws_unmapped.freeze_panes = "A2"
@@ -625,6 +714,16 @@ def write_draft(result: DraftResult, path: str | Path) -> Path:
         if element.context:
             ws_unmapped.cell(row=r, column=2, value=element.context)
         ws_unmapped.cell(row=r, column=3, value=element.name)
+        if result.guided and element.partner_usage:
+            ws_unmapped.cell(row=r, column=4, value=element.partner_usage)
+
+    if result.guide_review:
+        ws_review = wb.create_sheet("Guide Review")
+        ws_review.cell(row=1, column=1, value="Decision Needed")
+        ws_review.column_dimensions["A"].width = 100
+        ws_review.freeze_panes = "A2"
+        for r, note in enumerate(result.guide_review, start=2):
+            ws_review.cell(row=r, column=1, value=note)
 
     wb.save(path)
     return path
@@ -636,11 +735,13 @@ def generate_draft(
     crosswalk_paths: list[str | Path],
     output_path: str | Path,
     include_optional_todos: bool = False,
+    guide: GuideProfile | None = None,
 ) -> DraftResult:
     """Load crosswalks, assemble, and write — the CLI/UI entry point."""
     crosswalk = load_crosswalks(crosswalk_paths) if crosswalk_paths else Crosswalk()
     result = assemble_draft(
-        definition, output_def, crosswalk, include_optional_todos=include_optional_todos
+        definition, output_def, crosswalk,
+        include_optional_todos=include_optional_todos, guide=guide,
     )
     write_draft(result, output_path)
     return result

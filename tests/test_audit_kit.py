@@ -378,11 +378,39 @@ class TestFile4PartnerRules:
         assert counts[Status.WARNING] == 0
         assert counts[Status.PASS] == 39
         # The three fictional companion-guide requirements the file violates
-        # surface only as NOT TESTED (DTM*002, REF*IA) — the partner-rule
-        # overlay is a roadmap item, not a base-standard check.
+        # surface only as NOT TESTED (DTM*002, REF*IA) — enforcing them
+        # takes a partner-rules overlay (the test below).
         assert _rows(run, Status.NOT_TESTED) == {
             "M-008", "M-010", "M-011", "M-013", "M-020", "M-030", "M-031",
         }
+
+    def test_partner_overlay_closes_the_gap(self, harness_dir: Path):
+        """With the Design 014 overlay the same file FAILs on all three
+        seeded companion-guide defects: no DTM*002, no REF*IA, and no UP
+        qualifier pair on either PO1 line."""
+        from mapcheck.guides.overlay import emit_partner_rules
+        from mapcheck.guides.parser import parse_guide
+
+        profile = parse_guide(
+            Path(__file__).parent / "fixtures" / "guides" / "acme_pharma_850_guide.txt",
+            transaction="850",
+            partner="acme_pharma",
+        )
+        run = validate_files(
+            str(harness_dir / "audit_spec.xlsx"),
+            str(KIT / "850_04_partner_rules.edi"),
+            str(harness_dir / "850_04_partner_rules.json"),
+            partner_rules=emit_partner_rules(profile),
+        )
+        assert run.overall is Status.FAIL
+        fails = [f for f in run.findings if f.status is Status.FAIL]
+        assert {f.source_ref for f in fails} == {
+            "DTM*002", "REF*IA",
+            "PO1 #1 PO108", "PO1 #2 PO108", "PO1 #1 PO109", "PO1 #2 PO109",
+        }
+        assert all("required by partner acme_pharma" in f.message for f in fails)
+        # the base-standard result is untouched: same PASS count as above
+        assert _statuses(run)[Status.PASS] == 39
 
 
 class TestFile5Truncated:

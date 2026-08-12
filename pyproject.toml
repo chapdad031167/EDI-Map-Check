@@ -29,7 +29,10 @@ dependencies = [
 # The UI pins the Streamlit minor version: styling targets framework
 # internals verified against this exact minor (Design 013).
 ui = ["streamlit>=1.61,<1.62"]
-dev = ["pytest>=8.0", "streamlit>=1.61,<1.62"]
+# PDF implementation-guide import (Design 014). The .txt path needs no extra.
+guides = ["pdfplumber>=0.11"]
+# fpdf2 only regenerates the committed PDF guide fixture (scripts/).
+dev = ["pytest>=8.0", "streamlit>=1.61,<1.62", "pdfplumber>=0.11", "fpdf2>=2.7"]
 
 [project.scripts]
 mapcheck = "mapcheck.cli:main"
