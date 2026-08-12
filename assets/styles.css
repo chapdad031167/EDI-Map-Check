@@ -1,0 +1,128 @@
+/* EDI MapCheck — interface identity (Design 013: "instrument, not toy").
+ *
+ * Small and semantic, injected once at startup. Color tokens mirror the
+ * [theme] block in .streamlit/config.toml; font faces are registered
+ * there too (the pinned Streamlit minor's native mechanism), so this
+ * sheet only APPLIES identity: chrome removal, the wordmark, the verdict
+ * strip, the findings table, and the mono class. No animation anywhere —
+ * instruments do not animate. Selectors verified against Streamlit 1.61.
+ */
+
+:root {
+  --paper: #F6F8F7;
+  --panel: #EDF1EF;
+  --ink: #1A2421;
+  --petrol: #0F5468;
+  --pass: #1E7A46;
+  --fail: #B42D22;
+  --warn: #8A6100;
+  --slate: #5C6B66;
+  --rule: #D7DEDA; /* hairlines derived from panel */
+}
+
+/* -- chrome removal (verified on 1.61: toolbar carries the deploy button
+      and main menu; stDecoration is the top gradient bar) ---------------- */
+[data-testid="stToolbar"],
+[data-testid="stMainMenu"],
+[data-testid="stDecoration"],
+[data-testid="stStatusWidget"] {
+  display: none !important;
+}
+#MainMenu,
+footer {
+  visibility: hidden; /* legacy nodes; harmless when absent */
+}
+
+/* -- wordmark: typographic, no logo artwork ---------------------------- */
+.wordmark {
+  font-family: "IBM Plex Sans", sans-serif;
+  font-weight: 600;
+  font-size: 1.75rem;
+  color: var(--petrol);
+  letter-spacing: 0.01em;
+  padding: 0.1rem 0 0.35rem 0;
+}
+
+/* -- mono: X12 notation is fixed-width wire data ----------------------- */
+.mono,
+code {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+/* -- verdict strip: the signature, spent in one place ------------------ */
+.verdict-strip {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--panel);
+  border-left: 6px solid var(--slate);
+  padding: 0.6rem 1rem;
+  margin: 0.4rem 0 0.9rem 0;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+.verdict-strip .verdict-result {
+  font-weight: 500;
+  margin-left: 3em;
+}
+.verdict-pass  { border-left-color: var(--pass); }
+.verdict-pass .verdict-result { color: var(--pass); }
+.verdict-fail  { border-left-color: var(--fail); }
+.verdict-fail .verdict-result { color: var(--fail); }
+.verdict-warning { border-left-color: var(--warn); }
+.verdict-warning .verdict-result { color: var(--warn); }
+
+/* -- findings table: dense, precise, never color alone ----------------- */
+.findings-wrap {
+  max-height: 480px;
+  overflow: auto;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+}
+table.findings {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+table.findings th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", sans-serif;
+  font-weight: 600;
+  text-align: left;
+  padding: 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+table.findings td {
+  padding: 0.22rem 0.6rem;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  color: var(--ink);
+}
+table.findings td.mono {
+  font-family: "IBM Plex Mono", monospace;
+}
+table.findings td.status-cell {
+  white-space: nowrap;
+  font-family: "IBM Plex Mono", monospace;
+}
+.status-dot {
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  margin-right: 0.45em;
+  vertical-align: baseline;
+}
+.status-pass { color: var(--pass); }
+.status-pass .status-dot { background: var(--pass); }
+.status-fail { color: var(--fail); }
+.status-fail .status-dot { background: var(--fail); }
+.status-warning { color: var(--warn); }
+.status-warning .status-dot { background: var(--warn); }
+.status-not-tested { color: var(--slate); }
+.status-not-tested .status-dot { background: var(--slate); }

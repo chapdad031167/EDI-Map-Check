@@ -128,6 +128,30 @@ class Operand:
 
 
 @dataclass(frozen=True)
+class RequiredElementDef:
+    """A base-standard mandatory element, checked on every occurrence.
+
+    ``segment`` is the segment id and ``element`` the 1-based position that
+    must carry a value in every occurrence of that segment. ``name`` is the
+    human name used in messages ("PO number"). With ``when_present`` set
+    (another 1-based element of the same segment), the element is required
+    only in occurrences where that other element has a value — X12
+    relational conditions, e.g. the 850's C0302 (if PO103 then PO102);
+    ``when_name`` names it for messages.
+
+    Base-standard requiredness is spec-independent: it lives here in the
+    transaction definition, not in any mapping spec, and an empty required
+    element is a FAILURE, never NOT TESTED.
+    """
+
+    segment: str
+    element: int
+    name: str = ""
+    when_present: int | None = None
+    when_name: str = ""
+
+
+@dataclass(frozen=True)
 class ReconRule:
     """A declarative source-side reconciliation check."""
 
@@ -152,6 +176,7 @@ class TransactionDefinition:
     areas: tuple[AreaDef, ...] = ()
     output_pairing: OutputPairing | None = None
     reconciliation: tuple[ReconRule, ...] = ()
+    required_elements: tuple[RequiredElementDef, ...] = ()
     source: str = ""  # where this definition was loaded from, for messages
 
     def all_loops(self) -> list[LoopDef]:

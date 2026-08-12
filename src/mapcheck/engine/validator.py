@@ -194,6 +194,18 @@ def validate(
         result.findings.append(
             Finding(status=Status.WARNING, source_ref="(spec)", message=f"spec note: {note}")
         )
+    # Envelope failures are strict: a broken envelope fails the run.
+    for issue in tx.control_errors:
+        result.findings.append(
+            Finding(
+                status=Status.FAIL,
+                category=Category.CONTROL,
+                source_ref="(envelope)",
+                expected=issue.expected,
+                actual=issue.actual,
+                message=issue.message,
+            )
+        )
     for note in tx.control_notes:
         result.findings.append(
             Finding(
@@ -225,6 +237,7 @@ def validate(
                 message=f"{structure_side}hierarchical structure defect: {error}",
             )
         )
+    _check_required_elements(tx, result, structure_category, structure_side)
 
     for rule in spec.rules:
         if outbound:
@@ -486,6 +499,17 @@ def validate_interchange(
         output_path=output_path,
         spec_name=spec.meta.get("Spec Name"),
     )
+    for issue in interchange.control_errors:
+        result.file_findings.append(
+            Finding(
+                status=Status.FAIL,
+                category=Category.CONTROL,
+                source_ref="(envelope)",
+                expected=issue.expected,
+                actual=issue.actual,
+                message=issue.message,
+            )
+        )
     for note in interchange.control_notes:
         result.file_findings.append(
             Finding(
@@ -1096,6 +1120,58 @@ def _evaluate_condition(condition: Condition, source: Any) -> bool:
 # --------------------------------------------------------------------------
 # Cross-cutting checks
 # --------------------------------------------------------------------------
+
+
+def _check_required_elements(
+    tx: TransactionDocument,
+    result: RunResult,
+    category: Category,
+    structure_side: str,
+) -> None:
+    """Enforce the definition's base-standard mandatory elements.
+
+    Every occurrence of a required element's segment is checked; an empty
+    value is a FAILURE (``source_data`` inbound, ``unexpected_output``
+    outbound), never NOT TESTED — a PO without a PO number is defective no
+    matter what the mapping spec says. ``when_present`` entries fire only
+    in occurrences where the companion element carries a value (X12
+    relational conditions).
+    """
+    if not tx.definition.required_elements:
+        return
+    side = structure_side or "source "
+    for req in tx.definition.required_elements:
+        for label, seg in tx.business_segments():
+            if seg.seg_id != req.segment:
+                continue
+            if req.when_present is not None and seg.element(req.when_present) is None:
+                continue
+            if seg.element(req.element) is not None:
+                continue
+            ref = seg.ref(req.element)
+            name = f" ({req.name})" if req.name else ""
+            if req.when_present is not None:
+                when_ref = seg.ref(req.when_present)
+                when_name = f" ({req.when_name})" if req.when_name else ""
+                core = (
+                    f"{ref}{name} is required when {when_ref}{when_name} "
+                    f"is present, but is empty"
+                )
+            else:
+                core = (
+                    f"{ref}{name} is a mandatory element in the "
+                    f"{tx.definition.set_code} but is empty"
+                )
+            result.findings.append(
+                Finding(
+                    status=Status.FAIL,
+                    category=category,
+                    source_ref=f"{label} {ref}",
+                    expected="(a value)",
+                    actual="(empty)",
+                    message=f"{side}data invalid: {core}",
+                )
+            )
 
 
 def _check_line_counts(tx: TransactionDocument, output: CanonicalOutput, result: RunResult) -> None:
