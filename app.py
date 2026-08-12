@@ -304,6 +304,16 @@ def main() -> None:
     )
     load_css()
     st.markdown('<div class="wordmark">EDI MapCheck</div>', unsafe_allow_html=True)
+    pages = st.navigation(
+        [
+            st.Page(_validate_page, title="Validate", default=True),
+            st.Page(_draft_page, title="Draft spec"),
+        ]
+    )
+    pages.run()
+
+
+def _validate_page() -> None:
     st.markdown(
         "Vendor-neutral validation for EDI mapping work: a **mapping spec**, "
         "the **translation's source file**, and its **translated output** "
@@ -378,6 +388,120 @@ def main() -> None:
         st.info("Select a scenario or upload a spec, source, and output to begin.")
 
     _render_trends()
+
+
+def draft_preview_html(rows) -> str:
+    """Preview the draft: crosswalk-filled rows against amber TODO rows.
+
+    Reuses the findings-table classes — TODO cells render as an amber dot
+    plus the word, never color alone. Zero new CSS.
+    """
+    head = "".join(
+        f"<th>{html.escape(col)}</th>"
+        for col in ("Row ID", "Source Field", "Loop Context", "Target Field",
+                    "Rule Type", "Notes")
+    )
+    body: list[str] = []
+    for row in rows:
+        if row.filled:
+            rule_cell = f'<td class="mono">{html.escape(row.rule)}</td>'
+        else:
+            rule_cell = (
+                '<td class="status-cell status-warning">'
+                '<span class="status-dot"></span>TODO</td>'
+            )
+        body.append(
+            "<tr>"
+            f'<td class="mono">{html.escape(row.row_id)}</td>'
+            f'<td class="mono">{html.escape(row.source)}</td>'
+            f'<td class="mono">{html.escape(row.context)}</td>'
+            f'<td class="mono">{html.escape(row.target)}</td>'
+            f"{rule_cell}"
+            f"<td>{html.escape(row.notes)}</td>"
+            "</tr>"
+        )
+    return (
+        '<div class="findings-wrap"><table class="findings">'
+        f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody>"
+        "</table></div>"
+    )
+
+
+def _draft_page() -> None:
+    from mapcheck.output.idoc import default_output_registry
+    from mapcheck.spec.draft import bundled_crosswalks, generate_draft
+    from mapcheck.transactions.registry import default_registry
+
+    st.markdown(
+        "Generate a draft mapping spec from the built-in definitions: the "
+        "structural walk fills what the bundled crosswalk knows, every other "
+        "required target becomes a `TODO` row for the analyst, and source "
+        "elements no rule references land on the Unmapped Source sheet. "
+        "The draft loads straight into Validate once curated."
+    )
+
+    transactions = [d for d in default_registry.all() if d.elements]
+    targets = [f for f in default_output_registry.all() if f.draft_targets]
+    if not transactions or not targets:
+        st.error(
+            "No draftable definitions are registered: a transaction needs an "
+            "`elements` dictionary and a target format needs a `draft` block."
+        )
+        return
+
+    col_tx, col_target = st.columns(2)
+    tx_code = col_tx.selectbox(
+        "Transaction",
+        [d.set_code for d in transactions],
+        format_func=lambda code: f"{code} — "
+        + next(d.name for d in transactions if d.set_code == code),
+    )
+    target_format = col_target.selectbox(
+        "Target format", [f.format for f in targets]
+    )
+
+    if st.button("Draft spec", type="primary"):
+        definition = default_registry.get(tx_code)
+        target_def = default_output_registry.get(target_format)
+        short_target = target_format.rsplit("-", 1)[-1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+            result = generate_draft(
+                definition,
+                target_def,
+                bundled_crosswalks(tx_code, short_target),
+                tmp.name,
+            )
+            st.session_state["draft"] = (
+                result,
+                Path(tmp.name).read_bytes(),
+                f"draft_{tx_code}_{short_target}.xlsx",
+            )
+
+    if "draft" not in st.session_state:
+        st.info("Select a transaction and a target format, then run Draft spec.")
+        return
+
+    result, draft_bytes, file_name = st.session_state["draft"]
+    filled = sum(1 for row in result.rows if row.filled)
+    tone = "verdict-pass" if result.prefill >= 0.70 else "verdict-warning"
+    st.markdown(
+        f'<div class="verdict-strip {tone}">{filled} FILLED / '
+        f"{result.todo_count} TODO / {len(result.unmapped_source)} UNMAPPED SOURCE"
+        f'<span class="verdict-result">PREFILL: {result.prefill:.2f}</span></div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f"Prefill = filled required targets / total required targets "
+        f"({result.filled_required}/{result.total_required}). "
+        f"Crosswalk: `{', '.join(Path(f).name for f in result.crosswalk_files) or '(none)'}`"
+    )
+    st.markdown(draft_preview_html(result.rows), unsafe_allow_html=True)
+    st.download_button(
+        "Download draft (.xlsx)",
+        data=draft_bytes,
+        file_name=file_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 def _render_trends() -> None:

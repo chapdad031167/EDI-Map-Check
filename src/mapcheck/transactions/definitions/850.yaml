@@ -52,6 +52,31 @@ reconciliation:
     when: { exists: CTT01 }
     severity: warning
 
+# Element dictionary for draft-spec's source walk (Design 012): element
+# names in positional order, element 01 first. Commonly used commercial
+# subset — segments without an entry don't enumerate in drafts.
+elements:
+  BEG: [Transaction Set Purpose Code, Purchase Order Type, Purchase Order Number,
+        Release Number, Purchase Order Date]
+  CUR: [Currency Entity Qualifier, Currency Code]
+  REF: [Reference Identification Qualifier, Reference Identification]
+  PER: [Contact Function Code, Contact Name, Communication Qualifier,
+        Communication Number]
+  DTM: [Date/Time Qualifier, Date]
+  SAC: [Allowance or Charge Indicator, Allowance/Charge Code, Agency Qualifier,
+        Agency Code, Amount]
+  N1:  [Entity Identifier Code, Name, Identification Code Qualifier,
+        Identification Code]
+  N3:  [Address Line 1, Address Line 2]
+  N4:  [City Name, State or Province Code, Postal Code]
+  PO1: [Assigned Identification, Quantity Ordered, Unit of Measure Code,
+        Unit Price, Basis of Unit Price Code, Product ID Qualifier,
+        Product ID, Product ID Qualifier 2, Product ID 2]
+  PID: [Item Description Type, Product Characteristic Code, Agency Qualifier,
+        Product Description Code, Description]
+  CTT: [Number of Line Items, Hash Total]
+  AMT: [Amount Qualifier Code, Monetary Amount]
+
 # Base-standard mandatory elements. Spec-independent: an 850 without these
 # is defective no matter what any mapping spec says, so an empty value is a
 # FAILURE, never NOT TESTED.

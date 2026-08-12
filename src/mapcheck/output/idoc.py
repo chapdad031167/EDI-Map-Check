@@ -67,6 +67,21 @@ class SegmentDef:
 
 
 @dataclass(frozen=True)
+class DraftTarget:
+    """One concrete target path draft-spec can enumerate (Design 012).
+
+    ``required`` drives TODO emission and the prefill metric; ``data_type``
+    and ``format`` are worksheet defaults for the emitted row.
+    """
+
+    path: str
+    name: str = ""
+    required: bool = True
+    data_type: str | None = None
+    format: str | None = None
+
+
+@dataclass(frozen=True)
 class OutputFormatDef:
     """A declarative output-format definition."""
 
@@ -80,6 +95,8 @@ class OutputFormatDef:
     record_id_col: int = 0            # delimited: column holding the record code
     control_record: str = "EDI_DC40"  # flat control-record prefix
     xml_root: str | None = None       # xml detection: expected root tag
+    #: Concrete target paths for draft-spec, in definition order (Design 012).
+    draft_targets: tuple[DraftTarget, ...] = ()
 
 
 # --------------------------------------------------------------------------
@@ -138,6 +155,30 @@ def parse_definition(data: dict, source: str = "<definition>") -> OutputFormatDe
     flat_detect = detect.get("flat", {})
     xml_detect = detect.get("xml", {})
     segnam = tuple(data.get("segnam", (0, 30)))
+
+    draft_targets: list[DraftTarget] = []
+    draft_node = data.get("draft", {}) or {}
+    if not isinstance(draft_node, dict):
+        raise DefinitionError(f"{source}: 'draft' must be a mapping with a 'targets' list")
+    for index, target_node in enumerate(draft_node.get("targets", []) or []):
+        where = f"{source}: draft.targets[{index}]"
+        if not isinstance(target_node, dict) or not isinstance(
+            target_node.get("path"), str
+        ):
+            raise DefinitionError(f"{where}: expected a mapping with a 'path' string")
+        required = target_node.get("required", True)
+        if not isinstance(required, bool):
+            raise DefinitionError(f"{where}: 'required' must be true or false")
+        draft_targets.append(
+            DraftTarget(
+                path=target_node["path"],
+                name=str(target_node.get("name", "") or ""),
+                required=required,
+                data_type=target_node.get("data_type"),
+                format=target_node.get("format"),
+            )
+        )
+
     return OutputFormatDef(
         format=fmt,
         layout=layout,
@@ -149,6 +190,7 @@ def parse_definition(data: dict, source: str = "<definition>") -> OutputFormatDe
         record_id_col=data.get("record_id_col", 0),
         control_record=flat_detect.get("control_record", "EDI_DC40"),
         xml_root=xml_detect.get("root"),
+        draft_targets=tuple(draft_targets),
     )
 
 

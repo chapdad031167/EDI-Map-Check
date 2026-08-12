@@ -391,6 +391,17 @@ def parse_definition(data: Any, source: str) -> TransactionDefinition:
         if parsed_req:
             required.append(parsed_req)
 
+    elements: dict[str, tuple[str, ...]] = {}
+    elements_node = data.get("elements", {}) or {}
+    if not isinstance(elements_node, dict):
+        ctx.err("elements", "expected a mapping of segment id -> list of element names")
+    else:
+        for seg_id, names in elements_node.items():
+            if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+                ctx.err(f"elements.{seg_id}", "expected a list of element names")
+                continue
+            elements[str(seg_id).upper()] = tuple(names)
+
     if ctx.errors or not (set_code and name and group):
         if not ctx.errors:
             ctx.err("transaction", "set, name and functional_group are required")
@@ -405,6 +416,7 @@ def parse_definition(data: Any, source: str) -> TransactionDefinition:
         output_pairing=pairing,
         reconciliation=tuple(recon),
         required_elements=tuple(required),
+        elements=elements,
         source=source,
     )
 

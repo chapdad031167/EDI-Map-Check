@@ -240,6 +240,20 @@ def validate(
     _check_required_elements(tx, result, structure_category, structure_side)
 
     for rule in spec.rules:
+        if rule.rule_type is RuleType.TODO:
+            # Draft placeholder (Design 012): nothing to evaluate until a
+            # human decides the mapping.
+            result.findings.append(
+                Finding(
+                    status=Status.NOT_TESTED,
+                    row_id=rule.row_id,
+                    sheet_row=rule.sheet_row,
+                    source_ref=rule.source_ref(),
+                    target=rule.target_ref() if outbound else rule.target_field,
+                    message="Rule Type is TODO — the mapping for this target has not been decided yet",
+                )
+            )
+            continue
         if outbound:
             if rule.is_per_line:
                 result.findings.extend(_evaluate_per_line_out(rule, spec, tx, output))

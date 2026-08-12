@@ -302,6 +302,17 @@ def _parse_rule(
                     "because the Data Type is not decimal — NEEDS REVIEW"
                 )
 
+    # TODO rows are draft placeholders (Design 012): they load with a
+    # warning and report NOT TESTED at run time — exactly how outbound
+    # BLANK outcomes behave — so an uncurated draft can never silently
+    # pass validation.
+    if rule_type is RuleType.TODO and notes_out is not None:
+        notes_out.append(
+            f"Mapping row {idx} ({row_id or '?'}): Rule Type TODO — target "
+            f"{target_field or '?'} is not mapped yet and reports NOT TESTED "
+            "until the row is curated"
+        )
+
     # Cross-field requirements per rule type.
     if rule_type is RuleType.DIRECT and not source_field:
         err("DIRECT rule requires a Source Field")
@@ -402,7 +413,9 @@ def _parse_rule(
     else:
         per_line = target_field is not None and "[]" in target_field
         if per_line and loop_context is None:
-            if rule_type is not RuleType.LOOP_COUNT:
+            # LOOP_COUNT reads a count, and TODO has no mapping yet — neither
+            # needs a per-line context.
+            if rule_type not in (RuleType.LOOP_COUNT, RuleType.TODO):
                 err(
                     f"per-line target {target_field!r} requires a repeating Loop Context "
                     "(a loop id like 'PO1', or a level-qualified one like 'HL[I]')"

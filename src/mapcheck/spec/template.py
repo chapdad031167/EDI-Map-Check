@@ -81,6 +81,9 @@ RULE TYPE       DIRECT       source value lands in target (after type/format
                 CONSTANT     hardcoded value from Default Value (no source)
                 LOOP_COUNT   target = occurrence count of the loop named in
                              Source Field (e.g. PO1)
+                TODO         draft placeholder from draft-spec: the mapping is
+                             not decided yet. Loads with a warning; the row
+                             reports NOT TESTED until you replace it.
 CONDITION       (Text) is documentation for humans. (Coded) is what the
                 engine runs:  N101 = 'ST'
                               BEG02 != 'SA'
