@@ -38,7 +38,12 @@ mapcheck = "mapcheck.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-mapcheck = ["transactions/definitions/*.yaml", "scrub/profiles/*.yaml"]
+mapcheck = [
+    "transactions/definitions/*.yaml",
+    "output/definitions/*.yaml",
+    "scrub/profiles/*.yaml",
+    "crosswalks/*.yaml",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
