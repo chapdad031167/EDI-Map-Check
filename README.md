@@ -320,6 +320,10 @@ worklist; you finish the flagged handful, then validate as usual. Any
 source column that carried data but matched nothing is reported, so
 nothing is dropped silently.
 
+The app's **Import** page does the same in the browser: upload the
+partner document (plus an optional lookup-table file), review the
+worklist on screen, and download the native spec.
+
 ### Partner overrides
 
 One base spec, one small delta per partner — not 40 drifting full specs.

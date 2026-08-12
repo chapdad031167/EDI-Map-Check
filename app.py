@@ -319,6 +319,7 @@ def main() -> None:
         [
             st.Page(_validate_page, title="Validate", default=True),
             st.Page(_draft_page, title="Draft spec"),
+            st.Page(_import_page, title="Import"),
             st.Page(_scrub_page, title="Scrub"),
         ]
     )
@@ -594,6 +595,163 @@ def _render_template_download() -> None:
         file_name=f"mapcheck_spec_template_{direction}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+def worklist_table_html(rows) -> str:
+    """The needs-a-human worklist: one amber row per human decision.
+
+    Reuses the findings-table classes; the status cell is a dot plus the
+    word REVIEW, never color alone. Zero new CSS.
+    """
+    head = "".join(
+        f"<th>{html.escape(col)}</th>"
+        for col in ("Row ID", "Source Field", "Target Field", "Rule Type",
+                    "What needs deciding")
+    )
+    body: list[str] = []
+    for row in rows:
+        rule = row.values.get("Rule Type", "") or "(unclassified)"
+        body.append(
+            "<tr>"
+            f'<td class="mono">{html.escape(row.row_id)}</td>'
+            f'<td class="mono">{html.escape(row.values.get("Source Field", ""))}</td>'
+            f'<td class="mono">{html.escape(row.values.get("Target Field", ""))}</td>'
+            '<td class="status-cell status-warning">'
+            f'<span class="status-dot"></span>{html.escape(rule)}</td>'
+            f"<td>{html.escape(row.reason)}</td>"
+            "</tr>"
+        )
+    return (
+        '<div class="findings-wrap"><table class="findings">'
+        f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody>"
+        "</table></div>"
+    )
+
+
+def _import_page() -> None:
+    from mapcheck.cli import _parse_map_overrides
+    from mapcheck.spec.importer import (
+        ImportError_,
+        import_mapping,
+        write_workbook,
+        write_worklist,
+    )
+    from mapcheck.transactions.registry import default_registry
+
+    st.markdown(
+        "Bring a partner's existing mapping spreadsheet into the native "
+        "template. The importer locates their columns, auto-classifies every "
+        "rule the evidence supports, and flags — never silently guesses — "
+        "what needs a human. You finish the short worklist below instead of "
+        "retyping the whole spec, then validate as usual."
+    )
+
+    upload = st.file_uploader(
+        "Partner mapping document (.xlsx or .csv)", type=["xlsx", "csv"]
+    )
+    code_lists_upload = st.file_uploader(
+        "Lookup-table document (optional, .xlsx or .csv) — imported into the "
+        "CodeLists sheet",
+        type=["xlsx", "csv"],
+    )
+    with st.expander("Import options"):
+        col_tx, col_direction = st.columns(2)
+        tx_choice = col_tx.selectbox(
+            "Transaction Set (Meta)",
+            ["(from the document)"] + [d.set_code for d in default_registry.all()],
+        )
+        direction_choice = col_direction.selectbox(
+            "Direction (Meta)", ["(from the document)", "inbound", "outbound"]
+        )
+        spec_name = st.text_input("Spec Name (Meta)")
+        map_override = st.text_input(
+            "Column mapping override",
+            help="Only when detection picks the wrong columns. Same grammar as "
+            "the CLI --map flag: Source Field=B, Target Field=E "
+            "(header name or column letter).",
+        )
+
+    if st.button("Import mapping", type="primary", disabled=upload is None):
+        meta: dict[str, str] = {}
+        if tx_choice != "(from the document)":
+            meta["Transaction Set"] = tx_choice
+        if direction_choice != "(from the document)":
+            meta["Direction"] = direction_choice
+        if spec_name:
+            meta["Spec Name"] = spec_name
+        try:
+            overrides = _parse_map_overrides(map_override or None)
+            result = import_mapping(
+                _save_upload_named(upload),
+                overrides=overrides,
+                meta=meta,
+                code_lists_path=(
+                    _save_upload_named(code_lists_upload) if code_lists_upload else None
+                ),
+            )
+        except (ImportError_, ValueError) as exc:
+            st.error(f"Import did not run:\n\n```\n{exc}\n```")
+            return
+        stem = Path(upload.name).stem
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+            write_workbook(result, tmp.name)
+            spec_bytes = Path(tmp.name).read_bytes()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp:
+            write_worklist(result, tmp.name)
+            worklist_bytes = Path(tmp.name).read_bytes()
+        st.session_state["import"] = (result, spec_bytes, worklist_bytes, stem)
+
+    if "import" not in st.session_state:
+        st.info(
+            "Upload a partner mapping document, adjust the options if the "
+            "defaults misread it, then run Import mapping."
+        )
+        return
+
+    result, spec_bytes, worklist_bytes, stem = st.session_state["import"]
+    classified = len(result.rows) - len(result.review_rows)
+    tone = "verdict-pass" if not result.review_rows else "verdict-warning"
+    st.markdown(
+        f'<div class="verdict-strip {tone}">{len(result.rows)} ROWS / '
+        f"{classified} AUTO-CLASSIFIED / {len(result.review_rows)} NEED REVIEW"
+        f'<span class="verdict-result">CLASSIFIED: '
+        f"{result.auto_classified_ratio:.2f}</span></div>",
+        unsafe_allow_html=True,
+    )
+    mapped = ", ".join(f"{ours} from `{theirs}`" for ours, theirs in result.column_mapping.items())
+    st.caption(f"Column mapping: {mapped}")
+    if result.unmapped_columns:
+        st.caption(
+            "Their columns carrying data that matched no MapCheck column "
+            "(dropped, nothing lost silently): "
+            + ", ".join(f"`{c}`" for c in result.unmapped_columns)
+        )
+
+    if result.review_rows:
+        st.subheader("Worklist")
+        st.caption(
+            "These rows load into the spec flagged NEEDS REVIEW — finish them "
+            "in the downloaded workbook before the spec will validate."
+        )
+        st.markdown(worklist_table_html(result.review_rows), unsafe_allow_html=True)
+    else:
+        st.caption("No rows need review — the imported spec is ready to load.")
+
+    col_spec, col_worklist = st.columns(2)
+    with col_spec:
+        st.download_button(
+            "Download native spec (.xlsx)",
+            data=spec_bytes,
+            file_name=f"{stem}_mapcheck_spec.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    with col_worklist:
+        st.download_button(
+            "Download worklist (.txt)",
+            data=worklist_bytes,
+            file_name=f"{stem}_worklist.txt",
+            mime="text/plain",
+        )
 
 
 def _scrub_page() -> None:
