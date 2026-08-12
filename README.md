@@ -172,6 +172,8 @@ mapcheck --help
 ```bash
 mapcheck transactions             # list registered transaction definitions
 mapcheck init-spec my_spec.xlsx   # blank spec template with instructions sheet
+mapcheck draft-spec --transaction 850 --target orders05 \
+    --output draft.xlsx           # definition-driven draft spec (see below)
 mapcheck history                  # recent runs from the SQLite audit trail
 mapcheck bless 7                  # mark run #7 as the golden baseline for its inputs
 mapcheck regress --spec … --source … --output …   # diff vs baseline; exit 1 on a regression
@@ -240,6 +242,35 @@ short-ships (ordered − shipped must equal the declared `W12` differences);
 the `ADJ_REASON` code list with signed adjustment quantities. Element-usage
 assumptions (e.g. `W12` positional meaning) are noted in each definition
 file's header for amendment against a specific partner guide.
+
+## Draft specs (`draft-spec`)
+
+Authoring a spec is transcription plus judgment; `draft-spec` kills the
+transcription and preserves the judgment. It walks the transaction
+definition (source side) and the output definition's target list, applies
+a maintainer-authored **crosswalk** of canonical pairings
+(`src/mapcheck/crosswalks/850_orders05.yaml` — data, reviewable in a
+diff), and emits a draft spec through the normal template writer:
+
+```bash
+mapcheck draft-spec --transaction 850 --target orders05 --output draft.xlsx
+# Prefill: 0.90 (18/20 required targets filled)
+```
+
+- Required targets the crosswalk knows become **filled rows**; the rest
+  become **`TODO` rows** (amber in the workbook). A `TODO` row loads with
+  a warning and reports NOT TESTED, so an uncurated draft can never
+  silently pass validation.
+- Source elements no rule references land on an **Unmapped Source** sheet
+  for triage; the Meta sheet records the crosswalk files, tool version,
+  and the **prefill** metric (filled required / total required).
+- Runs are deterministic: the same definitions plus the same crosswalks
+  produce identical sheet content.
+- Extend or override with your own file: repeated `--crosswalk` flags
+  merge by target path, later files winning. `--fill-unmapped` also emits
+  TODO rows for optional targets.
+- The **Draft spec** page in the UI does the same with a preview and a
+  download button.
 
 ## The spec template
 

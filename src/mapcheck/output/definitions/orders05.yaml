@@ -52,3 +52,49 @@ segments:
   E1EDS01:            # summary: SUMID(3) SUMME(18)
     route: {kind: keyed, section: summary, qualifier: SUMID, value: SUMME}
     fields: {SUMID: [0, 3], SUMME: [3, 18]}
+
+# Concrete target paths for draft-spec (Design 012), in IDoc structure
+# order. `required` drives TODO emission and the prefill metric.
+draft:
+  targets:
+    - {path: header.action, name: IDoc action code (E1EDK01 ACTION), data_type: string}
+    - {path: header.curcy, name: Order currency (E1EDK01 CURCY), required: false,
+       data_type: string, format: "len:3..3"}
+    - {path: header.bsart, name: SAP document type (E1EDK01 BSART), data_type: string}
+    - {path: org.012, name: Order type (E1EDK14 QUALF 012), required: false,
+       data_type: string}
+    - {path: dates.012, name: Document date (E1EDK03 IDDAT 012), data_type: date,
+       format: "%Y%m%d"}
+    - {path: dates.002, name: Requested delivery date (E1EDK03 IDDAT 002),
+       data_type: date, format: "%Y%m%d"}
+    - {path: refs.001.belnr, name: Customer PO number (E1EDK02 QUALF 001),
+       data_type: string, format: "len:1..35"}
+    - {path: refs.001.datum, name: Customer PO date (E1EDK02 QUALF 001),
+       data_type: date, format: "%Y%m%d"}
+    - {path: partners.ag.name1, name: Sold-to name (E1EDKA1 PARVW AG),
+       data_type: string, format: "len:1..35"}
+    - {path: partners.ag.partn, name: Sold-to partner number (E1EDKA1 PARVW AG),
+       data_type: string}
+    - {path: partners.we.name1, name: Ship-to name (E1EDKA1 PARVW WE),
+       data_type: string, format: "len:1..35"}
+    - {path: partners.we.partn, name: Ship-to partner number (E1EDKA1 PARVW WE),
+       data_type: string}
+    - {path: partners.we.stras, name: Ship-to street (E1EDKA1 STRAS), data_type: string}
+    - {path: partners.we.ort01, name: Ship-to city (E1EDKA1 ORT01), data_type: string}
+    - {path: partners.we.regio, name: Ship-to region (E1EDKA1 REGIO), required: false,
+       data_type: string, format: "len:2..3"}
+    - {path: partners.we.pstlz, name: Ship-to postal code (E1EDKA1 PSTLZ),
+       data_type: string, format: "len:5..9"}
+    - {path: "lines[].refs.001.zeile", name: Customer PO line (E1EDP02 QUALF 001),
+       data_type: integer}
+    - {path: "lines[].menge", name: Order quantity (E1EDP01 MENGE), data_type: decimal}
+    - {path: "lines[].menee", name: Unit of measure (E1EDP01 MENEE), data_type: string}
+    - {path: "lines[].vprei", name: Unit price (E1EDP01 VPREI), data_type: decimal,
+       format: "places:2"}
+    - {path: "lines[].ids.003.idtnr", name: EAN/UPC (E1EDP19 QUALF 003),
+       data_type: string, format: "len:12..14"}
+    - {path: "lines[].ids.003.ktext", name: Item description (E1EDP19 KTEXT),
+       data_type: string, format: "len:1..70"}
+    - {path: summary.001, name: Item count (E1EDS01 SUMID 001), data_type: integer}
+    - {path: summary.002, name: Net value (E1EDS01 SUMID 002), required: false,
+       data_type: decimal, format: "places:2"}

@@ -63,7 +63,9 @@ class TestReferenceSpec:
 
     def test_covers_every_rule_type(self, reference_spec_path: Path):
         spec = load_spec(reference_spec_path)
-        assert {r.rule_type for r in spec.rules} == set(RuleType)
+        # every mapping rule type; TODO is a draft-spec placeholder and
+        # never appears in a curated reference spec
+        assert {r.rule_type for r in spec.rules} == set(RuleType) - {RuleType.TODO}
 
     def test_conditional_rule_parsed(self, reference_spec_path: Path):
         spec = load_spec(reference_spec_path)

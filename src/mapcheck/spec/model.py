@@ -49,6 +49,7 @@ class RuleType(str, Enum):
     CODE_LIST = "CODE_LIST"  # source value translated via a lookup table
     CONSTANT = "CONSTANT"  # hardcoded default, no source field
     LOOP_COUNT = "LOOP_COUNT"  # target holds the occurrence count of a source loop
+    TODO = "TODO"  # draft placeholder: mapping not decided yet (reports NOT TESTED)
 
 
 class DataType(str, Enum):

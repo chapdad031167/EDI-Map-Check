@@ -1,0 +1,166 @@
+# Starter crosswalk: X12 850 -> SAP ORDERS05 (Design 012).
+#
+# Canonical, judgment-free pairings a mapping analyst would write down on
+# day one. Everything here is data: reviewable in a diff, overridable by
+# a later --crosswalk file (merge key is the target path). Deliberately
+# NOT crosswalked — these are judgment calls the analyst curates from
+# TODO rows:
+#   lines[].ids.003.idtnr  which product-id qualifier pair carries the UPC
+#   lines[].ids.003.ktext  which description flavor (PID01) to send
+#   org.012                partner-specific order-type constant
+
+rules:
+  - source: BEG01
+    target: header.action
+    rule: CODE_LIST
+    code_list: SAP_ACTION
+    note: IDoc action code from the transaction set purpose.
+
+  - source: CUR02
+    target: header.curcy
+    rule: CONDITIONAL
+    condition: "CUR01 = 'BY'"
+    then: SOURCE
+    else: SKIP
+    format: "len:3..3"
+    note: Currency only when a buying-party currency code is sent.
+
+  - source: BEG02
+    target: header.bsart
+    rule: CODE_LIST
+    code_list: PO_TYPE_SAP
+    note: SAP document type from the PO type code.
+
+  - source: BEG05
+    target: dates.012
+    rule: DIRECT
+    format: "%Y%m%d"
+    note: E1EDK03 IDDAT 012 = document date. SAP dates are YYYYMMDD.
+
+  - source: DTM02
+    target: dates.002
+    rule: DIRECT
+    context: DTM[002]
+    format: "%Y%m%d"
+    note: E1EDK03 IDDAT 002 = requested delivery date.
+
+  - source: BEG03
+    target: refs.001.belnr
+    rule: DIRECT
+    format: "len:1..35"
+    note: E1EDK02 QUALF 001 = customer PO number.
+
+  - source: BEG05
+    target: refs.001.datum
+    rule: DIRECT
+    format: "%Y%m%d"
+    note: E1EDK02 QUALF 001 = customer PO date.
+
+  - source: N102
+    target: partners.ag.name1
+    rule: DIRECT
+    context: N1[BT]
+    format: "len:1..35"
+    note: AG = sold-to party, from the bill-to N1 loop.
+
+  - source: N104
+    target: partners.ag.partn
+    rule: CONDITIONAL
+    context: N1[BT]
+    condition: "N103 = '92'"
+    then: SOURCE
+    else: SKIP
+    note: Sold-to number only when the ID qualifier is 92 (assigned by buyer).
+
+  - source: N102
+    target: partners.we.name1
+    rule: DIRECT
+    context: N1[ST]
+    format: "len:1..35"
+    note: WE = ship-to party.
+
+  - source: N104
+    target: partners.we.partn
+    rule: CONDITIONAL
+    context: N1[ST]
+    condition: "N103 = '92'"
+    then: SOURCE
+    else: SKIP
+    note: Ship-to number only when the ID qualifier is 92 (assigned by buyer).
+
+  - source: N301
+    target: partners.we.stras
+    rule: DIRECT
+    context: N1[ST]
+    note: Ship-to street address.
+
+  - source: N401
+    target: partners.we.ort01
+    rule: DIRECT
+    context: N1[ST]
+    note: Ship-to city.
+
+  - source: N402
+    target: partners.we.regio
+    rule: DIRECT
+    context: N1[ST]
+    format: "len:2..3"
+    note: Ship-to region (state/province as sent).
+
+  - source: N403
+    target: partners.we.pstlz
+    rule: DIRECT
+    context: N1[ST]
+    format: "len:5..9"
+    note: Ship-to postal code.
+
+  - source: PO101
+    target: lines[].refs.001.zeile
+    rule: DIRECT
+    context: PO1
+    note: E1EDP02 QUALF 001 = customer PO line number.
+
+  - source: PO102
+    target: lines[].menge
+    rule: DIRECT
+    context: PO1
+    note: Order quantity; SAP quantities carry decimals.
+
+  - source: PO103
+    target: lines[].menee
+    rule: CODE_LIST
+    code_list: UOM_SAP
+    context: PO1
+    note: X12 unit of measure to SAP unit.
+
+  - source: PO104
+    target: lines[].vprei
+    rule: DIRECT
+    context: PO1
+    format: "places:2"
+    note: Unit price.
+
+  - source: CTT01
+    target: summary.001
+    rule: DIRECT
+    note: E1EDS01 SUMID 001 = item count as transmitted.
+
+  - source: AMT02
+    target: summary.002
+    rule: DIRECT
+    context: AMT[TT]
+    format: "places:2"
+    note: E1EDS01 SUMID 002 = net order value.
+
+code_lists:
+  SAP_ACTION:
+    - {source: "00", target: "000", description: Original (synthetic convention)}
+    - {source: "01", target: "001", description: Cancellation (synthetic convention)}
+    - {source: "05", target: "002", description: Replacement (synthetic convention)}
+  PO_TYPE_SAP:
+    - {source: SA, target: NB, description: Stand-alone -> standard order}
+    - {source: NE, target: ZNB, description: New order -> custom order type}
+  UOM_SAP:
+    - {source: EA, target: ST, description: Each -> Stueck}
+    - {source: CA, target: KAR, description: Case -> Karton}
+    - {source: DZ, target: DZN, description: Dozen}
