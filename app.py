@@ -30,7 +30,9 @@ from mapcheck.report.excel import export_excel
 from mapcheck.report.history import RunHistory
 from mapcheck.report.html import render_run_html, render_trends_html
 from mapcheck.report.trends import compute_trends
+from mapcheck.spec.overrides import export_spec, resolve_spec
 from mapcheck.spec.parser import SpecLoadError, load_spec
+from mapcheck.spec.template import build_template
 from mapcheck.x12.parser import X12ParseError
 
 ASSETS = Path(__file__).parent / "assets"
@@ -222,6 +224,15 @@ def _save_upload(upload, suffix: str) -> str:
         return tmp.name
 
 
+def _save_upload_named(upload) -> str:
+    """Save an upload keeping its original file name (in a fresh temp dir),
+    so error messages and reports name the file the user recognizes."""
+    directory = Path(tempfile.mkdtemp())
+    path = directory / Path(upload.name).name
+    path.write_bytes(upload.getvalue())
+    return str(path)
+
+
 def _findings_frame(result: RunResult) -> pd.DataFrame:
     return pd.DataFrame(
         [
@@ -308,6 +319,7 @@ def main() -> None:
         [
             st.Page(_validate_page, title="Validate", default=True),
             st.Page(_draft_page, title="Draft spec"),
+            st.Page(_scrub_page, title="Scrub"),
         ]
     )
     pages.run()
@@ -326,7 +338,7 @@ def _validate_page() -> None:
     with st.sidebar:
         st.header("Inputs")
         use_example = st.toggle("Use bundled example data", value=EXAMPLES.exists())
-        spec_path = source_path = output_path = None
+        spec_path = source_path = output_path = partner_path = None
 
         if use_example and EXAMPLES.exists():
             scenario = st.selectbox("Scenario", list(EXAMPLE_SCENARIOS))
@@ -340,6 +352,10 @@ def _validate_page() -> None:
             )
         else:
             spec_upload = st.file_uploader("Mapping spec (.xlsx)", type=["xlsx"])
+            partner_upload = st.file_uploader(
+                "Partner delta (optional, .xlsx) — merged onto the spec before validating",
+                type=["xlsx"],
+            )
             source_upload = st.file_uploader(
                 "Source file (X12 inbound; internal document outbound)",
                 type=["edi", "txt", "x12", "dat", "json", "flat", "xml"],
@@ -350,6 +366,8 @@ def _validate_page() -> None:
             )
             if spec_upload:
                 spec_path = _save_upload(spec_upload, ".xlsx")
+            if partner_upload:
+                partner_path = _save_upload(partner_upload, ".xlsx")
             if source_upload:
                 # keep the original extension so the right loader is picked
                 source_path = _save_upload(
@@ -368,17 +386,43 @@ def _validate_page() -> None:
 
     if run:
         try:
-            spec = load_spec(spec_path)
-            if _is_interchange(spec, source_path, output_path):
-                result = validate_interchange_files(spec_path, source_path, output_path)
+            merged_spec = None
+            merge_notes: list[str] = []
+            if partner_path:
+                merged_spec, merge_notes = resolve_spec(spec_path, partner_path)
+                spec = merged_spec
             else:
-                result = validate_files(spec_path, source_path, output_path)
+                spec = load_spec(spec_path)
+            if _is_interchange(spec, source_path, output_path):
+                result = validate_interchange_files(
+                    spec_path, source_path, output_path, spec=merged_spec
+                )
+            else:
+                result = validate_files(
+                    spec_path, source_path, output_path, spec=merged_spec
+                )
         except (SpecLoadError, X12ParseError, OutputLoadError) as exc:
             st.error(f"Validation did not run:\n\n```\n{exc}\n```")
             return
         st.session_state["result"] = result
+        st.session_state["merge_notes"] = merge_notes
+        if merged_spec is not None:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                export_spec(merged_spec, tmp.name)
+                st.session_state["effective_spec"] = Path(tmp.name).read_bytes()
+        else:
+            st.session_state.pop("effective_spec", None)
 
     if "result" in st.session_state:
+        for note in st.session_state.get("merge_notes", []):
+            st.caption(f"Partner merge note: {note}")
+        if "effective_spec" in st.session_state:
+            st.download_button(
+                "Download effective spec (base + partner delta, .xlsx)",
+                data=st.session_state["effective_spec"],
+                file_name="effective_spec.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
         stored = st.session_state["result"]
         if isinstance(stored, InterchangeResult):
             _render_interchange(stored)
@@ -459,26 +503,49 @@ def _draft_page() -> None:
     target_format = col_target.selectbox(
         "Target format", [f.format for f in targets]
     )
+    override_uploads = st.file_uploader(
+        "Crosswalk overrides (optional, .yaml) — layered on the bundled "
+        "crosswalk; for the same target path, a later file wins",
+        type=["yaml", "yml"],
+        accept_multiple_files=True,
+    )
+    fill_unmapped = st.toggle(
+        "Include optional targets as TODO rows",
+        help="The draft always carries every required target. This adds the "
+        "optional ones too, so the sheet shows the complete target universe.",
+    )
 
     if st.button("Draft spec", type="primary"):
+        from mapcheck.spec.draft import CrosswalkError, DraftSpecError
+
         definition = default_registry.get(tx_code)
         target_def = default_output_registry.get(target_format)
         short_target = target_format.rsplit("-", 1)[-1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
-            result = generate_draft(
-                definition,
-                target_def,
-                bundled_crosswalks(tx_code, short_target),
-                tmp.name,
-            )
-            st.session_state["draft"] = (
-                result,
-                Path(tmp.name).read_bytes(),
-                f"draft_{tx_code}_{short_target}.xlsx",
-            )
+        crosswalks = [
+            *bundled_crosswalks(tx_code, short_target),
+            *(_save_upload_named(upload) for upload in override_uploads or []),
+        ]
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+                result = generate_draft(
+                    definition,
+                    target_def,
+                    crosswalks,
+                    tmp.name,
+                    include_optional_todos=fill_unmapped,
+                )
+                st.session_state["draft"] = (
+                    result,
+                    Path(tmp.name).read_bytes(),
+                    f"draft_{tx_code}_{short_target}.xlsx",
+                )
+        except (CrosswalkError, DraftSpecError) as exc:
+            st.error(f"Draft did not run:\n\n```\n{exc}\n```")
+            return
 
     if "draft" not in st.session_state:
         st.info("Select a transaction and a target format, then run Draft spec.")
+        _render_template_download()
         return
 
     result, draft_bytes, file_name = st.session_state["draft"]
@@ -502,6 +569,97 @@ def _draft_page() -> None:
         file_name=file_name,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+    _render_template_download()
+
+
+def _render_template_download() -> None:
+    """Blank spec template, for specs written from scratch."""
+    import io
+
+    st.caption(
+        "Prefer to transcribe by hand: download the blank spec template — "
+        "it carries the Instructions sheet with the full addressing and "
+        "condition grammar."
+    )
+    col_direction, col_button = st.columns([1, 2])
+    direction = col_direction.selectbox(
+        "Template direction", ["inbound", "outbound"],
+        help="inbound validates X12 to internal; outbound validates internal to X12",
+    )
+    buffer = io.BytesIO()
+    build_template(direction).save(buffer)
+    col_button.download_button(
+        "Download blank spec template (.xlsx)",
+        data=buffer.getvalue(),
+        file_name=f"mapcheck_spec_template_{direction}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+def _scrub_page() -> None:
+    from importlib import resources
+
+    from mapcheck.scrub import ProfileError, load_profile
+    from mapcheck.scrub.scrubber import scrub_file
+
+    st.markdown(
+        "Mask sensitive values in an X12 file while preserving structure, "
+        "lengths, and referential consistency — the same input value always "
+        "masks to the same output value, so control numbers and pairing keys "
+        "survive. Use it to turn a real partner file into a safe test case."
+    )
+
+    upload = st.file_uploader(
+        "X12 file to scrub", type=["edi", "txt", "x12", "dat"]
+    )
+    bundled = sorted(
+        entry.name[: -len(".yaml")]
+        for entry in (resources.files("mapcheck.scrub") / "profiles").iterdir()
+        if entry.name.endswith(".yaml")
+    )
+    col_profile, col_seed = st.columns(2)
+    profile_name = col_profile.selectbox(
+        "Profile", bundled,
+        help="Which elements get masked. Bundled profiles ship with the tool; "
+        "upload a custom one below to override.",
+    )
+    seed = col_seed.text_input(
+        "Seed (optional)",
+        help="Same seed plus same input produces the same masked output — "
+        "use one when a partner needs reproducible test data.",
+    )
+    profile_upload = st.file_uploader("Custom profile (optional, .yaml)", type=["yaml", "yml"])
+
+    if st.button("Scrub file", type="primary", disabled=upload is None):
+        try:
+            profile = load_profile(
+                _save_upload_named(profile_upload) if profile_upload else profile_name
+            )
+            source_path = Path(_save_upload_named(upload))
+            out_path = source_path.with_suffix(f".scrubbed{source_path.suffix}")
+            written, report = scrub_file(source_path, out_path, profile, seed=seed or None)
+            st.session_state["scrub"] = (
+                written.read_bytes(),
+                written.name,
+                report.render(),
+            )
+        except (ProfileError, ValueError, OSError) as exc:
+            st.error(f"Scrub did not run:\n\n```\n{exc}\n```")
+            return
+
+    if "scrub" not in st.session_state:
+        st.info("Upload an X12 file and pick a profile, then run Scrub file.")
+        return
+
+    scrubbed_bytes, scrubbed_name, report_text = st.session_state["scrub"]
+    st.download_button(
+        "Download scrubbed file",
+        data=scrubbed_bytes,
+        file_name=scrubbed_name,
+        mime="text/plain",
+    )
+    st.caption("Masking report")
+    st.code(report_text)
 
 
 def _render_trends() -> None:
