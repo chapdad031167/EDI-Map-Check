@@ -1,7 +1,53 @@
 # Streamlit config for containerized / hosted runs.
+#
+# Theme tokens and font registration follow Design 013 ("instrument, not
+# toy"). Fonts are bundled under static/fonts/ and served by Streamlit's
+# static file server — the app renders correctly offline, no CDN anywhere.
+# Options verified against the pinned Streamlit minor (1.61).
+
 [server]
 headless = true
 address = "0.0.0.0"
+enableStaticServing = true
 
 [browser]
 gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#0F5468"             # petrol — actions, links, wordmark
+backgroundColor = "#F6F8F7"          # paper — cool near-white
+secondaryBackgroundColor = "#EDF1EF" # panel — sidebar, secondary surfaces
+textColor = "#1A2421"                # ink
+linkColor = "#0F5468"                # petrol
+font = "IBM Plex Sans, sans-serif"
+headingFont = "IBM Plex Sans, sans-serif"
+codeFont = "IBM Plex Mono, monospace"
+baseRadius = "0.25rem"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/IBMPlexSans-Regular.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/IBMPlexSans-SemiBold.woff2"
+weight = 600
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Mono"
+url = "app/static/fonts/IBMPlexMono-Regular.woff2"
+weight = 400
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Mono"
+url = "app/static/fonts/IBMPlexMono-Medium.woff2"
+weight = 500
+style = "normal"

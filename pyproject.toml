@@ -26,8 +26,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ui = ["streamlit>=1.30"]
-dev = ["pytest>=8.0", "streamlit>=1.30"]
+# The UI pins the Streamlit minor version: styling targets framework
+# internals verified against this exact minor (Design 013).
+ui = ["streamlit>=1.61,<1.62"]
+dev = ["pytest>=8.0", "streamlit>=1.61,<1.62"]
 
 [project.scripts]
 mapcheck = "mapcheck.cli:main"
