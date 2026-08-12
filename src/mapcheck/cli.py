@@ -134,6 +134,29 @@ def _build_parser() -> argparse.ArgumentParser:
     p_merge.add_argument("--partner", required=True, help="partner delta workbook (.xlsx)")
     p_merge.add_argument("--output", required=True, help="effective merged spec to write (.xlsx)")
 
+    p_draft = sub.add_parser(
+        "draft-spec",
+        help="generate a draft mapping spec from the built-in definitions and a crosswalk",
+    )
+    p_draft.add_argument(
+        "--transaction", required=True, metavar="SET", help="source transaction set (e.g. 850)"
+    )
+    p_draft.add_argument(
+        "--target", required=True, metavar="FORMAT",
+        help="target output format (e.g. orders05)",
+    )
+    p_draft.add_argument("--output", required=True, help="draft spec to write (.xlsx)")
+    p_draft.add_argument(
+        "--crosswalk", action="append", metavar="FILE", default=[],
+        help="crosswalk YAML applied on top of the bundled starter crosswalk; "
+        "repeatable — for the same target path, a later file's rule replaces "
+        "an earlier one",
+    )
+    p_draft.add_argument(
+        "--fill-unmapped", action="store_true",
+        help="also emit TODO rows for optional (non-required) target paths",
+    )
+
     p_hist = sub.add_parser("history", help="list recent validation runs")
     p_hist.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
     p_hist.add_argument("--limit", type=int, default=20, help="number of runs to show")
@@ -316,6 +339,67 @@ def _run_interchange(
         path = export_html(result, args.export_html)
         print(f"HTML report written to {path}")
     return result.exit_code
+
+
+def _resolve_draft_target(name: str):
+    """Resolve a --target name against the output-format registry.
+
+    Accepts the registry's format name exactly ('idoc-orders05') or the
+    short name users actually say ('orders05').
+    """
+    from mapcheck.output.idoc import default_output_registry as output_registry
+
+    for defn in output_registry.all():
+        if name in (defn.format, defn.format.rsplit("-", 1)[-1]):
+            return defn
+    known = ", ".join(sorted(d.format for d in output_registry.all()))
+    raise DefinitionError(f"unknown target format {name!r} (registered: {known})")
+
+
+def _cmd_draft_spec(args: argparse.Namespace) -> int:
+    from mapcheck.spec.draft import (
+        CrosswalkError,
+        DraftSpecError,
+        bundled_crosswalks,
+        generate_draft,
+    )
+    from mapcheck.transactions.registry import UnknownTransactionError, default_registry
+
+    output = Path(args.output)
+    if output.exists():
+        print(f"mapcheck: {output} already exists, not overwriting", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        definition = default_registry.get(args.transaction)
+        target_def = _resolve_draft_target(args.target)
+        short_target = target_def.format.rsplit("-", 1)[-1]
+        crosswalks = [
+            *bundled_crosswalks(definition.set_code, short_target),
+            *args.crosswalk,
+        ]
+        result = generate_draft(
+            definition,
+            target_def,
+            crosswalks,
+            output,
+            include_optional_todos=args.fill_unmapped,
+        )
+    except (UnknownTransactionError, DefinitionError, CrosswalkError, DraftSpecError) as exc:
+        print(f"mapcheck: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    filled = sum(1 for row in result.rows if row.filled)
+    print(f"Draft spec written to {output}")
+    print(
+        f"Rows: {len(result.rows)} ({filled} filled from "
+        f"{len(result.crosswalk_files)} crosswalk file(s), {result.todo_count} TODO)"
+    )
+    print(f"Unmapped source elements: {len(result.unmapped_source)} (see the Unmapped Source sheet)")
+    print(
+        f"Prefill: {result.prefill:.2f} "
+        f"({result.filled_required}/{result.total_required} required targets filled)"
+    )
+    return 0
 
 
 def _cmd_init_spec(args: argparse.Namespace) -> int:
@@ -598,6 +682,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     handlers = {
         "validate": _cmd_validate,
+        "draft-spec": _cmd_draft_spec,
         "init-spec": _cmd_init_spec,
         "import-spec": _cmd_import_spec,
         "merge-spec": _cmd_merge_spec,

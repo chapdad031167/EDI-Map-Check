@@ -177,6 +177,11 @@ class TransactionDefinition:
     output_pairing: OutputPairing | None = None
     reconciliation: tuple[ReconRule, ...] = ()
     required_elements: tuple[RequiredElementDef, ...] = ()
+    #: Element dictionary for draft-spec's source walk (Design 012):
+    #: segment id -> element names in positional order (element 01 first).
+    #: Covers the commonly used commercial subset, not the exhaustive
+    #: standard; segments without an entry simply don't enumerate.
+    elements: dict[str, tuple[str, ...]] = field(default_factory=dict)
     source: str = ""  # where this definition was loaded from, for messages
 
     def all_loops(self) -> list[LoopDef]:
