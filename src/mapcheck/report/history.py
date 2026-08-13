@@ -204,6 +204,15 @@ class RunHistory:
         )
         self._connection.commit()
 
+    def baselines(self) -> list[dict[str, Any]]:
+        """Every blessed baseline, most recently blessed first."""
+        cursor = self._connection.execute(
+            "SELECT baseline_key, run_id, label, blessed_at FROM baselines"
+            " ORDER BY blessed_at DESC, id DESC"
+        )
+        columns = [c[0] for c in cursor.description]
+        return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
     def baseline_for(self, baseline_key: str) -> dict[str, Any] | None:
         """The blessed baseline for a key, or None."""
         cursor = self._connection.execute(

@@ -135,6 +135,14 @@ by status, download the color-coded Excel report:
 
 ![EDI MapCheck Streamlit UI](docs/screenshot_streamlit.png)
 
+Runs are **recorded by default** to the same `mapcheck_history.db` the CLI
+uses (one visible toggle skips a run). The **History** page browses recent
+runs, reopens any run's findings from storage, blesses a run as the
+baseline for its inputs, shows trends, and offers the raw database as a
+download. After every recorded run, the Validate page automatically shows
+the **delta against the blessed baseline** — new failures first — or
+offers to bless the run when no baseline exists yet.
+
 ### Run it as an app (no terminal)
 
 For non-CLI users, run the whole thing as a web app in a container — one
@@ -599,6 +607,21 @@ regressions. The delta is grouped into:
 complete audit trail and any fresh run can itself be blessed. Interchange
 baselines work the same way — the diff is per document plus file-level, and
 DOC ADDED/REMOVED fall out of comparing the document-key sets.
+
+**In the app**, the same lifecycle runs without a terminal: recorded runs
+compare to their baseline automatically on the Validate page, and blessing
+is a button (there or on the History page). Because uploads land in fresh
+temp paths every run, the app keys baselines by a **derived label** built
+from file names — `spec.xlsx | source.edi -> output.json`, with
+`" | delta: file.xlsx"` appended when a partner delta is used. CLI and app
+share a baseline when the CLI uses `--label` with that exact text; a CLI
+baseline blessed *without* `--label` is path-keyed and the app will not
+match it.
+
+**In Docker**, history lives on a named volume (`docker compose up`
+creates it), so it survives container rebuilds; the History page's
+"Download history database" button hands you the raw SQLite file whenever
+you want it.
 
 ## Batch / CI mode
 
