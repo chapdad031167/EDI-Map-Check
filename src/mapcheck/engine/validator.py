@@ -1227,7 +1227,7 @@ def _check_required_elements(
                 when_ref = seg.ref(req.when_present)
                 when_name = f" ({req.when_name})" if req.when_name else ""
                 core = (
-                    f"{ref}{name} is required when {when_ref}{when_name} "
+                    f"{ref}{name}{scope} is required when {when_ref}{when_name} "
                     f"is present, but is empty"
                 )
             elif req.origin:

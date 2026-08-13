@@ -92,10 +92,11 @@ class PartnerRules:
                 f"partner rules are for transaction {self.transaction} but the "
                 f"file is a {definition.set_code}"
             )
-        base_segments = {
-            (req.segment, req.match_codes(), req.loop)
-            for req in definition.required_segments
-        }
+        def seg_key(req) -> tuple:
+            # a code SET compares order-insensitively (frozenset)
+            return (req.segment, frozenset(req.match_codes()), req.loop)
+
+        base_segments = {seg_key(req) for req in definition.required_segments}
         base_elements = {
             (req.segment, req.element)
             for req in definition.required_elements
@@ -105,7 +106,7 @@ class PartnerRules:
         add_segments = tuple(
             req
             for req in self.required_segments
-            if (req.segment, req.match_codes(), req.loop) not in base_segments
+            if seg_key(req) not in base_segments
         )
         add_elements = tuple(
             req

@@ -1055,6 +1055,61 @@ class TestLoopScopedPlacement:
         assert len(fail) == 1 and "within the N1[ST] loop" in fail[0].message
 
 
+class TestLoopScopedElements:
+    """The element-level loop filter and its message path, end to end."""
+
+    def _el_rules(self, **kw):
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import RequiredElementDef
+
+        return PartnerRules(
+            partner="acme", transaction="850",
+            required_elements=[RequiredElementDef(segment="PER", element=2, origin="acme", **kw)],
+        )
+
+    def test_loop_scoped_element_ignores_heading_occurrence(self, tmp_path: Path):
+        # the file's only PER (heading) has an empty PER02; a global rule
+        # fails it, but that is not the point — scope it to N1 and the
+        # heading occurrence is out of scope, so no finding.
+        edi = _EDI_850.replace(
+            "PER*BD*JANE BUYER*TE*6145550142~", "PER*BD**TE*6145550142~"
+        )
+        assert not _apply_findings(edi, self._el_rules(loop="N1"), tmp_path)
+
+    def test_loop_scoped_element_fires_inside_the_loop(self, tmp_path: Path):
+        edi = _EDI_850.replace(
+            "N4*COLUMBUS*OH*43228~",
+            "N4*COLUMBUS*OH*43228~PER*IC**TE*6145550000~",  # PER02 empty in-loop
+        )
+        findings = _apply_findings(edi, self._el_rules(loop="N1"), tmp_path)
+        assert len(findings) == 1
+        assert "within the N1 loop" in findings[0].message
+
+    def test_loop_and_qualifier_compose_on_a_segment(self, tmp_path: Path):
+        """A rule carrying BOTH a loop scope and a qualifier: PER*IC within
+        N1 — satisfied only by an IC-qualified PER inside the N1 loop."""
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import RequiredSegmentDef
+
+        rules = PartnerRules(
+            partner="acme", transaction="850",
+            required_segments=[
+                RequiredSegmentDef(segment="PER", qualifier="IC", loop="N1", origin="acme")
+            ],
+        )
+        # heading PER is BD, not IC, and not in N1 → fails
+        fail = _apply_findings(_EDI_850, rules, tmp_path)
+        assert len(fail) == 1
+        assert fail[0].source_ref == "PER*IC"
+        assert "within the N1 loop" in fail[0].message
+        # an IC-qualified PER inside the N1 loop satisfies it
+        edi = _EDI_850.replace(
+            "N4*COLUMBUS*OH*43228~",
+            "N4*COLUMBUS*OH*43228~PER*IC*DESK*TE*6145550000~",
+        )
+        assert not _apply_findings(edi, rules, tmp_path)
+
+
 class TestMultiCodeEnforcement:
     def _rules(self, qualifiers):
         from mapcheck.guides.overlay import PartnerRules
@@ -1155,6 +1210,30 @@ class TestDesign018Loader:
         definition = parse_definition(data, source="inline")
         assert definition.required_segments[0].loop == "N1"
         assert definition.required_segments[1].qualifiers == ("IA", "DP")
+
+
+class TestDesign018Apply:
+    def test_qualifiers_dedup_is_order_insensitive(self):
+        """apply() treats {IA,DP} and {DP,IA} as the same rule (frozenset
+        key), so a reordered base rule suppresses the overlay duplicate."""
+        import dataclasses
+
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import RequiredSegmentDef
+
+        base = dataclasses.replace(
+            DEFINITION_850,
+            required_segments=(RequiredSegmentDef(segment="REF", qualifiers=("IA", "DP")),),
+        )
+        overlay = PartnerRules(
+            partner="x", transaction="850",
+            required_segments=[
+                RequiredSegmentDef(segment="REF", qualifiers=("DP", "IA"), origin="x")
+            ],
+        )
+        merged = overlay.apply(base)
+        ref_rules = [r for r in merged.required_segments if r.segment == "REF"]
+        assert len(ref_rules) == 1  # the reordered duplicate was deduped
 
 
 class TestDesign018Emission:

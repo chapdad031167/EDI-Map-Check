@@ -78,13 +78,17 @@ several codes in *one* block are alternatives.
   `loop=segment.loop`, tightening "required" to "required within its
   loop." The trigger keeps its qualifier/plain rule.
 
-What the guides still cannot pin — a member scoped to a *qualified* loop
-occurrence (`PER within N1[ST]` specifically), because the guide lists
-PER under "Loop: N1" without saying which N1 — remains hand-editable in
-the overlay YAML (the engine enforces it; emission just cannot infer the
-qualifier). This is a smaller, precisely-named residual than the caveat
-it replaces, and it is noted in the overlay's `review` only when a
-loop-member segment is also a qualified family (rare).
+A loop-member that is itself a qualified family (PER-in-N1 whose PER01
+carries a code) composes cleanly: emission produces a rule scoped by
+*both* its own qualifier and its bare loop (`PER*IC within the N1
+loop`) — enforced, not dropped. What the guides still cannot pin is
+narrower: *which* occurrence of a repeated loop the member belongs to
+(`PER within N1[ST]` vs `N1[BT]`), because the guide lists PER under
+"Loop: N1" without saying which N1. That one residual is hand-editable
+in the overlay YAML (the engine enforces a qualified loop context; only
+emission cannot infer the occurrence). It is a general property of
+loop-scoping, so it is stated here rather than repeated as a per-rule
+review note that would fire on every qualified loop member.
 
 ## Scope guard
 
