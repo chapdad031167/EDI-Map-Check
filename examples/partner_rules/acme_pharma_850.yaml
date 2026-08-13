@@ -29,6 +29,14 @@ required_elements:
 - segment: BEG
   element: 5
   name: Date
+- segment: REF
+  element: 2
+  qualifier: IA
+  name: Reference Identification
+- segment: DTM
+  element: 2
+  qualifier: '002'
+  name: Date
 - segment: N1
   element: 1
   name: Entity Identifier Code
@@ -47,26 +55,17 @@ required_elements:
 - segment: PO1
   element: 4
   name: Unit Price
-- segment: PO1
-  element: 6
-  name: Product/Service ID Qualifier
-- segment: PO1
-  element: 7
-  name: Product/Service ID
-- segment: PO1
-  element: 8
-  name: Product/Service ID Qualifier
-- segment: PO1
-  element: 9
-  name: Product/Service ID
 - segment: CTT
   element: 1
   name: Number of Line Items
 - segment: CTT
   element: 2
   name: Hash Total
-review:
-- 'REF*IA: element requirements (REF02) cannot yet be scoped to a qualifier — enforced
-  only as segment presence'
-- 'DTM*002: element requirements (DTM02) cannot yet be scoped to a qualifier — enforced
-  only as segment presence'
+required_pairs:
+- segment: PO1
+  code: VN
+  name: Vendor Part Number
+- segment: PO1
+  code: UP
+  name: UPC Consumer Package Code
+review: []

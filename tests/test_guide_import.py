@@ -248,7 +248,11 @@ class TestSplitFormHeaders:
         rules = emit_partner_rules(profile)
         pairs = [(r.segment, r.qualifier) for r in rules.required_segments]
         assert len(pairs) == len(set(pairs))
-        elements = [(r.segment, r.element) for r in rules.required_elements]
+        # scoped rules for different qualifiers may share (segment, element);
+        # the identity of an element rule includes its qualifier
+        elements = [
+            (r.segment, r.element, r.qualifier) for r in rules.required_elements
+        ]
         assert len(elements) == len(set(elements))
 
     def test_pos_line_without_name_line_is_review(self, tmp_path: Path):
@@ -431,13 +435,34 @@ class TestOverlayEmission:
     def test_element_rules_from_unqualified_segments(self):
         rules = emit_partner_rules(_profile())
         refs = {(r.segment, r.element) for r in rules.required_elements}
-        assert ("PO1", 8) in refs and ("PO1", 9) in refs  # the UP pair
         assert ("CTT", 2) in refs
         assert ("BEG", 4) not in refs  # Not used, never required
-        # qualified segments contribute no element rules (review instead)
-        assert not any(seg == "REF" for seg, _ in refs)
-        assert any("REF*IA" in note for note in rules.review)
-        assert any("DTM*002" in note for note in rules.review)
+        # pinned pair slots become pair rules, not positional requirements
+        assert ("PO1", 6) not in refs and ("PO1", 7) not in refs
+        assert ("PO1", 8) not in refs and ("PO1", 9) not in refs
+        assert ("PO1", 2) in refs  # non-pair elements stay positional
+
+    def test_qualified_segments_get_scoped_element_rules(self):
+        """Design 015: 'REF02 required in REF*IA occurrences' is a rule
+        now, not a review note."""
+        rules = emit_partner_rules(_profile())
+        scoped = {
+            (r.segment, r.element, r.qualifier)
+            for r in rules.required_elements
+            if r.qualifier is not None
+        }
+        assert ("REF", 2, "IA") in scoped
+        assert ("DTM", 2, "002") in scoped
+        assert rules.review == []  # nothing left the schema cannot express
+
+    def test_pinned_pair_slots_become_pair_rules(self):
+        rules = emit_partner_rules(_profile())
+        pairs = {(r.segment, r.code): r for r in rules.required_pairs}
+        assert set(pairs) == {("PO1", "VN"), ("PO1", "UP")}
+        up = pairs[("PO1", "UP")]
+        assert up.name == "UPC Consumer Package Code"
+        assert (up.first_element, up.last_element, up.step) == (6, 24, 2)
+        assert up.origin == "acme_pharma"
 
     def test_multi_code_qualifier_falls_back_unqualified(self, tmp_path: Path):
         guide = tmp_path / "g.txt"
@@ -474,6 +499,9 @@ class TestOverlayEmission:
         assert ("BEG", 3) not in merged_partner  # base already enforces it
         assert ("PO1", 2) in merged_partner  # conditional base does not
         assert len(merged.required_segments) == len(base.required_segments) + 6
+        assert {(r.segment, r.code) for r in merged.required_pairs} == {
+            ("PO1", "VN"), ("PO1", "UP"),
+        }
 
     def test_apply_rejects_wrong_transaction(self):
         rules = emit_partner_rules(_profile())
@@ -555,6 +583,173 @@ class TestRequiredSegmentLoader:
         message = str(err.value)
         assert "required_segments[0]" in message
         assert "required_segments[1].qualifier_element" in message
+
+
+# --------------------------------------------------------------------------
+# Qualifier-scoped enforcement (Design 015): the truth table as tests
+# --------------------------------------------------------------------------
+
+AUDIT_FILE_4 = REPO / "tests" / "fixtures" / "audit_kit" / "850_04_partner_rules.edi"
+
+
+def _presence_findings(edi_text: str, tmp_path: Path):
+    """Parse an 850, apply the acme overlay, run the presence checks."""
+    from mapcheck.engine.results import Category, RunResult
+    from mapcheck.engine.validator import (
+        _check_required_elements,
+        _check_required_pairs,
+        _check_required_segments,
+    )
+    from mapcheck.x12.parser import parse_transaction
+
+    path = tmp_path / "variant.edi"
+    path.write_text(edi_text, encoding="utf-8")
+    tx = parse_transaction(str(path))
+    tx.definition = emit_partner_rules(_profile()).apply(tx.definition)
+    result = RunResult(spec_path="", source_path=str(path), output_path="")
+    _check_required_elements(tx, result, Category.SOURCE_DATA, "")
+    _check_required_segments(tx, result, Category.SOURCE_DATA, "")
+    _check_required_pairs(tx, result, Category.SOURCE_DATA, "")
+    return result.findings
+
+
+class TestQualifierScopedEnforcement:
+    """Pair rules are code-keyed, scoped element rules occurrence-keyed —
+    the exact semantics the positional v1 could not express."""
+
+    def _base(self) -> str:
+        return AUDIT_FILE_4.read_text(encoding="utf-8")
+
+    def test_file4_fails_on_pairs_not_positions(self, tmp_path: Path):
+        findings = _presence_findings(self._base(), tmp_path)
+        messages = sorted(f.message for f in findings)
+        assert len(messages) == 4
+        assert sum("no UP (UPC Consumer Package Code) qualifier pair" in m for m in messages) == 2
+        assert any("required segment DTM*002" in m for m in messages)
+        assert any("required segment REF*IA" in m for m in messages)
+
+    def test_swapped_pair_order_is_not_a_failure(self, tmp_path: Path):
+        """UP in the first slot pair satisfies 'must carry UP' — the
+        positional false failure is gone."""
+        edi = self._base().replace(
+            "PO1*1*24*EA*18.75**VN*SAF-00110~",
+            "PO1*1*24*EA*18.75**UP*036000291452*VN*SAF-00110~",
+        ).replace(
+            "PO1*2*12*CA*96.00**VN*SAF-00244~",
+            "PO1*2*12*CA*96.00**UP*036000291469*VN*SAF-00244~",
+        )
+        findings = _presence_findings(edi, tmp_path)
+        assert not any("qualifier pair" in f.message for f in findings)
+
+    def test_filled_slots_without_the_code_still_fail(self, tmp_path: Path):
+        """VN+BP fills both slot pairs but carries no UP — the defect the
+        positional check missed."""
+        edi = self._base().replace(
+            "PO1*1*24*EA*18.75**VN*SAF-00110~",
+            "PO1*1*24*EA*18.75**VN*SAF-00110*BP*88213~",
+        )
+        findings = _presence_findings(edi, tmp_path)
+        line1 = [f for f in findings if f.source_ref == "PO1 #1"]
+        assert len(line1) == 1
+        assert "no UP (UPC Consumer Package Code) qualifier pair" in line1[0].message
+
+    def test_pair_qualifier_with_empty_value_fails(self, tmp_path: Path):
+        edi = self._base().replace(
+            "PO1*1*24*EA*18.75**VN*SAF-00110~",
+            "PO1*1*24*EA*18.75**VN*SAF-00110*UP*~",
+        )
+        findings = _presence_findings(edi, tmp_path)
+        assert any(
+            f.source_ref == "PO1 #1" and "qualifier pair" in f.message
+            for f in findings
+        )
+
+    def test_scoped_element_fires_only_in_its_occurrence(self, tmp_path: Path):
+        """REF*IA with an empty REF02 fails; the REF*DP occurrence with a
+        filled 02 is untouched; presence of REF*IA itself passes."""
+        edi = self._base().replace("REF*DP*054~", "REF*DP*054~REF*IA~")
+        findings = _presence_findings(edi, tmp_path)
+        scoped = [f for f in findings if "REF02" in f.message]
+        assert len(scoped) == 1
+        assert scoped[0].message == (
+            "source data invalid: REF02 (Reference Identification) in REF*IA "
+            "is required by partner acme_pharma but is empty"
+        )
+        assert not any("required segment REF*IA" in f.message for f in findings)
+
+    def test_scoped_element_is_vacuous_when_occurrence_absent(self, tmp_path: Path):
+        """No REF*IA at all → the presence rule reports it; the scoped
+        element rule stays silent instead of double-reporting."""
+        findings = _presence_findings(self._base(), tmp_path)
+        assert not any("REF02" in f.message for f in findings)
+        assert any("required segment REF*IA" in f.message for f in findings)
+
+
+class TestQualifierRuleLoading:
+    def test_definition_yaml_round_trip(self):
+        from mapcheck.transactions.loader import parse_definition
+        from mapcheck.transactions.schema import RequiredPairDef
+
+        data = {
+            "transaction": {"set": "850", "name": "PO", "functional_group": "PO"},
+            "structure": [{"area": "heading", "segments": ["BEG"]}],
+            "required_elements": [
+                {"segment": "ref", "element": 2, "qualifier": "IA"},
+            ],
+            "required_pairs": [
+                {"segment": "po1", "code": "UP", "name": "UPC"},
+                {"segment": "LIN", "code": "BP", "first_element": 2,
+                 "last_element": 30, "step": 2},
+            ],
+        }
+        definition = parse_definition(data, source="inline")
+        assert definition.required_elements[0].qualifier == "IA"
+        assert definition.required_elements[0].qualifier_element == 1
+        assert definition.required_pairs == (
+            RequiredPairDef(segment="PO1", code="UP", name="UPC"),
+            RequiredPairDef(segment="LIN", code="BP", first_element=2,
+                            last_element=30, step=2),
+        )
+
+    def test_loader_rejects_bad_pair_entries(self):
+        from mapcheck.transactions.loader import DefinitionError, parse_definition
+
+        data = {
+            "transaction": {"set": "850", "name": "PO", "functional_group": "PO"},
+            "structure": [{"area": "heading", "segments": ["BEG"]}],
+            "required_pairs": [
+                {"segment": "PO1"},
+                {"segment": "PO1", "code": "UP", "first_element": 0},
+                {"segment": "PO1", "code": "UP", "last_element": 2},
+            ],
+        }
+        with pytest.raises(DefinitionError) as err:
+            parse_definition(data, source="inline")
+        message = str(err.value)
+        assert "required_pairs[0]" in message
+        assert "required_pairs[1].first_element" in message
+        assert "required_pairs[2].last_element" in message
+
+    def test_overlay_load_validates_pairs(self, tmp_path: Path):
+        path = tmp_path / "bad.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "transaction": "850",
+                    "partner": "x",
+                    "required_pairs": [
+                        {"code": "UP"},
+                        {"segment": "PO1", "code": "UP", "step": 0},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(PartnerRulesError) as err:
+            PartnerRules.load(path)
+        message = str(err.value)
+        assert "required_pairs[0]" in message
+        assert "required_pairs[1]" in message
 
 
 # --------------------------------------------------------------------------

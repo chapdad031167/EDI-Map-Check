@@ -91,9 +91,10 @@ did not exist in the spec model, so even a partner delta merged with
 *presence*. Design 014 closed the presence half: `import-guide --overlay`
 derives partner rules from an implementation guide and
 `validate --partner-rules` FAILs this file on all three seeded defects
-(pinned in `TestFile4PartnerRules`). Qualifier-*pair* rules ("the UP pair
-may arrive in either qualifier slot") remain backlog — today's enforcement
-of PO108/PO109 is positional.
+(pinned in `TestFile4PartnerRules`). Design 015 closed the rest:
+qualifier-scoped element rules ("REF02 required in REF*IA") and
+code-keyed pair rules ("a UP pair in any product-ID slot"), replacing
+the interim positional enforcement of PO108/PO109.
 
 ### File 5 — `850_05_truncated.edi`
 

@@ -242,6 +242,7 @@ def validate(
         )
     _check_required_elements(tx, result, structure_category, structure_side)
     _check_required_segments(tx, result, structure_category, structure_side)
+    _check_required_pairs(tx, result, structure_category, structure_side)
 
     for rule in spec.rules:
         if rule.rule_type is RuleType.TODO:
@@ -1171,12 +1172,15 @@ def _check_required_elements(
         for label, seg in tx.business_segments():
             if seg.seg_id != req.segment:
                 continue
+            if req.qualifier is not None and seg.element(req.qualifier_element) != req.qualifier:
+                continue  # scoped rule: this occurrence is not the qualified one
             if req.when_present is not None and seg.element(req.when_present) is None:
                 continue
             if seg.element(req.element) is not None:
                 continue
             ref = seg.ref(req.element)
             name = f" ({req.name})" if req.name else ""
+            scope = f" in {req.segment}*{req.qualifier}" if req.qualifier is not None else ""
             if req.when_present is not None:
                 when_ref = seg.ref(req.when_present)
                 when_name = f" ({req.when_name})" if req.when_name else ""
@@ -1186,12 +1190,12 @@ def _check_required_elements(
                 )
             elif req.origin:
                 core = (
-                    f"{ref}{name} is required by partner {req.origin} "
+                    f"{ref}{name}{scope} is required by partner {req.origin} "
                     f"but is empty"
                 )
             else:
                 core = (
-                    f"{ref}{name} is a mandatory element in the "
+                    f"{ref}{name}{scope} is a mandatory element in the "
                     f"{tx.definition.set_code} but is empty"
                 )
             result.findings.append(
@@ -1249,6 +1253,51 @@ def _check_required_segments(
                 ),
             )
         )
+
+
+def _check_required_pairs(
+    tx: TransactionDocument,
+    result: RunResult,
+    category: Category,
+    structure_side: str,
+) -> None:
+    """Enforce qualifier/value pair rules per segment occurrence.
+
+    X12 product-ID pairs are code-keyed, not slot-keyed: "every PO1 must
+    carry a UP pair" is satisfied by UP in any qualifier slot with a
+    non-empty companion value, and violated by a fully-filled segment
+    that carries no UP at all. Each occurrence missing the pair is its
+    own finding (Design 015).
+    """
+    if not tx.definition.required_pairs:
+        return
+    side = structure_side or "source "
+    for req in tx.definition.required_pairs:
+        for label, seg in tx.business_segments():
+            if seg.seg_id != req.segment:
+                continue
+            found = any(
+                seg.element(position) == req.code
+                and seg.element(position + 1) is not None
+                for position in range(req.first_element, req.last_element + 1, req.step)
+            )
+            if found:
+                continue
+            name = f" ({req.name})" if req.name else ""
+            origin = f" — required by partner {req.origin}" if req.origin else ""
+            result.findings.append(
+                Finding(
+                    status=Status.FAIL,
+                    category=category,
+                    source_ref=label,
+                    expected=f"a {req.code} qualifier with a value",
+                    actual="(absent)",
+                    message=(
+                        f"{side}data invalid: no {req.code}{name} qualifier "
+                        f"pair in this {req.segment}{origin}"
+                    ),
+                )
+            )
 
 
 def _check_line_counts(tx: TransactionDocument, output: CanonicalOutput, result: RunResult) -> None:

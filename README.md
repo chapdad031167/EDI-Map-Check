@@ -310,19 +310,26 @@ mapcheck import-guide acme_850.pdf --transaction 850 --partner acme_pharma \
   filtered to the partner's code subsets (a partner code with no
   crosswalk translation becomes a review row, not a guess).
 - **Consumer two — partner presence rules.** `--overlay` emits a
-  **partner-rules overlay** (`required_segments` / `required_elements`
-  in the transaction-definition schema), and `validate --partner-rules
-  acme_rules.yaml` enforces it on top of the base standard:
+  **partner-rules overlay** (`required_segments` / `required_elements` /
+  `required_pairs` in the transaction-definition schema), and
+  `validate --partner-rules acme_rules.yaml` enforces it on top of the
+  base standard:
 
   ```
   FAIL  DTM*002  source data invalid: required segment DTM*002
         (Requested Delivery) is missing — required by partner acme_pharma
+  FAIL  PO1 #2   source data invalid: no UP (UPC Consumer Package Code)
+        qualifier pair in this PO1 — required by partner acme_pharma
   ```
 
-  Overlay entries the base definition already enforces are skipped;
-  rules the overlay schema cannot express yet (qualifier-scoped element
-  requirements) are named in its `review` list and echoed at validate
-  time — surfaced, never silently dropped.
+  Rules are qualifier-aware (Design 015): "REF02 required *in the
+  REF\*IA occurrence*" checks only that occurrence, and qualifier
+  *pairs* are code-keyed — a UP pair in any product-ID slot satisfies
+  the rule, a fully-filled segment with no UP fails it. Overlay entries
+  the base definition already enforces are skipped; anything the schema
+  still cannot express (multi-code qualifiers, loop-scoped placement)
+  is named in the overlay's `review` list and echoed at validate time —
+  surfaced, never silently dropped.
 - The **Draft spec** page in the UI takes the guide as an optional
   upload (plus a partner-name field), shows the parse coverage and
   review entries, and offers the profile as a download.
@@ -752,25 +759,28 @@ flat/IDoc containers, cross-transaction-set pairing (e.g. 844/849). The
 layering above is built
 so those grow without rework — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
-### The partner-rule gap (mostly closed)
+### The partner-rule gap (closed)
 
 MapCheck validates against the **base X12 standard** plus whatever the
-mapping spec expresses. Partner *presence* rules — "Acme requires
-`DTM*002`", "the header needs a `REF*IA`", "PO108/PO109 must be filled
-on every line" — are now enforceable through a partner-rules overlay
-(`import-guide --overlay` + `validate --partner-rules`, above). Audit
-file 4 (`tests/fixtures/audit_kit/850_04_partner_rules.edi`) measures
-this: 100% valid base X12 that violates a fictional companion guide, it
-passes a base run and FAILs on all three seeded defects once the overlay
-is applied — the regression test pins both halves.
+mapping spec expresses. Partner rules — "Acme requires `DTM*002`", "the
+header needs a `REF*IA` and its REF02 must be filled", "every PO1 must
+carry a UP qualifier pair" — are enforceable through a partner-rules
+overlay (`import-guide --overlay` + `validate --partner-rules`, above),
+including the qualifier-scoped shapes (Design 015): scoped element
+requirements check only the qualified occurrence, and pair rules are
+code-keyed rather than positional. Audit file 4
+(`tests/fixtures/audit_kit/850_04_partner_rules.edi`) measures this:
+100% valid base X12 that violates a fictional companion guide, it
+passes a base run and FAILs on all three seeded defects once the
+overlay is applied — regression tests pin both halves, plus the
+truth-table cases (a UP pair in either slot passes; a filled segment
+with no UP fails; `REF*IA` with an empty REF02 fails).
 
-What remains open, named in each overlay's `review` list rather than
-silently dropped: **qualifier-scoped rules** — "REF02 is required *within
-the REF*IA occurrence*" enforces today as segment presence only, and
-"every PO1 must carry a UP qualifier *pair*" enforces positionally
-(PO108/PO109 presence) rather than as a pair rule that would catch the
-UPC arriving in PO106/PO107. Those need a qualifier-scoped rule shape in
-the overlay schema — backlogged until a real guide demands it.
+Still named honestly, in each overlay's `review` list where relevant:
+**loop-scoped placement** ("N3 required *within the N1[ST] loop*"
+enforces as global presence) and **multi-code qualifiers** (a REF block
+allowing {IA, DP} emits an unqualified requirement plus a review note —
+picking one would be guessing).
 
 ### Backlog
 

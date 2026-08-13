@@ -143,6 +143,11 @@ class RequiredElementDef:
     transaction definition, not in any mapping spec, and an empty required
     element is a FAILURE, never NOT TESTED.
 
+    With ``qualifier`` set (Design 015), only occurrences whose
+    ``qualifier_element`` equals that code are checked — "REF02 is
+    required in REF*IA occurrences" — so a partner rule about one
+    qualified occurrence never flags the others.
+
     ``origin`` is empty for base-standard rules; a partner-rules overlay
     (Design 014) sets it to the partner name so findings say whose rule
     failed.
@@ -153,6 +158,32 @@ class RequiredElementDef:
     name: str = ""
     when_present: int | None = None
     when_name: str = ""
+    qualifier: str | None = None
+    qualifier_element: int = 1
+    origin: str = ""
+
+
+@dataclass(frozen=True)
+class RequiredPairDef:
+    """A qualifier/value pair required in every occurrence of a segment.
+
+    X12 product-ID pairs are positional but code-keyed: PO106/PO107 and
+    PO108/PO109 both carry (qualifier, value), and a sender may put a
+    given qualifier in either slot. This rule is the semantic form —
+    "every PO1 must carry a UP pair" — checked by scanning the qualifier
+    positions ``first_element, first_element + step, …, last_element``
+    for ``code`` with a non-empty companion value at the next position.
+
+    ``name`` is the code's human name for messages ("UPC Consumer
+    Package Code"); ``origin`` names the partner whose rule this is.
+    """
+
+    segment: str
+    code: str
+    first_element: int = 6
+    last_element: int = 24
+    step: int = 2
+    name: str = ""
     origin: str = ""
 
 
@@ -205,6 +236,7 @@ class TransactionDefinition:
     reconciliation: tuple[ReconRule, ...] = ()
     required_elements: tuple[RequiredElementDef, ...] = ()
     required_segments: tuple[RequiredSegmentDef, ...] = ()
+    required_pairs: tuple[RequiredPairDef, ...] = ()
     #: Element dictionary for draft-spec's source walk (Design 012):
     #: segment id -> element names in positional order (element 01 first).
     #: Covers the commonly used commercial subset, not the exhaustive

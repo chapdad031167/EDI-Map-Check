@@ -137,6 +137,8 @@ expressible in the required-elements schema; they stay a named backlog
 item rather than a silent gap. Code-subset enforcement needs no engine
 work at all — the partner draft's filtered code lists already fail
 out-of-subset values through the existing CODE_LIST path.
+*(The backlog item was closed by Design 015: qualifier-scoped element
+rules and code-keyed pair rules.)*
 
 Rejected alternative: building a new companion-guide rule engine.
 Presence and code subsets cover the audit's measured gap with machinery

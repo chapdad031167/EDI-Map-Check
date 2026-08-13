@@ -385,9 +385,10 @@ class TestFile4PartnerRules:
         }
 
     def test_partner_overlay_closes_the_gap(self, harness_dir: Path):
-        """With the Design 014 overlay the same file FAILs on all three
-        seeded companion-guide defects: no DTM*002, no REF*IA, and no UP
-        qualifier pair on either PO1 line."""
+        """With the partner overlay (Designs 014/015) the same file FAILs
+        on all three seeded companion-guide defects: no DTM*002, no
+        REF*IA, and no UP qualifier pair on either PO1 line — the pair
+        finding is semantic ("no UP pair"), not positional."""
         from mapcheck.guides.overlay import emit_partner_rules
         from mapcheck.guides.parser import parse_guide
 
@@ -405,9 +406,13 @@ class TestFile4PartnerRules:
         assert run.overall is Status.FAIL
         fails = [f for f in run.findings if f.status is Status.FAIL]
         assert {f.source_ref for f in fails} == {
-            "DTM*002", "REF*IA",
-            "PO1 #1 PO108", "PO1 #2 PO108", "PO1 #1 PO109", "PO1 #2 PO109",
+            "DTM*002", "REF*IA", "PO1 #1", "PO1 #2",
         }
+        pair_fails = [f for f in fails if f.source_ref.startswith("PO1")]
+        assert all(
+            "no UP (UPC Consumer Package Code) qualifier pair" in f.message
+            for f in pair_fails
+        )
         assert all("required by partner acme_pharma" in f.message for f in fails)
         # the base-standard result is untouched: same PASS count as above
         assert _statuses(run)[Status.PASS] == 39

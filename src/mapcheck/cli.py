@@ -554,7 +554,8 @@ def _cmd_import_guide(args: argparse.Namespace) -> int:
         print(f"\nPartner rules overlay written to {overlay_path}")
         print(
             f"Rules: {len(rules.required_segments)} required segment(s), "
-            f"{len(rules.required_elements)} required element(s)"
+            f"{len(rules.required_elements)} required element(s), "
+            f"{len(rules.required_pairs)} qualifier pair(s)"
         )
         for note in rules.review:
             print(f"  - review (not enforced): {note}")

@@ -58,7 +58,7 @@ This file omits all three.
 
 **Expected result, base run:** MapCheck passes it, because base-standard validation cannot see companion guide rules. The gap between "valid X12" and "valid for this partner" is the entire reason EDI analysts exist.
 
-**Expected result, with partner rules (Design 014):** the fictional guide above exists as a synthetic fixture (`tests/fixtures/guides/acme_pharma_850_guide.txt`); `import-guide --overlay` derives a partner-rules overlay from it, and `validate --partner-rules` then FAILs this file on all three seeded defects — missing `DTM*002`, missing `REF*IA`, and empty `PO108`/`PO109` on both lines (the UP pair, enforced positionally; a true qualifier-*pair* rule is still backlog). Both halves are pinned by `tests/test_audit_kit.py::TestFile4PartnerRules`.
+**Expected result, with partner rules (Designs 014/015):** the fictional guide above exists as a synthetic fixture (`tests/fixtures/guides/acme_pharma_850_guide.txt`); `import-guide --overlay` derives a partner-rules overlay from it, and `validate --partner-rules` then FAILs this file on all three seeded defects — missing `DTM*002`, missing `REF*IA`, and "no UP qualifier pair" on each PO1 line. The pair rule is semantic, not positional: UP in any product-ID slot satisfies it, and a filled segment with no UP still fails. Both halves are pinned by `tests/test_audit_kit.py::TestFile4PartnerRules`, with the pair/scoped truth-table cases in `tests/test_guide_import.py::TestQualifierScopedEnforcement`.
 
 ---
 
