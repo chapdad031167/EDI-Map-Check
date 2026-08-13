@@ -369,7 +369,7 @@ def _validate_page() -> None:
     with st.sidebar:
         st.header("Inputs")
         use_example = st.toggle("Use bundled example data", value=EXAMPLES.exists())
-        spec_path = source_path = output_path = partner_path = None
+        spec_path = source_path = output_path = partner_path = rules_path = None
 
         if use_example and EXAMPLES.exists():
             scenario = st.selectbox("Scenario", list(EXAMPLE_SCENARIOS))
@@ -395,6 +395,11 @@ def _validate_page() -> None:
                 "Translated output (internal document inbound; X12 outbound)",
                 type=["json", "flat", "txt", "dat", "edi", "x12", "xml"],
             )
+            rules_upload = st.file_uploader(
+                "Partner rules overlay (optional, .yaml) — from import-guide; "
+                "enforces the partner's presence rules on top of the base standard",
+                type=["yaml", "yml"],
+            )
             # named saves: history rows and baseline labels carry the
             # file names the user recognizes, not temp gibberish
             if spec_upload:
@@ -403,6 +408,8 @@ def _validate_page() -> None:
                 partner_path = _save_upload_named(partner_upload)
             if source_upload:
                 source_path = _save_upload_named(source_upload)
+            if rules_upload:
+                rules_path = _save_upload_named(rules_upload)
             if output_upload:
                 # a suffix-less output still needs an extension for the
                 # format detection; everything else keeps its name
@@ -430,6 +437,17 @@ def _validate_page() -> None:
 
     if run:
         try:
+            partner_rules = None
+            rules_review: list[str] = []
+            if rules_path:
+                from mapcheck.guides.overlay import PartnerRules, PartnerRulesError
+
+                try:
+                    partner_rules = PartnerRules.load(rules_path)
+                    rules_review = list(partner_rules.review)
+                except PartnerRulesError as exc:
+                    st.error(f"Partner rules did not load:\n\n```\n{exc}\n```")
+                    return
             merged_spec = None
             merge_notes: list[str] = []
             if partner_path:
@@ -439,11 +457,13 @@ def _validate_page() -> None:
                 spec = load_spec(spec_path)
             if _is_interchange(spec, source_path, output_path):
                 result = validate_interchange_files(
-                    spec_path, source_path, output_path, spec=merged_spec
+                    spec_path, source_path, output_path, spec=merged_spec,
+                    partner_rules=partner_rules,
                 )
             else:
                 result = validate_files(
-                    spec_path, source_path, output_path, spec=merged_spec
+                    spec_path, source_path, output_path, spec=merged_spec,
+                    partner_rules=partner_rules,
                 )
         except (SpecLoadError, X12ParseError, OutputLoadError) as exc:
             st.error(f"Validation did not run:\n\n```\n{exc}\n```")
@@ -460,6 +480,7 @@ def _validate_page() -> None:
                 )
         st.session_state["result"] = result
         st.session_state["merge_notes"] = merge_notes
+        st.session_state["rules_review"] = rules_review
         st.session_state["run_record"] = (
             recorded_id,
             baseline_label(spec_path, source_path, output_path, partner_path),
@@ -474,6 +495,8 @@ def _validate_page() -> None:
     if "result" in st.session_state:
         for note in st.session_state.get("merge_notes", []):
             st.caption(f"Partner merge note: {note}")
+        for note in st.session_state.get("rules_review", []):
+            st.caption(f"Partner rules note (not enforced): {note}")
         if "effective_spec" in st.session_state:
             st.download_button(
                 "Download effective spec (base + partner delta, .xlsx)",

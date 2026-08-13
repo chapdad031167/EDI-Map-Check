@@ -143,6 +143,12 @@ download. After every recorded run, the Validate page automatically shows
 the **delta against the blessed baseline** — new failures first — or
 offers to bless the run when no baseline exists yet.
 
+An optional **partner rules overlay** (`.yaml` from `import-guide --overlay`)
+can be uploaded alongside the three files; its presence rules are enforced
+on top of the base standard for the run, and any rule the overlay could not
+express is surfaced as a caption — the same `--partner-rules` behavior the
+CLI has, without a terminal.
+
 ### Run it as an app (no terminal)
 
 For non-CLI users, run the whole thing as a web app in a container — one
