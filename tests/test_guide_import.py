@@ -586,6 +586,218 @@ class TestRequiredSegmentLoader:
 
 
 # --------------------------------------------------------------------------
+# The tabular family (Design 017): Gentran-style "Data Element Summary"
+# --------------------------------------------------------------------------
+
+TABULAR_TXT = GUIDES / "bluewater_medical_850_guide.txt"
+TABULAR_PDF = GUIDES / "bluewater_medical_850_guide.pdf"
+
+
+def _tabular_profile() -> GuideProfile:
+    return parse_guide(TABULAR_TXT, transaction="850", partner="bluewater_medical")
+
+
+class TestFamilyRouting:
+    def test_each_fixture_routes_to_its_family(self):
+        assert _profile().family == "templated"
+        assert _tabular_profile().family == "tabular"
+
+    def test_rejection_names_both_families(self, tmp_path: Path):
+        other = tmp_path / "notes.txt"
+        other.write_text("Meeting notes\nDiscussed the 850 project.\n", encoding="utf-8")
+        with pytest.raises(GuideParseError) as err:
+            parse_guide(other, transaction="850", partner="x")
+        message = str(err.value)
+        assert "templated (Element Summary layout)" in message
+        assert "tabular (Data Element Summary layout)" in message
+        assert "Data Element Summary' marker" in message
+
+    def test_matching_both_families_is_a_defined_error(self, tmp_path: Path):
+        both = tmp_path / "both.txt"
+        both.write_text(
+            SPLIT_FORM_GUIDE
+            + "\nSegment: Impossible Mix\nUsage: Mandatory\nData Element Summary\n"
+            "ZZ01 999 Mixed Row M ID 2/2 M\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(GuideParseError, match="two guide layout families"):
+            parse_guide(both, transaction="850", partner="x")
+
+    def test_family_round_trips_through_yaml(self, tmp_path: Path):
+        profile = _tabular_profile()
+        path = profile.save(tmp_path / "b.yaml")
+        assert GuideProfile.load(path).family == "tabular"
+
+
+class TestTabularGolden:
+    def test_segment_inventory_and_coverage(self):
+        profile = _tabular_profile()
+        assert [seg.id for seg in profile.segments] == [
+            "BEG", "REF", "DTM", "N1", "N3", "PO1", "CTT",
+        ]
+        assert profile.parse_coverage == 1.0
+        assert profile.review == []
+
+    def test_user_attribute_overrides_base(self):
+        """The maintainer-confirmed rule: User column wins when present."""
+        profile = _tabular_profile()
+        # base C, User M — the partner made a conditional segment mandatory
+        assert profile.segment("REF").usage == "must_use"
+        # base O, User M on an element
+        po101 = profile.segment("PO1").element("PO101")
+        assert (po101.req, po101.usage) == ("M", "must_use")
+
+    def test_absent_user_attribute_falls_back_to_base(self):
+        profile = _tabular_profile()
+        beg05 = profile.segment("BEG").element("BEG05")
+        assert (beg05.req, beg05.usage) == ("M", "must_use")  # base M
+        ref02 = profile.segment("REF").element("REF02")
+        assert (ref02.req, ref02.usage) == ("C", "used")  # base C
+        n302 = profile.segment("N3").element("N302")
+        assert (n302.req, n302.usage) == ("O", "used")  # base O
+
+    def test_wrapped_code_names_reassemble(self):
+        profile = _tabular_profile()
+        n103 = profile.segment("N1").element("N103")
+        assert [c.name for c in n103.codes] == [
+            "D-U-N-S+4, D-U-N-S Number with Four Character Suffix"
+        ]
+        po106 = profile.segment("PO1").element("PO106")
+        assert ("UK", "U.P.C. Shipping Container Code (1-2-5-5-1)") in [
+            (c.code, c.name) for c in po106.codes
+        ]
+
+    def test_codes_only_under_id_elements(self):
+        profile = _tabular_profile()
+        for seg in profile.segments:
+            for el in seg.elements:
+                if el.type != "ID":
+                    assert el.codes == ()
+
+    def test_notes_kept_examples_filtered(self):
+        profile = _tabular_profile()
+        assert profile.segment("REF").notes == (
+            "The Bluewater vendor reference is required in the heading of every order.",
+        )
+        assert profile.segment("PO1").notes == (
+            "Every order line must carry the NDC in the ND qualifier pair.",
+        )
+        assert not any("Example" in n for s in profile.segments for n in s.notes)
+        assert not any("|" in n for s in profile.segments for n in s.notes)
+
+    def test_page_furniture_never_becomes_codes(self):
+        """Running headers and dated footers are stripped before parsing."""
+        profile = _tabular_profile()
+        all_codes = {
+            c.code for s in profile.segments for e in s.elements for c in e.codes
+        }
+        assert "850" not in all_codes  # the footer line's first token
+        assert not any("Bluewater" in c.name for s in profile.segments
+                       for e in s.elements for c in e.codes)
+
+    def test_loop_and_level_metadata(self):
+        profile = _tabular_profile()
+        assert profile.segment("N1").loop == "N1"
+        assert profile.segment("PO1").loop == "PO1"
+        assert profile.segment("BEG").loop == ""
+        assert profile.segment("DTM").max_use == "10"
+
+    def test_pdf_twin_extracts_identically(self):
+        pytest.importorskip("pdfplumber")
+        txt = _tabular_profile().to_dict()
+        pdf = parse_guide(TABULAR_PDF, transaction="850", partner="bluewater_medical").to_dict()
+        txt.pop("source")
+        pdf.pop("source")
+        assert txt == pdf
+
+    def test_deterministic(self):
+        assert _tabular_profile().to_dict() == _tabular_profile().to_dict()
+
+
+class TestTabularCrossCheck:
+    def _parse_variant(self, tmp_path: Path, transform) -> GuideProfile:
+        text = TABULAR_TXT.read_text(encoding="utf-8")
+        variant = tmp_path / "variant.txt"
+        variant.write_text(transform(text), encoding="utf-8")
+        return parse_guide(variant, transaction="850", partner="x")
+
+    def test_clean_guide_has_no_cross_check_review(self):
+        assert _tabular_profile().review == []
+
+    def test_usage_disagreement_is_review(self, tmp_path: Path):
+        profile = self._parse_variant(
+            tmp_path,
+            lambda t: t.replace(
+                "3 150 DTM Requested Delivery O M 10",
+                "3 150 DTM Requested Delivery O 10",
+            ),
+        )
+        assert any(
+            "DTM at position 150" in note and "index table says used" in note
+            for note in profile.review
+        )
+
+    def test_index_row_without_detail_page_is_review(self, tmp_path: Path):
+        profile = self._parse_variant(
+            tmp_path,
+            lambda t: t.replace(
+                "Summary:\nPage Pos. Seg. Base User Loop",
+                "Summary:\nPage Pos. Seg. Base User Loop\n"
+                "5 020 AMT Total Order Amount M M 1",
+            ),
+        )
+        assert any(
+            "index table lists AMT at position 020" in note
+            and "no detail page defines it" in note
+            for note in profile.review
+        )
+
+    def test_detail_without_index_row_is_review(self, tmp_path: Path):
+        profile = self._parse_variant(
+            tmp_path,
+            lambda t: t.replace("2 050 REF Vendor Reference C M >1\n", ""),
+        )
+        assert any(
+            "detail pages define REF at position 050" in note
+            for note in profile.review
+        )
+
+    def test_no_index_at_all_skips_the_cross_check(self, tmp_path: Path):
+        text = TABULAR_TXT.read_text(encoding="utf-8")
+        # drop the whole front page (the index) — layout variant, not defect
+        body = "\f".join(text.split("\f")[1:])
+        variant = tmp_path / "noindex.txt"
+        variant.write_text(body, encoding="utf-8")
+        profile = parse_guide(variant, transaction="850", partner="x")
+        assert profile.review == []
+        assert len(profile.segments) == 7
+
+
+class TestTabularOverlay:
+    def test_same_rule_shapes_as_the_templated_family(self):
+        """The whole point of one GuideProfile: emission is family-blind."""
+        rules = emit_partner_rules(_tabular_profile())
+        segments = {(r.segment, r.qualifier) for r in rules.required_segments}
+        assert ("DTM", "002") in segments  # single-code qualified family
+        assert ("REF", "VR") in segments  # partner-mandatory REF, qualified
+        assert ("BEG", None) in segments and ("PO1", None) in segments
+        # PO106 is multi-code: positional fallback plus a review note
+        assert any("PO106" in note and "multiple codes" in note for note in rules.review)
+        refs = {(r.segment, r.element) for r in rules.required_elements}
+        assert ("PO1", 6) in refs  # multi-code slot stays positional
+        assert ("PO1", 1) in refs  # user-mandatory PO101
+
+    def test_scoped_element_rules_from_tabular_profiles(self):
+        rules = emit_partner_rules(_tabular_profile())
+        scoped = {
+            (r.segment, r.element, r.qualifier)
+            for r in rules.required_elements
+            if r.qualifier is not None
+        }
+        assert ("DTM", 2, "002") in scoped
+
+
+# --------------------------------------------------------------------------
 # Qualifier-scoped enforcement (Design 015): the truth table as tests
 # --------------------------------------------------------------------------
 

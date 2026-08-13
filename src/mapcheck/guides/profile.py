@@ -72,6 +72,10 @@ class GuideProfile:
     partner: str
     source: str = ""
     version: str = ""
+    #: Which layout family parsed this guide (Design 017): "templated"
+    #: (SpecBuilder-style, Design 014) or "tabular" (the Gentran-style
+    #: Data Element Summary layout). Empty on profiles saved before 017.
+    family: str = ""
     segments: list[GuideSegment] = field(default_factory=list)
     #: Facts the parser saw but would not swear to, with page context.
     review: list[str] = field(default_factory=list)
@@ -108,6 +112,7 @@ class GuideProfile:
             "partner": self.partner,
             "source": self.source,
             "version": self.version,
+            "family": self.family,
             "parse_coverage": round(self.parse_coverage, 4),
             "facts_confident": self.facts_confident,
             "facts_detected": self.facts_detected,
@@ -230,6 +235,7 @@ class GuideProfile:
             partner=str(data.get("partner", "") or ""),
             source=str(data.get("source", "") or ""),
             version=str(data.get("version", "") or ""),
+            family=str(data.get("family", "") or ""),
             segments=segments,
             review=[str(r) for r in (data.get("review") or [])],
         )

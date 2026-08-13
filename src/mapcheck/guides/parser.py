@@ -1,16 +1,27 @@
-"""Parser for the templated implementation-guide family (Design 014).
+"""Parsers for the known implementation-guide layout families.
 
-Reads text-extractable PDF and plain-text guide exports in the
-SpecBuilder-style layout — segment header blocks (``BEG … Pos: 020
-Max: 1``), ``User Option (Usage)`` lines, Element Summary tables
-(``Ref / Id / Element Name / Req / Type / Min/Max / Usage``), Code List
-Summary blocks, and partner notes — into a
-:class:`~mapcheck.guides.profile.GuideProfile`.
+Two families, one output. :func:`parse_guide` extracts the text once,
+fingerprints it against each known family, and delegates to that
+family's line grammar; both grammars build the same
+:class:`~mapcheck.guides.profile.GuideProfile`, so everything
+downstream — overlays, drafts, CLI, UI — is family-agnostic.
 
-The flag-never-guess contract applies at parse time: a line that looks
-like data but does not match its grammar lands in the profile's
-``review`` list with page context, never in the data. A file that fails
-family detection raises :class:`GuideParseError` naming the missing
+* **templated** (Design 014): the SpecBuilder-style layout — segment
+  header blocks (``BEG … Pos: 020 Max: 1``, one-line or split),
+  ``User Option (Usage)`` lines, ``Element Summary`` tables with
+  ``Must use``/``Used``/``Not used`` wording, ``Code List Summary``
+  blocks, and labeled partner notes.
+* **tabular** (Design 017): the Gentran/EDI-Notepad-style
+  ``Data Element Summary`` layout — keyed multi-line segment headers
+  (``Segment:`` / ``Position:`` / ``Usage:``), dual Base/User attribute
+  element rows (the User column overrides only when present, else the
+  base/X12 default applies), bare-indented code subsets, and a front
+  index table that is cross-checked against the detail pages.
+
+The flag-never-guess contract applies at parse time in both grammars: a
+line that looks like data but does not match lands in the profile's
+``review`` list with page context, never in the data. A file matching
+no family raises :class:`GuideParseError` naming every family's missing
 fingerprints — never a half-parse.
 """
 
@@ -29,6 +40,16 @@ from mapcheck.guides.profile import (
 #: File suffixes the extractor accepts.
 _TEXT_SUFFIXES = {".txt"}
 _PDF_SUFFIXES = {".pdf"}
+
+#: Family labels recorded on the profile (Design 017).
+FAMILY_TEMPLATED = "templated"
+FAMILY_TABULAR = "tabular"
+
+#: Display names for messages.
+FAMILY_NAMES = {
+    FAMILY_TEMPLATED: "templated (Element Summary layout)",
+    FAMILY_TABULAR: "tabular (Data Element Summary layout)",
+}
 
 
 class GuideParseError(Exception):
@@ -139,19 +160,8 @@ def _normalize_usage(raw: str) -> str | None:
     return _USAGE_VALUES.get(raw.strip().lower())
 
 
-def parse_guide(
-    path: str | Path, transaction: str, partner: str
-) -> GuideProfile:
-    """Parse a guide file into a :class:`GuideProfile`.
-
-    ``transaction`` and ``partner`` are supplied by the caller — never
-    inferred from the document. Raises :class:`GuideParseError` when the
-    file is not a member of the templated family.
-    """
-    path = Path(path)
-    lines = extract_lines(path)
-
-    fingerprints = {
+def _templated_fingerprints(lines: list[tuple[int, str]]) -> dict[str, bool]:
+    return {
         "segment header block (e.g. 'BEG … Pos: 020 Max: 1')": any(
             _SEGMENT_HEADER.match(line) or _POS_MAX_LINE.match(line)
             for _, line in lines
@@ -163,18 +173,57 @@ def parse_guide(
             _ELEMENT_ROW.match(line) for _, line in lines
         ),
     }
-    missing = [name for name, found in fingerprints.items() if not found]
-    if missing:
+
+
+def parse_guide(
+    path: str | Path, transaction: str, partner: str
+) -> GuideProfile:
+    """Parse a guide file into a :class:`GuideProfile`.
+
+    ``transaction`` and ``partner`` are supplied by the caller — never
+    inferred from the document. The layout family is detected by
+    fingerprinting and recorded on the profile; a file matching no known
+    family raises :class:`GuideParseError` naming what each family was
+    missing.
+    """
+    path = Path(path)
+    lines = extract_lines(path)
+
+    templated = _templated_fingerprints(lines)
+    tabular = _tabular_fingerprints(lines)
+    is_templated = all(templated.values())
+    is_tabular = all(tabular.values())
+    if is_templated and is_tabular:
         raise GuideParseError(
-            f"{path}: not a recognized implementation-guide layout — missing "
-            + "; ".join(missing)
-            + ". Free-form and scanned guides are out of scope (Design 014)."
+            f"{path}: matches two guide layout families at once — cannot "
+            "choose a grammar safely; split or clean the file"
+        )
+    if not is_templated and not is_tabular:
+        raise GuideParseError(
+            f"{path}: not a recognized implementation-guide layout. "
+            f"{FAMILY_NAMES[FAMILY_TEMPLATED]}: missing "
+            + "; ".join(name for name, found in templated.items() if not found)
+            + f". {FAMILY_NAMES[FAMILY_TABULAR]}: missing "
+            + "; ".join(name for name, found in tabular.items() if not found)
+            + ". Free-form and scanned guides are out of scope "
+            "(Designs 014/017)."
         )
 
     profile = GuideProfile(
-        transaction=transaction, partner=partner, source=path.name
+        transaction=transaction,
+        partner=partner,
+        source=path.name,
+        family=FAMILY_TEMPLATED if is_templated else FAMILY_TABULAR,
     )
+    if is_templated:
+        return _parse_templated(lines, profile)
+    return _parse_tabular(lines, profile)
 
+
+def _parse_templated(
+    lines: list[tuple[int, str]], profile: GuideProfile
+) -> GuideProfile:
+    """The Design 014 grammar: SpecBuilder-style templated guides."""
     segment: dict | None = None  # mutable accumulator for the open segment
     element: dict | None = None  # mutable accumulator for the last element
     in_element_summary = False
@@ -382,3 +431,420 @@ def parse_guide(
 
     close_segment()
     return profile
+
+
+# --------------------------------------------------------------------------
+# The tabular family (Design 017): Gentran-style "Data Element Summary"
+# --------------------------------------------------------------------------
+
+#: "Segment: Beginning Segment for Purchase Order" — the partner's name.
+_B_SEGMENT = re.compile(r"^Segment:\s*(?P<name>.*\S)\s*$")
+#: The bare segment id printed above the Segment: line ("BEG").
+_B_BARE_ID = re.compile(r"^(?P<id>[A-Z][A-Z0-9]{1,2})\s*$")
+_B_POSITION = re.compile(r"^Position:\s*(?P<pos>\S+)\s*$")
+#: "Loop:" (empty), or "Loop: N1 Mandatory" — the loop id, usage ignored.
+_B_LOOP = re.compile(r"^Loop:\s*(?P<loop>[A-Z][A-Z0-9]{0,2})?(?:\s+\S.*)?$")
+_B_LEVEL = re.compile(r"^Level:\s*(Heading|Detail|Summary)\s*$")
+_B_USAGE = re.compile(r"^Usage:\s*(?P<usage>.+?)\s*$")
+_B_MAX_USE = re.compile(r"^Max Use:\s*(?P<max>\S+)\s*$")
+_B_NOTES = re.compile(r"^Notes:\s*(?P<note>.*)$")
+#: Keyed prose blocks that are standard-text, not partner facts.
+_B_SKIP_KEYED = re.compile(r"^(Purpose|Syntax Notes|Comments):")
+_B_TABLE_MARKER = re.compile(r"^Data Element Summary\s*$")
+#: The two-line column header of the element table.
+_B_TABLE_HEADER = re.compile(r"^(Ref\.|Des\.)\s")
+#: "BEG01 353 Transaction Set Purpose Code M ID 2/2 M" — base attributes
+#: always present, the trailing User requirement optional (Design 017:
+#: absent User column = no partner override, base applies).
+_B_ELEMENT_ROW = re.compile(
+    r"^(?P<ref>[A-Z][A-Z0-9]{1,2}\d{2})\s+(?P<num>\d+)\s+(?P<name>.+?)\s+"
+    r"(?P<breq>[MOCX])\s+(?P<type>[A-Z][A-Z0-9]{0,2})\s+"
+    r"(?P<min>\d+)/(?P<max>\d+)(?:\s+(?P<ureq>[MOCX]))?\s*$"
+)
+#: Index-table row: "10 300 N1 ABC Division Name M M 1".
+_B_INDEX_ROW = re.compile(
+    r"^(?P<page>\d{1,3})\s+(?P<pos>\d{2,4})\s+"
+    r"(?P<seg>[A-Z][A-Z0-9]{1,2})\s+(?P<rest>.+)$"
+)
+_B_INDEX_HEADER = re.compile(r"^(Page\s+Pos\.|No\.\s+No\.|LOOP ID\b|Heading:|Detail:|Summary:)")
+#: Page furniture: a page's last line ending in a "Month D, YYYY" date
+#: (title-page#-date footers) or a bare page number.
+_B_FOOTER = re.compile(r"([A-Z][a-z]+ \d{1,2}, \d{4}\s*$|^Page \d+( of \d+)?\s*$)")
+#: A raw EDI sample inside a Notes block ("ST|850|008123456~").
+_B_RAW_SAMPLE = re.compile(r"[A-Z][A-Z0-9]{1,2}[|*][^ ]")
+
+#: Requirement letter -> normalized usage. The effective letter is the
+#: User attribute when present, else the Base attribute (X12 default) —
+#: maintainer-confirmed reading of the dual-column layout.
+_B_REQ_USAGE = {"M": "must_use", "O": "used", "C": "used", "X": "used"}
+_B_USAGE_WORDS = {
+    "mandatory": "must_use",
+    "optional": "used",
+    "conditional": "used",
+    "not used": "not_used",
+}
+
+
+def _tabular_fingerprints(lines: list[tuple[int, str]]) -> dict[str, bool]:
+    return {
+        "'Data Element Summary' marker": any(
+            _B_TABLE_MARKER.match(line.strip()) for _, line in lines
+        ),
+        "'Segment:'/'Usage:' keyed header lines": any(
+            _B_SEGMENT.match(line.strip()) for _, line in lines
+        )
+        and any(_B_USAGE.match(line.strip()) for _, line in lines),
+        "element rows (Ref/Num/Name/Base-Attributes)": any(
+            _B_ELEMENT_ROW.match(line.strip()) for _, line in lines
+        ),
+    }
+
+
+def _strip_page_furniture(
+    lines: list[tuple[int, str]]
+) -> list[tuple[int, str]]:
+    """Drop running headers and footers before parsing the tabular family.
+
+    Footers: each page's last line when it ends in a written-out date or
+    is a bare page number. Headers: a verbatim line repeating on at least
+    half the pages (minimum 3) that matches no structural grammar — the
+    partner's letterhead, not data. Structural lines (table markers,
+    column headers, element rows) repeat legitimately and are protected.
+    """
+    total_pages = max((p for p, _ in lines), default=0)
+    last_line_index: dict[int, int] = {}
+    for index, (page, line) in enumerate(lines):
+        if line.strip():
+            last_line_index[page] = index
+
+    structural = (
+        _B_SEGMENT, _B_TABLE_MARKER, _B_TABLE_HEADER, _B_ELEMENT_ROW,
+        _B_INDEX_ROW, _B_INDEX_HEADER, _B_POSITION, _B_USAGE, _B_MAX_USE,
+        _B_NOTES, _B_SKIP_KEYED, _B_LOOP, _B_LEVEL,
+    )
+
+    pages_of: dict[str, set[int]] = {}
+    for page, line in lines:
+        text = line.strip()
+        if text:
+            pages_of.setdefault(text, set()).add(page)
+    threshold = max(3, total_pages // 2)
+    repeated_furniture = {
+        text
+        for text, pages in pages_of.items()
+        if total_pages >= 4
+        and len(pages) >= threshold
+        and not any(rx.match(text) for rx in structural)
+    }
+
+    kept: list[tuple[int, str]] = []
+    for index, (page, line) in enumerate(lines):
+        text = line.strip()
+        if text in repeated_furniture:
+            continue
+        if index == last_line_index.get(page) and _B_FOOTER.search(text):
+            continue
+        kept.append((page, line))
+    return kept
+
+
+def _parse_index_rest(rest: str) -> tuple[str, str | None, str | None]:
+    """Split an index row's tail into (name, base_req, user_req).
+
+    The tail reads name + Base [+ User] + Max.Use; requirements are
+    single ``M/O/C/X`` letters and Max.Use is a count like ``1``/``>1``.
+    Returns (rest, None, None) when the tail does not end that way.
+    """
+    tokens = rest.split()
+    if len(tokens) < 3 or not re.fullmatch(r">?\d+", tokens[-1]):
+        return rest, None, None
+    base = user = None
+    cut = -1
+    if tokens[-2] in _B_REQ_USAGE:
+        if len(tokens) >= 4 and tokens[-3] in _B_REQ_USAGE:
+            base, user, cut = tokens[-3], tokens[-2], -3
+        else:
+            base, cut = tokens[-2], -2
+    if base is None:
+        return rest, None, None
+    return " ".join(tokens[:cut]), base, user
+
+
+def _parse_tabular(
+    lines: list[tuple[int, str]], profile: GuideProfile
+) -> GuideProfile:
+    """The Design 017 grammar: Gentran-style tabular guides."""
+    lines = _strip_page_furniture(lines)
+
+    #: (seg, pos) -> usages from the front index table, for cross-check.
+    index_entries: list[tuple[str, str, str, int]] = []  # seg, pos, usage, page
+
+    segment: dict | None = None
+    element: dict | None = None
+    pending_id: str | None = None
+    in_table = False
+    in_notes = False
+    note_lines: list[str] = []
+    seen_detail = False  # index rows only count before the first Segment:
+
+    def close_element() -> None:
+        nonlocal element
+        if element is not None and segment is not None:
+            segment["elements"].append(
+                GuideElement(
+                    ref=element["ref"],
+                    name=element["name"],
+                    req=element["req"],
+                    type=element["type"],
+                    min=element["min"],
+                    max=element["max"],
+                    usage=element["usage"],
+                    codes=tuple(element["codes"]),
+                    notes=tuple(element["notes"]),
+                )
+            )
+        element = None
+
+    def flush_notes() -> None:
+        nonlocal in_notes, note_lines
+        if in_notes and segment is not None:
+            kept = [
+                text for text in note_lines
+                if text
+                and not text.lower().startswith("example")
+                and not _B_RAW_SAMPLE.search(text)
+            ]
+            if kept:
+                segment["notes"].append(" ".join(kept))
+        in_notes = False
+        note_lines = []
+
+    def close_segment() -> None:
+        nonlocal segment, in_table
+        flush_notes()
+        close_element()
+        if segment is not None:
+            profile.segments.append(
+                GuideSegment(
+                    id=segment["id"],
+                    name=segment["name"],
+                    pos=segment["pos"],
+                    max_use=segment["max"],
+                    loop=segment["loop"],
+                    usage=segment["usage"],
+                    notes=tuple(segment["notes"]),
+                    elements=tuple(segment["elements"]),
+                )
+            )
+        segment = None
+        in_table = False
+
+    for page, raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        if header := _B_SEGMENT.match(line):
+            close_segment()
+            seen_detail = True
+            profile.facts_detected += 1
+            if pending_id is None:
+                profile.review.append(
+                    f"page {page}: 'Segment:' block with no segment id line "
+                    f"above it — skipped; verify by hand: {line!r}"
+                )
+                continue
+            profile.facts_confident += 1
+            segment = {
+                "id": pending_id,
+                "name": header["name"].strip(),
+                "pos": "",
+                "max": "",
+                "loop": "",
+                "usage": "",
+                "notes": [],
+                "elements": [],
+            }
+            pending_id = None
+            continue
+
+        if bare := _B_BARE_ID.match(line):
+            flush_notes()
+            pending_id = bare["id"]
+            continue
+
+        if not seen_detail:
+            # front matter: the summary index table, parsed for cross-check
+            if _B_INDEX_HEADER.match(line):
+                continue
+            if index_row := _B_INDEX_ROW.match(line):
+                _, base, user = _parse_index_rest(index_row["rest"])
+                if base is not None:
+                    effective = user or base
+                    index_entries.append(
+                        (
+                            index_row["seg"],
+                            index_row["pos"],
+                            _B_REQ_USAGE.get(effective, "used"),
+                            page,
+                        )
+                    )
+                continue
+            continue
+
+        if segment is None:
+            continue
+
+        if position := _B_POSITION.match(line):
+            flush_notes()
+            segment["pos"] = position["pos"]
+            continue
+        if _B_LEVEL.match(line):
+            flush_notes()
+            continue
+        if loop_line := _B_LOOP.match(line):
+            flush_notes()
+            segment["loop"] = loop_line["loop"] or ""
+            continue
+        if usage_line := _B_USAGE.match(line):
+            flush_notes()
+            profile.facts_detected += 1
+            usage = _B_USAGE_WORDS.get(usage_line["usage"].strip().lower())
+            if usage is None:
+                profile.review.append(
+                    f"page {page}: segment {segment['id']}: unrecognized "
+                    f"usage {usage_line['usage']!r} — verify by hand"
+                )
+            else:
+                profile.facts_confident += 1
+                segment["usage"] = usage
+            continue
+        if max_use := _B_MAX_USE.match(line):
+            flush_notes()
+            segment["max"] = max_use["max"]
+            continue
+        if _B_SKIP_KEYED.match(line):
+            flush_notes()
+            continue
+        if note := _B_NOTES.match(line):
+            flush_notes()
+            in_notes = True
+            if note["note"].strip():
+                note_lines.append(note["note"].strip())
+            continue
+        if _B_TABLE_MARKER.match(line):
+            flush_notes()
+            in_table = True
+            continue
+        if in_notes:
+            note_lines.append(line)
+            continue
+        if not in_table:
+            continue  # Purpose/Comments continuation prose
+        if _B_TABLE_HEADER.match(line):
+            continue
+
+        if row := _B_ELEMENT_ROW.match(line):
+            close_element()
+            profile.facts_detected += 1
+            profile.facts_confident += 1
+            effective = row["ureq"] or row["breq"]
+            element = {
+                "ref": row["ref"],
+                "name": row["name"].strip(),
+                "req": effective,
+                "type": row["type"],
+                "min": int(row["min"]),
+                "max": int(row["max"]),
+                "usage": _B_REQ_USAGE.get(effective, "used"),
+                "codes": [],
+                "notes": [],
+                "described": False,  # first prose line = X12 description
+            }
+            continue
+
+        if _ELEMENT_ROW_LOOSE.match(line):
+            profile.facts_detected += 1
+            profile.review.append(
+                f"page {page}: line looks like an element row but did not "
+                f"parse — verify by hand: {line!r}"
+            )
+            close_element()
+            continue
+
+        if element is not None:
+            is_code_shaped = bool(code_row := _CODE_ROW.match(line))
+            if element["type"] == "ID":
+                if is_code_shaped:
+                    element["codes"].append(
+                        GuideCode(
+                            code=code_row["code"], name=code_row["name"].strip()
+                        )
+                    )
+                elif element["codes"]:
+                    # a wrapped code name continues on the next line
+                    last = element["codes"][-1]
+                    element["codes"][-1] = GuideCode(
+                        code=last.code, name=f"{last.name} {line}".strip()
+                    )
+                # else: the X12 description before the first code — skipped
+            elif is_code_shaped and element["described"]:
+                profile.review.append(
+                    f"page {page}: {element['ref']}: code-shaped line under a "
+                    f"non-ID element — verify by hand: {line!r}"
+                )
+            else:
+                element["described"] = True  # description prose — skipped
+            continue
+
+    close_segment()
+
+    if index_entries:
+        _cross_check_index(profile, index_entries)
+    return profile
+
+
+def _cross_check_index(
+    profile: GuideProfile, index_entries: list[tuple[str, str, str, int]]
+) -> None:
+    """Compare the front index table against the detail pages (Design 017).
+
+    Disagreements surface questions up front, before a mapping session:
+    a listed segment with no detail page (or the reverse), occurrence
+    counts that differ for a per-qualifier repeat, and effective-usage
+    conflicts all become review facts.
+    """
+    index_map: dict[tuple[str, str], list[str]] = {}
+    for seg, pos, usage, _ in index_entries:
+        index_map.setdefault((seg, pos), []).append(usage)
+    detail_map: dict[tuple[str, str], list[str]] = {}
+    for seg in profile.segments:
+        detail_map.setdefault((seg.id, seg.pos), []).append(seg.usage)
+
+    for key in sorted(set(index_map) | set(detail_map)):
+        seg, pos = key
+        from_index = sorted(index_map.get(key, []))
+        from_detail = sorted(detail_map.get(key, []))
+        if not from_detail:
+            profile.review.append(
+                f"index table lists {seg} at position {pos} "
+                f"({len(from_index)} occurrence(s)) but no detail page "
+                "defines it — verify with the partner"
+            )
+        elif not from_index:
+            profile.review.append(
+                f"detail pages define {seg} at position {pos} but the index "
+                "table does not list it — verify with the partner"
+            )
+        elif len(from_index) != len(from_detail):
+            profile.review.append(
+                f"{seg} at position {pos}: index table shows "
+                f"{len(from_index)} occurrence(s) but the detail pages show "
+                f"{len(from_detail)} — verify with the partner"
+            )
+        elif from_index != from_detail:
+            profile.review.append(
+                f"{seg} at position {pos}: index table says "
+                f"{'/'.join(from_index)} but the detail page says "
+                f"{'/'.join(from_detail)} — verify with the partner"
+            )
