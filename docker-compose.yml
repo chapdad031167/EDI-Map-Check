@@ -12,4 +12,12 @@ services:
       - "8501:8501"
     environment:
       - PORT=8501
+      # run history (baselines, trends) on a named volume, so it
+      # survives container rebuilds (Design 016)
+      - MAPCHECK_HISTORY_DB=/data/mapcheck_history.db
+    volumes:
+      - mapcheck-data:/data
     restart: unless-stopped
+
+volumes:
+  mapcheck-data:

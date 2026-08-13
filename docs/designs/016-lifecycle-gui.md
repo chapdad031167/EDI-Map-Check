@@ -1,6 +1,7 @@
 # Design 016: the run lifecycle in the app (GUI Tier 3)
 
-**Status:** Draft, for review — no code until sign-off.
+**Status:** Approved 2026-08-13 (open questions answered in review),
+implementation in this PR.
 **Applies to:** `app.py` (a new History page, a regression strip on the
 Validate page), `docker-compose.yml` (history volume), README.
 **Depends on:** the existing lifecycle engine — `RunHistory` (SQLite:
@@ -163,15 +164,21 @@ Design 013 gap to report, not to patch inline.
   regression strip shows the NEW failure; History page shows both
   runs and the baseline marker.
 
-## Open questions
+## Open questions — answered (2026-08-13)
 
-1. **Trends placement:** move entirely to the History page (this
-   design), or also keep the collapsed expander on Validate?
-2. **Label ergonomics:** is the derived
-   `spec name | source -> output` default the right shape, or would
-   you rather it default to just the spec name and lean on editing?
-3. **Recording examples:** record bundled example scenarios by
-   default (this design), or exempt them from history?
-4. **Docker data path:** a named volume managed by compose (this
-   design — zero setup, survives rebuilds) vs. a bind mount to a host
-   folder (visible file on the host, but host-specific setup)?
+1. **Trends placement:** move entirely to the History page. The
+   Validate page loses the expander.
+2. **Label ergonomics:** the derived `spec | source -> output` default
+   stands. Implementation note: the derivation uses **file names
+   only** (not the spec's Meta `Spec Name`) — the runs table stores
+   file paths, not spec metadata, so a Spec-Name-based label could not
+   be re-derived when blessing a stored run from the History page, and
+   two routes to the same baseline must derive the same key. The
+   editable label at bless time is where a human title goes.
+3. **Recording examples:** yes — bundled example scenarios record by
+   default; the demo is how a new user learns the lifecycle.
+4. **Docker data path:** named compose volume, **plus a "Download
+   history (.db)" button on the History page** so the raw database is
+   always reachable from the app itself — durability without exposing
+   Windows users to SQLite-over-bind-mount locking problems, and
+   without making the artifact invisible.

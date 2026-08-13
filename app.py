@@ -11,6 +11,7 @@ Run with:
 from __future__ import annotations
 
 import html
+import os
 import tempfile
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from mapcheck.output.adapter import OutputLoadError
 from mapcheck.report.excel import export_excel
 from mapcheck.report.history import RunHistory
 from mapcheck.report.html import render_run_html, render_trends_html
+from mapcheck.report.regression import RegressionDelta, regress
 from mapcheck.report.trends import compute_trends
 from mapcheck.spec.overrides import export_spec, resolve_spec
 from mapcheck.spec.parser import SpecLoadError, load_spec
@@ -219,6 +221,32 @@ def findings_table_html(frame: pd.DataFrame) -> str:
     )
 
 
+def _history_db() -> Path:
+    """The history database path — the CLI's default, overridable for
+    containers via MAPCHECK_HISTORY_DB (Design 016)."""
+    return Path(os.environ.get("MAPCHECK_HISTORY_DB", "mapcheck_history.db"))
+
+
+def baseline_label(
+    spec_path: str, source_path: str, output_path: str, partner_path: str | None = None
+) -> str:
+    """The app's baseline key, derived from file names only (Design 016).
+
+    Uploads land in fresh temp directories every run, so the CLI's path
+    keys can never match here; file names are what stays stable. The
+    same formula must be derivable from a stored run row, which is why
+    the spec's Meta name does not participate. The CLI reaches the same
+    baseline with ``--label`` set to this exact text.
+    """
+    label = (
+        f"{Path(spec_path).name} | {Path(source_path).name} "
+        f"-> {Path(output_path).name}"
+    )
+    if partner_path:
+        label = f"{label} | delta: {Path(partner_path).name}"
+    return label
+
+
 def _save_upload(upload, suffix: str) -> str:
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(upload.getvalue())
@@ -319,6 +347,7 @@ def main() -> None:
     pages = st.navigation(
         [
             st.Page(_validate_page, title="Validate", default=True),
+            st.Page(_history_page, title="History"),
             st.Page(_draft_page, title="Draft spec"),
             st.Page(_import_page, title="Import"),
             st.Page(_scrub_page, title="Scrub"),
@@ -366,20 +395,33 @@ def _validate_page() -> None:
                 "Translated output (internal document inbound; X12 outbound)",
                 type=["json", "flat", "txt", "dat", "edi", "x12", "xml"],
             )
+            # named saves: history rows and baseline labels carry the
+            # file names the user recognizes, not temp gibberish
             if spec_upload:
-                spec_path = _save_upload(spec_upload, ".xlsx")
+                spec_path = _save_upload_named(spec_upload)
             if partner_upload:
-                partner_path = _save_upload(partner_upload, ".xlsx")
+                partner_path = _save_upload_named(partner_upload)
             if source_upload:
-                # keep the original extension so the right loader is picked
-                source_path = _save_upload(
-                    source_upload, Path(source_upload.name).suffix or ".edi"
-                )
+                source_path = _save_upload_named(source_upload)
             if output_upload:
-                output_path = _save_upload(
-                    output_upload, Path(output_upload.name).suffix or ".flat"
+                # a suffix-less output still needs an extension for the
+                # format detection; everything else keeps its name
+                output_path = (
+                    _save_upload_named(output_upload)
+                    if Path(output_upload.name).suffix
+                    else _save_upload(output_upload, ".flat")
                 )
 
+        skip_history = st.toggle(
+            "Don't record this run",
+            value=False,
+            help="Recorded runs feed the History page: baselines, "
+            "regression deltas, and trends.",
+        )
+        st.caption(
+            f"Runs record to `{_history_db()}` — the same history the CLI "
+            "reads and writes."
+        )
         run = st.button(
             "Run validation",
             type="primary",
@@ -406,8 +448,22 @@ def _validate_page() -> None:
         except (SpecLoadError, X12ParseError, OutputLoadError) as exc:
             st.error(f"Validation did not run:\n\n```\n{exc}\n```")
             return
+        recorded_id = None
+        if not skip_history:
+            db = _history_db()
+            db.parent.mkdir(parents=True, exist_ok=True)
+            with RunHistory(db) as history:
+                recorded_id = (
+                    history.record_interchange(result)
+                    if isinstance(result, InterchangeResult)
+                    else history.record(result)
+                )
         st.session_state["result"] = result
         st.session_state["merge_notes"] = merge_notes
+        st.session_state["run_record"] = (
+            recorded_id,
+            baseline_label(spec_path, source_path, output_path, partner_path),
+        )
         if merged_spec is not None:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
                 export_spec(merged_spec, tmp.name)
@@ -430,10 +486,11 @@ def _validate_page() -> None:
             _render_interchange(stored)
         else:
             _render_result(stored)
+        record = st.session_state.get("run_record")
+        if record is not None:
+            _render_regression_strip(record[0], record[1])
     else:
         st.info("Select a scenario or upload a spec, source, and output to begin.")
-
-    _render_trends()
 
 
 def draft_preview_html(rows) -> str:
@@ -906,47 +963,323 @@ def _scrub_page() -> None:
     st.code(report_text)
 
 
-def _render_trends() -> None:
-    """History-trends panel, shown when a history DB exists in the cwd."""
-    db = Path("mapcheck_history.db")
+def delta_table_html(delta: RegressionDelta) -> str:
+    """The regression delta in the findings-table pattern: change kind as
+    a dot-plus-word status cell, regressions first. Zero new CSS."""
+    head = "".join(
+        f"<th>{html.escape(col)}</th>" for col in ("Change", "Where", "Detail")
+    )
+    body: list[str] = []
+    for change in sorted(delta.changes, key=lambda c: not c.regression):
+        if change.regression:
+            tone = "status-fail"
+        elif change.kind == "RESOLVED":
+            tone = "status-pass"
+        else:
+            tone = "status-warning"
+        body.append(
+            "<tr>"
+            f'<td class="status-cell {tone}">'
+            f'<span class="status-dot"></span>{html.escape(change.kind)}</td>'
+            f'<td class="mono">{html.escape(change.where)}</td>'
+            f"<td>{html.escape(change.detail)}</td>"
+            "</tr>"
+        )
+    return (
+        '<div class="findings-wrap"><table class="findings">'
+        f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody>"
+        "</table></div>"
+    )
+
+
+def regression_strip_html(delta: RegressionDelta, baseline_run_id: int) -> str:
+    """Verdict strip for a delta: regressions decide the tone."""
+    new = len(delta.of_kind("NEW"))
+    resolved = len(delta.of_kind("RESOLVED"))
+    changed = len(delta.changes) - new - resolved
+    if delta.is_empty:
+        tone, text = "verdict-pass", "NO CHANGES"
+    elif delta.is_regression:
+        tone = "verdict-fail"
+        text = f"{len(delta.regressions)} REGRESSION(S) — {new} NEW / {resolved} RESOLVED / {changed} CHANGED"
+    else:
+        tone = "verdict-pass"
+        text = f"NO REGRESSIONS — {new} NEW / {resolved} RESOLVED / {changed} CHANGED"
+    return (
+        f'<div class="verdict-strip {tone}">{text}'
+        f'<span class="verdict-result">VS BASELINE RUN #{baseline_run_id}</span></div>'
+    )
+
+
+def _render_regression_strip(run_id: int | None, label: str) -> None:
+    """After a recorded run: the delta vs its baseline, or the offer to
+    become one (Design 016). Comparing is automatic; blessing is a click."""
+    st.subheader("Vs baseline")
+    if run_id is None:
+        st.caption("This run was not recorded, so there is nothing to compare.")
+        return
+    db = _history_db()
+    with RunHistory(db) as history:
+        baseline = history.baseline_for(label)
+        if baseline is not None and baseline["run_id"] == run_id:
+            st.caption(f"This run is the blessed baseline for `{label}`.")
+            return
+        if baseline is not None:
+            delta = regress(history, baseline["run_id"], run_id)
+            st.markdown(
+                regression_strip_html(delta, baseline["run_id"]),
+                unsafe_allow_html=True,
+            )
+            if delta.is_empty:
+                st.caption(
+                    f"Identical findings to baseline run #{baseline['run_id']} "
+                    f"(`{label}`)."
+                )
+            else:
+                st.markdown(delta_table_html(delta), unsafe_allow_html=True)
+            st.caption(
+                "A better run can take over as the baseline from the "
+                "History page."
+            )
+            return
+    st.caption(
+        f"No baseline for `{label}` yet. Bless this run and every future "
+        "run of the same files reports only what changed."
+    )
+    name = st.text_input(
+        "Baseline name (optional)",
+        help="A display name for the History page. Matching always uses "
+        "the derived label above; the CLI reaches it with --label.",
+    )
+    if st.button("Bless this run as baseline"):
+        with RunHistory(db) as history:
+            history.bless(run_id, label, label=name.strip() or None)
+        st.rerun()
+
+
+def _stored_findings_frame(rows: list[dict]) -> pd.DataFrame:
+    """Findings from the history database, in the live findings-frame
+    shape so the same table renderer draws them."""
+    return pd.DataFrame(
+        [
+            {
+                "Status": r["status"],
+                "Row ID": r["row_id"] or "",
+                "Source": r["source_ref"] or "",
+                "Target": r["target"] or "",
+                "Expected": r["expected"] or "",
+                "Actual": r["actual"] or "",
+                "Category": r["category"] or "",
+                "Message": r["message"],
+            }
+            for r in rows
+        ]
+    )
+
+
+def runs_table_html(runs: list[dict], blessed: dict[int, dict], children: dict[int, int]) -> str:
+    """Recent runs in the findings-table pattern: result as a dot-plus-word
+    status cell, a BASELINE marker on blessed runs. Zero new CSS."""
+    head = "".join(
+        f"<th>{html.escape(col)}</th>"
+        for col in ("Run", "When (UTC)", "Result", "P / F / W / NT", "Files", "Baseline")
+    )
+    tones = {"PASS": "status-pass", "FAIL": "status-fail", "WARNING": "status-warning"}
+    body: list[str] = []
+    for run in runs:
+        files = f"{Path(run['source_file']).name} -> {Path(run['output_file']).name}"
+        if children.get(run["id"]):
+            files = f"{files} ({children[run['id']]} documents)"
+        tone = tones.get(run["result"], "status-warning")
+        if run["id"] in blessed:
+            marker = (
+                '<td class="status-cell status-pass">'
+                '<span class="status-dot"></span>BASELINE</td>'
+            )
+        else:
+            marker = "<td></td>"
+        body.append(
+            "<tr>"
+            f'<td class="mono">#{run["id"]}</td>'
+            f'<td class="mono">{html.escape(str(run["run_at"]))}</td>'
+            f'<td class="status-cell {tone}">'
+            f'<span class="status-dot"></span>{html.escape(str(run["result"]))}</td>'
+            f'<td class="mono">{run["passed"]} / {run["failed"]} / '
+            f'{run["warnings"]} / {run["not_tested"]}</td>'
+            f'<td class="mono">{html.escape(files)}</td>'
+            f"{marker}"
+            "</tr>"
+        )
+    return (
+        '<div class="findings-wrap"><table class="findings">'
+        f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody>"
+        "</table></div>"
+    )
+
+
+def _history_page() -> None:
+    st.markdown(
+        "Every recorded validation run, in one place: open a run's "
+        "findings, bless a run as the **baseline** its future runs are "
+        "measured against, and read the trends. The Validate page "
+        "compares each recorded run to its baseline automatically."
+    )
+    db = _history_db()
     if not db.exists():
+        st.info(
+            "No runs recorded yet — run a validation on the Validate page "
+            "and it lands here."
+        )
         return
     with RunHistory(db) as history:
-        trends = compute_trends(history)
-    if trends.is_empty:
-        return
-    with st.expander("History trends", expanded=False):
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Runs", trends.total_runs)
-        c2.metric("Overall pass rate", f"{trends.overall_pass_rate:.0%}")
-        c3.metric("Specs tracked", trends.distinct_specs)
-        st.dataframe(
-            pd.DataFrame(
-                [
-                    {
-                        "Spec": s.spec,
-                        "Pass rate": f"{s.pass_rate:.0%}",
-                        "Runs": s.total,
-                        "Latest": s.latest,
-                    }
-                    for s in trends.specs
-                ]
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-        if trends.top_categories:
-            st.caption("Top root causes")
-            st.bar_chart(
-                pd.DataFrame(trends.top_categories, columns=["category", "count"])
-                .set_index("category")
+        runs = history.recent_runs(limit=50)
+        blessed = {b["run_id"]: b for b in history.baselines()}
+        if not runs:
+            st.info(
+                "No runs recorded yet — run a validation on the Validate "
+                "page and it lands here."
             )
-        st.download_button(
-            "Download trends report (HTML)",
-            data=render_trends_html(trends),
-            file_name="mapcheck_trends.html",
-            mime="text/html",
+            return
+        children_count: dict[int, int] = {}
+        for run in runs:
+            if run.get("interchange_id"):
+                children_count[run["interchange_id"]] = (
+                    children_count.get(run["interchange_id"], 0) + 1
+                )
+        parents = [r for r in runs if not r.get("interchange_id")]
+
+        st.subheader(f"Recent runs ({len(parents)})")
+        st.markdown(
+            runs_table_html(parents, blessed, children_count),
+            unsafe_allow_html=True,
         )
+
+        options = {
+            f"Run #{r['id']} — {r['result']} — "
+            f"{Path(r['source_file']).name} -> {Path(r['output_file']).name} "
+            f"({r['run_at']})": r
+            for r in parents
+        }
+        choice = st.selectbox("Open a run", list(options))
+        run_row = options[choice]
+
+        st.subheader(f"Run #{run_row['id']}")
+        counts = {
+            Status.PASS: run_row["passed"],
+            Status.FAIL: run_row["failed"],
+            Status.WARNING: run_row["warnings"],
+            Status.NOT_TESTED: run_row["not_tested"],
+        }
+        try:
+            overall = Status(run_row["result"])
+        except ValueError:
+            overall = Status.NOT_TESTED
+        st.markdown(render_verdict_strip(counts, overall), unsafe_allow_html=True)
+
+        detail_id = run_row["id"]
+        child_rows = history.child_runs(run_row["id"])
+        if child_rows:
+            doc = st.selectbox(
+                "Document",
+                ["(file-level findings)"] + [c["document_key"] or "?" for c in child_rows],
+            )
+            if doc != "(file-level findings)":
+                detail_id = next(
+                    c["id"] for c in child_rows if (c["document_key"] or "?") == doc
+                )
+        frame = _stored_findings_frame(history.findings_for(detail_id))
+        if frame.empty:
+            st.caption("No findings were recorded for this run.")
+        else:
+            selected = st.multiselect(
+                "Show statuses",
+                sorted(frame["Status"].unique()),
+                default=[
+                    s for s in ("FAIL", "WARNING", "NOT TESTED")
+                    if s in set(frame["Status"])
+                ],
+            )
+            shown = frame[frame["Status"].isin(selected)]
+            if shown.empty:
+                st.caption(
+                    "No findings match the selected statuses. Add PASS to "
+                    "the filter to see every evaluated row."
+                )
+            else:
+                st.markdown(findings_table_html(shown), unsafe_allow_html=True)
+
+        st.subheader("Baseline")
+        derived = baseline_label(
+            run_row["spec_file"], run_row["source_file"], run_row["output_file"]
+        )
+        held = blessed.get(run_row["id"])
+        if held is not None:
+            shown_name = held["label"] or held["baseline_key"]
+            st.caption(f"This run is the blessed baseline for `{shown_name}`.")
+        key_value = st.text_input(
+            "Baseline label (the key future runs must derive)",
+            value=derived,
+            help="Runs made with a partner delta append "
+            "' | delta: <file name>' — bless those from the Validate page "
+            "right after running to get the exact label automatically. "
+            "The CLI reaches this baseline with --label.",
+        )
+        previous = history.baseline_for(key_value.strip()) if key_value.strip() else None
+        if previous is not None and previous["run_id"] != run_row["id"]:
+            st.caption(
+                f"Blessing replaces the baseline currently held by run "
+                f"#{previous['run_id']}."
+            )
+        if st.button("Bless as baseline", disabled=not key_value.strip()):
+            history.bless(run_row["id"], key_value.strip())
+            st.rerun()
+
+        st.subheader("Trends")
+        trends = compute_trends(history)
+        if trends.is_empty:
+            st.caption("Trends appear after the first recorded runs.")
+        else:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Runs", trends.total_runs)
+            c2.metric("Overall pass rate", f"{trends.overall_pass_rate:.0%}")
+            c3.metric("Specs tracked", trends.distinct_specs)
+            st.dataframe(
+                pd.DataFrame(
+                    [
+                        {
+                            "Spec": s.spec,
+                            "Pass rate": f"{s.pass_rate:.0%}",
+                            "Runs": s.total,
+                            "Latest": s.latest,
+                        }
+                        for s in trends.specs
+                    ]
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+            if trends.top_categories:
+                st.caption("Top root causes")
+                st.bar_chart(
+                    pd.DataFrame(trends.top_categories, columns=["category", "count"])
+                    .set_index("category")
+                )
+            st.download_button(
+                "Download trends report (HTML)",
+                data=render_trends_html(trends),
+                file_name="mapcheck_trends.html",
+                mime="text/html",
+            )
+    st.download_button(
+        "Download history database (.db)",
+        data=db.read_bytes(),
+        file_name="mapcheck_history.db",
+        mime="application/x-sqlite3",
+        help="The raw SQLite file — every run, finding, and baseline. "
+        "In Docker it lives on a named volume; this button is how you "
+        "hold it in your hand.",
+    )
+    st.caption(f"History database: `{db.resolve()}`")
 
 
 def _render_interchange(result: InterchangeResult) -> None:
