@@ -146,7 +146,15 @@ class RequiredElementDef:
     With ``qualifier`` set (Design 015), only occurrences whose
     ``qualifier_element`` equals that code are checked — "REF02 is
     required in REF*IA occurrences" — so a partner rule about one
-    qualified occurrence never flags the others.
+    qualified occurrence never flags the others. ``qualifiers`` (Design
+    018) is the code-*set* form: an occurrence matches when its qualifier
+    element is any of the codes ("REF02 in REF*{IA|DP}"); it takes
+    precedence over ``qualifier`` and the two are never both set.
+
+    ``loop`` (Design 018) scopes the check to occurrences inside a loop
+    context — a bare loop id (``N1``) matches any occurrence of it, a
+    qualified context (``N1[ST]``) only that one — so "PER02 required
+    within the N1 loop" ignores a heading PER.
 
     ``origin`` is empty for base-standard rules; a partner-rules overlay
     (Design 014) sets it to the partner name so findings say whose rule
@@ -159,8 +167,16 @@ class RequiredElementDef:
     when_present: int | None = None
     when_name: str = ""
     qualifier: str | None = None
+    qualifiers: tuple[str, ...] = ()
     qualifier_element: int = 1
+    loop: str = ""
     origin: str = ""
+
+    def match_codes(self) -> tuple[str, ...]:
+        """The qualifier codes this rule matches (empty = unqualified)."""
+        if self.qualifiers:
+            return self.qualifiers
+        return (self.qualifier,) if self.qualifier is not None else ()
 
 
 @dataclass(frozen=True)
@@ -193,9 +209,17 @@ class RequiredSegmentDef:
 
     With ``qualifier`` set, only occurrences whose ``qualifier_element``
     (1-based, element 01 by default) equals the qualifier count — the shape
-    of X12 qualified families like ``DTM*002`` or ``REF*IA``. ``name`` is
-    the human name for messages ("Requested Delivery"). ``origin`` names
-    the partner whose rules require it (empty for base-standard rules).
+    of X12 qualified families like ``DTM*002`` or ``REF*IA``. ``qualifiers``
+    (Design 018) is the code-*set* form: at least one occurrence whose
+    qualifier element is any of the codes ("a REF whose REF01 ∈ {IA, DP}");
+    it takes precedence over ``qualifier`` and the two are never both set.
+
+    ``loop`` (Design 018) scopes the presence check to a loop context — a
+    bare loop id (``N1``) matches any occurrence of it, a qualified context
+    (``N1[ST]``) only that one — so "PER required within the N1 loop"
+    ignores a heading PER. ``name`` is the human name for messages
+    ("Requested Delivery"). ``origin`` names the partner whose rules
+    require it (empty for base-standard rules).
 
     The base 004010 standard makes almost no business segment mandatory
     beyond ST/BEG-class openers the parser already enforces, so in practice
@@ -204,9 +228,17 @@ class RequiredSegmentDef:
 
     segment: str
     qualifier: str | None = None
+    qualifiers: tuple[str, ...] = ()
     qualifier_element: int = 1
+    loop: str = ""
     name: str = ""
     origin: str = ""
+
+    def match_codes(self) -> tuple[str, ...]:
+        """The qualifier codes this rule matches (empty = unqualified)."""
+        if self.qualifiers:
+            return self.qualifiers
+        return (self.qualifier,) if self.qualifier is not None else ()
 
 
 @dataclass(frozen=True)

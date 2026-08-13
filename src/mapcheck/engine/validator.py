@@ -1150,6 +1150,45 @@ def _evaluate_condition(condition: Condition, source: Any) -> bool:
 # --------------------------------------------------------------------------
 
 
+def _label_in_loop(label: str, loop_scope: str) -> bool:
+    """Does a ``business_segments`` label fall within a loop scope (Design 018)?
+
+    A qualified scope (``N1[ST]``) matches only that occurrence; a bare
+    loop id (``N1``) matches any occurrence of the loop (``N1[ST]``,
+    ``N1[BT]``, ``N1 #1``).
+    """
+    if "[" in loop_scope:
+        return label == loop_scope
+    return (
+        label == loop_scope
+        or label.startswith(f"{loop_scope}[")
+        or label.startswith(f"{loop_scope} #")
+    )
+
+
+def _qualifier_ref(segment: str, codes: tuple[str, ...]) -> str:
+    """Render a qualified segment reference: ``REF*IA`` or ``REF*{IA|DP}``."""
+    if not codes:
+        return segment
+    if len(codes) == 1:
+        return f"{segment}*{codes[0]}"
+    return f"{segment}*{{{'|'.join(codes)}}}"
+
+
+def _occurrence_matches(seg, label: str, req) -> bool:
+    """Whether a segment occurrence is in scope for a presence rule.
+
+    Applies the rule's qualifier code(s) against its ``qualifier_element``
+    and its loop scope against the occurrence label (Design 015 + 018).
+    """
+    codes = req.match_codes()
+    if codes and seg.element(req.qualifier_element) not in codes:
+        return False
+    if req.loop and not _label_in_loop(label, req.loop):
+        return False
+    return True
+
+
 def _check_required_elements(
     tx: TransactionDocument,
     result: RunResult,
@@ -1172,15 +1211,18 @@ def _check_required_elements(
         for label, seg in tx.business_segments():
             if seg.seg_id != req.segment:
                 continue
-            if req.qualifier is not None and seg.element(req.qualifier_element) != req.qualifier:
-                continue  # scoped rule: this occurrence is not the qualified one
+            if not _occurrence_matches(seg, label, req):
+                continue  # scoped rule: this occurrence is out of scope
             if req.when_present is not None and seg.element(req.when_present) is None:
                 continue
             if seg.element(req.element) is not None:
                 continue
             ref = seg.ref(req.element)
             name = f" ({req.name})" if req.name else ""
-            scope = f" in {req.segment}*{req.qualifier}" if req.qualifier is not None else ""
+            codes = req.match_codes()
+            scope = f" in {_qualifier_ref(req.segment, codes)}" if codes else ""
+            if req.loop:
+                scope = f"{scope} within the {req.loop} loop"
             if req.when_present is not None:
                 when_ref = seg.ref(req.when_present)
                 when_name = f" ({req.when_name})" if req.when_name else ""
@@ -1219,26 +1261,26 @@ def _check_required_segments(
     """Enforce the definition's segment-presence rules.
 
     A required segment must appear at least once in the transaction; with
-    a ``qualifier`` set, at least one occurrence must carry that code in
-    its qualifier element (``DTM*002``, ``REF*IA``). In practice these
-    come from partner-rules overlays (Design 014), so the finding names
-    the partner whose rule failed via ``origin``.
+    a ``qualifier`` (or ``qualifiers`` code set, Design 018) at least one
+    occurrence must carry a matching code in its qualifier element
+    (``DTM*002``, ``REF*{IA|DP}``); with a ``loop`` scope the occurrence
+    must fall inside that loop context (``PER within N1``). In practice
+    these come from partner-rules overlays (Design 014), so the finding
+    names the partner whose rule failed via ``origin``.
     """
     if not tx.definition.required_segments:
         return
     side = structure_side or "source "
     for req in tx.definition.required_segments:
-        found = False
-        for _label, seg in tx.business_segments():
-            if seg.seg_id != req.segment:
-                continue
-            if req.qualifier is None or seg.element(req.qualifier_element) == req.qualifier:
-                found = True
-                break
+        found = any(
+            seg.seg_id == req.segment and _occurrence_matches(seg, label, req)
+            for label, seg in tx.business_segments()
+        )
         if found:
             continue
-        ref = req.segment if req.qualifier is None else f"{req.segment}*{req.qualifier}"
+        ref = _qualifier_ref(req.segment, req.match_codes())
         name = f" ({req.name})" if req.name else ""
+        scope = f" within the {req.loop} loop" if req.loop else ""
         origin = f" — required by partner {req.origin}" if req.origin else ""
         result.findings.append(
             Finding(
@@ -1248,7 +1290,7 @@ def _check_required_segments(
                 expected="at least one occurrence",
                 actual="(absent)",
                 message=(
-                    f"{side}data invalid: required segment {ref}{name} "
+                    f"{side}data invalid: required segment {ref}{name}{scope} "
                     f"is missing{origin}"
                 ),
             )

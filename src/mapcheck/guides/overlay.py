@@ -41,6 +41,29 @@ class PartnerRulesError(Exception):
     file and entry index of every problem."""
 
 
+def _load_codes(
+    node: dict, where: str, errors: list
+) -> tuple[str | None, tuple[str, ...]]:
+    """Parse an overlay entry's ``qualifier`` / ``qualifiers`` (Design 018).
+
+    Mutually exclusive; ``qualifiers`` must be a non-empty list. Problems
+    append to ``errors`` and the offending field returns empty.
+    """
+    qualifier = str(node["qualifier"]) if node.get("qualifier") is not None else None
+    raw = node.get("qualifiers")
+    qualifiers: tuple[str, ...] = ()
+    if raw is not None:
+        if not isinstance(raw, list) or not raw or not all(
+            isinstance(c, (str, int)) for c in raw
+        ):
+            errors.append(f"{where}: 'qualifiers' must be a non-empty list of codes")
+        else:
+            qualifiers = tuple(str(c) for c in raw)
+    if qualifier is not None and qualifiers:
+        errors.append(f"{where}: set 'qualifier' or 'qualifiers', not both")
+    return qualifier, qualifiers
+
+
 @dataclass
 class PartnerRules:
     """A partner's presence rules, ready to apply to a definition."""
@@ -70,7 +93,8 @@ class PartnerRules:
                 f"file is a {definition.set_code}"
             )
         base_segments = {
-            (req.segment, req.qualifier) for req in definition.required_segments
+            (req.segment, req.match_codes(), req.loop)
+            for req in definition.required_segments
         }
         base_elements = {
             (req.segment, req.element)
@@ -81,7 +105,7 @@ class PartnerRules:
         add_segments = tuple(
             req
             for req in self.required_segments
-            if (req.segment, req.qualifier) not in base_segments
+            if (req.segment, req.match_codes(), req.loop) not in base_segments
         )
         add_elements = tuple(
             req
@@ -103,22 +127,26 @@ class PartnerRules:
     # -- serialization -----------------------------------------------------
 
     def to_dict(self) -> dict:
+        def codes_into(entry: dict, req) -> None:
+            if req.qualifiers:
+                entry["qualifiers"] = list(req.qualifiers)
+            elif req.qualifier is not None:
+                entry["qualifier"] = req.qualifier
+            if (req.qualifiers or req.qualifier is not None) and req.qualifier_element != 1:
+                entry["qualifier_element"] = req.qualifier_element
+            if req.loop:
+                entry["loop"] = req.loop
+
         def seg_entry(req: RequiredSegmentDef) -> dict:
             entry: dict = {"segment": req.segment}
-            if req.qualifier is not None:
-                entry["qualifier"] = req.qualifier
-                if req.qualifier_element != 1:
-                    entry["qualifier_element"] = req.qualifier_element
+            codes_into(entry, req)
             if req.name:
                 entry["name"] = req.name
             return entry
 
         def el_entry(req: RequiredElementDef) -> dict:
             entry: dict = {"segment": req.segment, "element": req.element}
-            if req.qualifier is not None:
-                entry["qualifier"] = req.qualifier
-                if req.qualifier_element != 1:
-                    entry["qualifier_element"] = req.qualifier_element
+            codes_into(entry, req)
             if req.name:
                 entry["name"] = req.name
             if req.when_present is not None:
@@ -181,13 +209,14 @@ class PartnerRules:
             if not isinstance(qualifier_element, int) or qualifier_element < 1:
                 errors.append(f"{where}: 'qualifier_element' must be a 1-based position")
                 continue
+            qualifier, qualifiers = _load_codes(node, where, errors)
             segments.append(
                 RequiredSegmentDef(
                     segment=str(node["segment"]).upper(),
-                    qualifier=(
-                        str(node["qualifier"]) if node.get("qualifier") is not None else None
-                    ),
+                    qualifier=qualifier,
+                    qualifiers=qualifiers,
                     qualifier_element=qualifier_element,
+                    loop=str(node.get("loop", "") or ""),
                     name=str(node.get("name", "") or ""),
                     origin=partner,
                 )
@@ -216,6 +245,7 @@ class PartnerRules:
             if not isinstance(qualifier_element, int) or qualifier_element < 1:
                 errors.append(f"{where}: 'qualifier_element' must be a 1-based position")
                 continue
+            qualifier, qualifiers = _load_codes(node, where, errors)
             elements.append(
                 RequiredElementDef(
                     segment=str(node["segment"]).upper(),
@@ -223,10 +253,10 @@ class PartnerRules:
                     name=str(node.get("name", "") or ""),
                     when_present=when_present,
                     when_name=str(node.get("when_name", "") or ""),
-                    qualifier=(
-                        str(node["qualifier"]) if node.get("qualifier") is not None else None
-                    ),
+                    qualifier=qualifier,
+                    qualifiers=qualifiers,
                     qualifier_element=qualifier_element,
+                    loop=str(node.get("loop", "") or ""),
                     origin=partner,
                 )
             )
@@ -279,15 +309,40 @@ class PartnerRules:
         )
 
 
+def _seg_rule(seg_id, codes, loop, name, partner) -> RequiredSegmentDef:
+    kw: dict = {}
+    if len(codes) == 1:
+        kw["qualifier"] = codes[0]
+    elif len(codes) > 1:
+        kw["qualifiers"] = tuple(codes)
+    return RequiredSegmentDef(
+        segment=seg_id, loop=loop, name=name, origin=partner, **kw
+    )
+
+
+def _el_rule(seg_id, position, codes, loop, name, partner) -> RequiredElementDef:
+    kw: dict = {}
+    if len(codes) == 1:
+        kw["qualifier"] = codes[0]
+    elif len(codes) > 1:
+        kw["qualifiers"] = tuple(codes)
+    return RequiredElementDef(
+        segment=seg_id, element=position, loop=loop, name=name,
+        origin=partner, **kw
+    )
+
+
 def emit_partner_rules(profile: GuideProfile) -> PartnerRules:
     """Derive a partner-rules overlay from a guide profile.
 
     Segment presence: every ``must_use`` segment. Where the segment is a
-    qualified family (REF, DTM, N1, ...) and its element 01 carries exactly
-    one code, the requirement is qualified by that code and the block's
-    other ``must_use`` elements become qualifier-scoped element rules
-    ("REF02 required in REF*IA occurrences" — Design 015). Multiple codes
-    fall back to an unqualified requirement plus a review note.
+    qualified family (REF, DTM, N1, ...) its element 01's code(s) qualify
+    the requirement — one code as ``qualifier``, several as a
+    ``qualifiers`` set (Design 018) — and the block's other ``must_use``
+    elements become qualifier-scoped element rules ("REF02 required in
+    REF*IA occurrences" — Design 015). A ``must_use`` segment that sits in
+    a loop it does not trigger is scoped to that loop (``loop``), so "PER
+    within the N1 loop" ignores a heading PER.
 
     Paired segments (PO1, IT1): a ``must_use`` qualifier slot pinned to a
     single code becomes a pair rule ("every PO1 must carry a UP pair"),
@@ -304,60 +359,53 @@ def emit_partner_rules(profile: GuideProfile) -> PartnerRules:
         source_guide=profile.source,
     )
     # Real guides render one segment block per loop occurrence (three N1
-    # blocks for ship-to / bill-to / ship-from). Distinct qualifiers emit
-    # distinct rules; identical keys emit once.
-    seen_segments: set[tuple[str, str | None]] = set()
-    seen_elements: set[tuple[str, int, str | None]] = set()
+    # blocks for ship-to / bill-to / ship-from). Distinct code sets / loop
+    # scopes emit distinct rules; identical keys emit once.
+    seen_segments: set[tuple] = set()
+    seen_elements: set[tuple] = set()
     seen_pairs: set[tuple[str, str]] = set()
     for segment in profile.segments:
         if segment.usage != "must_use":
             continue
+        # A segment sitting inside a loop it does not trigger is a member
+        # (X12 names a loop after its trigger); scope its rules to the loop.
+        loop_scope = (
+            segment.loop if segment.loop and segment.id != segment.loop else ""
+        )
         first = segment.element(f"{segment.id}01")
-        codes = [c.code for c in first.codes] if first is not None else []
-        qualified = segment.id in _QUALIFIED_SEGMENTS and len(codes) == 1
-        if qualified:
-            qualifier = codes[0]
-            if (segment.id, qualifier) not in seen_segments:
-                seen_segments.add((segment.id, qualifier))
-                code_name = first.codes[0].name if first is not None else ""
+        codes = tuple(c.code for c in first.codes) if first is not None else ()
+        is_family = segment.id in _QUALIFIED_SEGMENTS and len(codes) >= 1
+        if is_family:
+            seg_key = (segment.id, codes, loop_scope)
+            if seg_key not in seen_segments:
+                seen_segments.add(seg_key)
+                code_name = first.codes[0].name if len(codes) == 1 else ""
                 rules.required_segments.append(
-                    RequiredSegmentDef(
-                        segment=segment.id,
-                        qualifier=qualifier,
-                        qualifier_element=1,
-                        name=code_name or segment.name,
-                        origin=profile.partner,
+                    _seg_rule(
+                        segment.id, codes, loop_scope,
+                        code_name or segment.name, profile.partner,
                     )
                 )
             for el in segment.elements:
                 if el.usage != "must_use" or el.ref.endswith("01"):
                     continue
                 position = int(el.ref[len(segment.id):])
-                if (segment.id, position, qualifier) in seen_elements:
+                el_key = (segment.id, position, codes, loop_scope)
+                if el_key in seen_elements:
                     continue
-                seen_elements.add((segment.id, position, qualifier))
+                seen_elements.add(el_key)
                 rules.required_elements.append(
-                    RequiredElementDef(
-                        segment=segment.id,
-                        element=position,
-                        name=el.name,
-                        qualifier=qualifier,
-                        qualifier_element=1,
-                        origin=profile.partner,
+                    _el_rule(
+                        segment.id, position, codes, loop_scope,
+                        el.name, profile.partner,
                     )
                 )
             continue
-        if segment.id in _QUALIFIED_SEGMENTS and len(codes) > 1:
-            rules.review.append(
-                f"{segment.id}: multiple qualifier codes ({', '.join(codes)}) — "
-                "emitted unqualified; qualify by hand if one is the requirement"
-            )
-        if (segment.id, None) not in seen_segments:
-            seen_segments.add((segment.id, None))
+        seg_key = (segment.id, (), loop_scope)
+        if seg_key not in seen_segments:
+            seen_segments.add(seg_key)
             rules.required_segments.append(
-                RequiredSegmentDef(
-                    segment=segment.id, name=segment.name, origin=profile.partner
-                )
+                _seg_rule(segment.id, (), loop_scope, segment.name, profile.partner)
             )
         # Pair rules first: a pinned qualifier slot and its value slot are
         # enforced as "carry this pair", not as two fixed positions.
@@ -402,15 +450,11 @@ def emit_partner_rules(profile: GuideProfile) -> PartnerRules:
             position = int(el.ref[len(segment.id):])
             if position in consumed:
                 continue
-            if (segment.id, position, None) in seen_elements:
+            el_key = (segment.id, position, (), loop_scope)
+            if el_key in seen_elements:
                 continue
-            seen_elements.add((segment.id, position, None))
+            seen_elements.add(el_key)
             rules.required_elements.append(
-                RequiredElementDef(
-                    segment=segment.id,
-                    element=position,
-                    name=el.name,
-                    origin=profile.partner,
-                )
+                _el_rule(segment.id, position, (), loop_scope, el.name, profile.partner)
             )
     return rules
