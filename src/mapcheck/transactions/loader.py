@@ -22,6 +22,7 @@ from mapcheck.transactions.schema import (
     OutputPairing,
     ReconRule,
     RequiredElementDef,
+    RequiredPairDef,
     RequiredSegmentDef,
     TransactionDefinition,
 )
@@ -302,12 +303,50 @@ def _parse_required(node: Any, index: int, ctx: _Ctx) -> RequiredElementDef | No
     if when_present is not None and when_present < 1:
         ctx.err(f"{path}.when_present", "expected a 1-based element position")
         when_present = None
+    qualifier_element = ctx.int_at(node, path, "qualifier_element", default=1)
+    if qualifier_element is None or qualifier_element < 1:
+        ctx.err(f"{path}.qualifier_element", "expected a 1-based element position")
+        qualifier_element = 1
     return RequiredElementDef(
         segment=segment.upper(),
         element=element,
         name=ctx.str_at(node, path, "name", required=False) or "",
         when_present=when_present,
         when_name=ctx.str_at(node, path, "when_name", required=False) or "",
+        qualifier=ctx.str_at(node, path, "qualifier", required=False),
+        qualifier_element=qualifier_element,
+    )
+
+
+def _parse_required_pair(node: Any, index: int, ctx: _Ctx) -> RequiredPairDef | None:
+    path = f"required_pairs[{index}]"
+    if not isinstance(node, dict):
+        ctx.err(path, "expected a mapping with segment and code")
+        return None
+    segment = ctx.str_at(node, path, "segment")
+    code = ctx.str_at(node, path, "code")
+    if not segment or not code:
+        return None
+    first = ctx.int_at(node, path, "first_element", default=6)
+    last = ctx.int_at(node, path, "last_element", default=24)
+    step = ctx.int_at(node, path, "step", default=2)
+    if first is None or first < 1:
+        ctx.err(f"{path}.first_element", "expected a 1-based element position")
+        return None
+    if step is None or step < 1:
+        ctx.err(f"{path}.step", "expected a positive step")
+        return None
+    if last is None or last < first:
+        ctx.err(f"{path}.last_element", "expected a position at or after first_element")
+        return None
+    return RequiredPairDef(
+        segment=segment.upper(),
+        code=code,
+        first_element=first,
+        last_element=last,
+        step=step,
+        name=ctx.str_at(node, path, "name", required=False) or "",
+        origin=ctx.str_at(node, path, "origin", required=False) or "",
     )
 
 
@@ -424,6 +463,16 @@ def parse_definition(data: Any, source: str) -> TransactionDefinition:
         if parsed_seg:
             required_segments.append(parsed_seg)
 
+    required_pairs: list[RequiredPairDef] = []
+    required_pair_node = data.get("required_pairs", []) or []
+    if not isinstance(required_pair_node, list):
+        ctx.err("required_pairs", "expected a list")
+        required_pair_node = []
+    for index, pair_node in enumerate(required_pair_node):
+        parsed_pair = _parse_required_pair(pair_node, index, ctx)
+        if parsed_pair:
+            required_pairs.append(parsed_pair)
+
     elements: dict[str, tuple[str, ...]] = {}
     elements_node = data.get("elements", {}) or {}
     if not isinstance(elements_node, dict):
@@ -450,6 +499,7 @@ def parse_definition(data: Any, source: str) -> TransactionDefinition:
         reconciliation=tuple(recon),
         required_elements=tuple(required),
         required_segments=tuple(required_segments),
+        required_pairs=tuple(required_pairs),
         elements=elements,
         source=source,
     )
