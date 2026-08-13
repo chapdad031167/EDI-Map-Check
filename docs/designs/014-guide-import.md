@@ -275,7 +275,9 @@ missing fingerprints. It is a different authoring family (`Segment BEG
 tables, requiredness as M/O/C/N codes, no usage wording) — exactly the
 designed out-of-scope outcome: a load error naming what is missing,
 never a half-parse. A second family grammar is possible future work if
-partner demand shows; it is not part of Design 014.
+partner demand shows; it is not part of Design 014. *(Demand showed:
+Design 017 added the tabular "Data Element Summary" family. The Arnecom
+layout remains a third, still-unsupported family.)*
 
 **Verdict: the family assumption holds on real material.** One of the
 two real guides is the family and parses completely; the other is a

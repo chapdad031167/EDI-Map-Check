@@ -535,6 +535,10 @@ def _cmd_import_guide(args: argparse.Namespace) -> int:
     profile.save(profile_path)
     element_count = sum(len(seg.elements) for seg in profile.segments)
     print(f"Guide profile written to {profile_path}")
+    if profile.family:
+        from mapcheck.guides.parser import FAMILY_NAMES
+
+        print(f"Guide family: {FAMILY_NAMES.get(profile.family, profile.family)}")
     print(
         f"Parsed: {len(profile.segments)} segment(s), {element_count} element(s) — "
         f"parse coverage {profile.parse_coverage:.2f} "

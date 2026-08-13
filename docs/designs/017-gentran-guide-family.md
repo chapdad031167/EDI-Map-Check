@@ -1,6 +1,7 @@
 # Design 017: a second guide family — the tabular "Data Element Summary" layout
 
-**Status:** Draft, for review — no code until sign-off.
+**Status:** Approved 2026-08-13 (open questions answered in review),
+implementation in this PR.
 **Applies to:** `src/mapcheck/guides/parser.py` (family dispatch + a second
 line grammar); everything downstream is unchanged.
 **Extends:** Design 014, which built the guide importer for one templated
@@ -142,14 +143,26 @@ pages for RQ / 0B / CO, three N1 divisions) — the same per-occurrence
 shape Insight had, and Design 015's per-qualifier dedup already handles
 it without change.
 
-## Decision 5: the summary index table is front matter
+## Decision 5: the summary index table is parsed and cross-checked
 
-Segment usage is taken from each detail page's `Usage:` line, not the
-front index table — the detail pages are the richer, authoritative source
-(they carry the elements, codes, and notes). The index table is skipped as
-front matter, like a table of contents. (A future cross-check — index
-says a segment is used but no detail page exists, or vice versa — is a
-possible review-fact enhancement, not v1.)
+Segment usage is taken from each detail page's `Usage:` line — the
+detail pages are the richer, authoritative source (they carry the
+elements, codes, and notes). But the front index table is not discarded:
+its rows (`page pos seg name base [user] maxuse`) are parsed with the
+same User-falls-back-to-Base rule, and after the detail pages are read
+the two views are **cross-checked**. Disagreements become review facts
+with page context, surfaced at import time:
+
+- an index row with no matching detail page (or the reverse);
+- an occurrence-count mismatch for a (segment, position) that repeats
+  per qualifier (three REF rows at 050 but only two detail pages);
+- an effective-usage disagreement (index says Mandatory, the detail
+  page says Optional).
+
+Per the maintainer: catching these up front answers questions before a
+mapping session, not during one. A guide with no index at all (some
+exports omit it) skips the cross-check silently — absence of the table
+is a layout variant, not a defect.
 
 ## Scope guard
 
@@ -159,6 +172,27 @@ CLI verbs, or UI. The two remaining Design 015 caveats (loop-scoped
 placement, multi-code qualifiers) are unchanged and still honest. Scanned
 / image PDFs and free-form guides stay out of scope for both families. A
 third family, if one ever shows up, slots in behind the same dispatcher.
+
+## Real-guide spike — run and measured (2026-08-13)
+
+Against the maintainer's real AmerisourceBergen 850 guide (25 pages; the
+PDF is not committed — the repo stays vendor-neutral): **parse coverage
+1.0000 — 101/101 facts.** All 20 segment blocks, 61 elements, the
+per-qualifier REF/N1/PID occurrences, and the code subsets including
+PO106's page-spanning list all extract into the profile. Six review
+entries, all correct behavior:
+
+- Four flags on the appendix sample-EDI pages ("SAMPLE DATA", raw
+  segment strings) — code-shaped lines under a non-ID element, refused
+  as data and named for a human, exactly per flag-never-guess.
+- **Two cross-check findings that caught a real editing defect in the
+  published guide itself:** the front index lists ITD at position 030
+  while ITD's detail page says position 120. This is the
+  "questions up front, not during mapping sessions" value the
+  cross-check was approved for, demonstrated on its first real run.
+
+Page furniture (the running letterhead on all 25 pages, the dated
+footers) is stripped before parsing and produced zero fake codes.
 
 ## Testing
 
@@ -181,15 +215,14 @@ third family, if one ever shows up, slots in behind the same dispatcher.
   AmerisourceBergen guide locally, record the measured parse coverage
   here, and commit only the synthetic fixture (repo stays vendor-neutral).
 
-## Open questions
+## Open questions — answered (2026-08-13)
 
-1. **Fixture partner name:** the Design 014 fixture is "Acme Pharma." Use
-   the same fictional partner for the Family-B fixture (one vendor-neutral
-   name across both), or a second fictional name to keep the two fixtures
-   visibly distinct?
-2. **`family` surfaced in the UI?** `import-guide` will print which family
-   matched. Should the Draft-spec page's guide caption also show it
-   (one more line), or is the CLI line enough?
-3. **Index-table cross-check:** worth a v1 review-fact when the front
-   index and the detail pages disagree on a segment, or leave it as the
-   noted future enhancement?
+1. **Fixture partner name:** a second fictional name, so the two family
+   fixtures are visibly distinct. The Family-B fixture partner is
+   **Bluewater Medical** (initialism "BMD" in its partner-flavored
+   segment names, mirroring how the real guide brands its N1s).
+2. **`family` surfaced in the UI?** Not necessary — the `import-guide`
+   CLI line is enough. The Draft-spec caption stays as it is.
+3. **Index-table cross-check:** in scope for v1 — "it would help with
+   questions up front, not during mapping sessions." Decision 5 above
+   was updated from "future enhancement" to the shipped behavior.

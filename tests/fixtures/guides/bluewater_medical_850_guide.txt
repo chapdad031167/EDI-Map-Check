@@ -1,0 +1,164 @@
+850 Purchase Order
+Bluewater Medical Supplier Guide
+Functional Group ID=PO
+All content fictional. Synthetic fixture in the tabular guide layout.
+
+Heading:
+Page Pos. Seg. Base User Loop
+No. No. ID Name Guide Status Max.Use Repeat
+2 020 BEG Beginning Segment for Purchase Order M M 1
+2 050 REF Vendor Reference C M >1
+3 150 DTM Requested Delivery O M 10
+LOOP ID - N1 200
+3 300 N1 BMD Division Name M M 1
+4 310 N3 BMD Division Address O 1
+Detail:
+Page Pos. Seg. Base User Loop
+No. No. ID Name Guide Status Max.Use Repeat
+LOOP ID - PO1 100000
+4 010 PO1 Baseline Item Data M M 1
+Summary:
+Page Pos. Seg. Base User Loop
+No. No. ID Name Guide Status Max.Use Repeat
+5 010 CTT Transaction Totals M M 1Bluewater Medical
+BEG
+Segment: Beginning Segment for Purchase Order
+Position: 020
+Loop:
+Level: Heading
+Usage: Mandatory
+Max Use: 1
+Purpose: To indicate the beginning of the Purchase Order Transaction Set and transmit identifying
+numbers and dates
+Notes: Example: BEG|00|NE|BW-2026-0450||20260630~
+Data Element Summary
+Ref. Data Base User
+Des. Element Name Attributes Attributes
+BEG01 353 Transaction Set Purpose Code M ID 2/2 M
+Code identifying purpose of transaction set
+00 Original
+BEG02 92 Purchase Order Type Code M ID 2/2 M
+Code specifying the type of Purchase Order
+DS Dropship
+NE New Order
+BEG03 324 Purchase Order Number M AN 1/22 M
+Identifying number for Purchase Order assigned by the orderer/purchaser
+BEG05 373 Purchase Order Date M DT 8/8
+Date expressed as CCYYMMDD
+REF
+Segment: Vendor Reference
+Position: 050
+Loop:
+Level: Heading
+Usage: Mandatory
+Max Use: >1
+Purpose: To specify identifying information
+Notes: The Bluewater vendor reference is required in the heading of every order.
+Example: REF|VR|BW-88213~
+Data Element Summary
+Ref. Data Base User
+Des. Element Name Attributes Attributes
+REF01 128 Reference Identification Qualifier M ID 2/3 M
+Code qualifying the Reference Identification
+VR Vendor Reference Number
+REF02 127 Reference Identification C AN 1/30
+Reference information as defined for a particular Transaction Set
+850 - Bluewater Medical Purchase Order 2 June 30, 2026Bluewater Medical
+DTM
+Segment: Requested Delivery
+Position: 150
+Loop:
+Level: Heading
+Usage: Mandatory
+Max Use: 10
+Purpose: To specify pertinent dates and times
+Data Element Summary
+Ref. Data Base User
+Des. Element Name Attributes Attributes
+DTM01 374 Date/Time Qualifier M ID 3/3 M
+Code specifying type of date or time, or both date and time
+002 Requested Delivery
+DTM02 373 Date M DT 8/8 M
+Date expressed as CCYYMMDD
+N1
+Segment: BMD Division Name
+Position: 300
+Loop: N1 Mandatory
+Level: Heading
+Usage: Mandatory
+Max Use: 1
+Purpose: To identify a party by type of organization, name, and code
+Data Element Summary
+Ref. Data Base User
+Des. Element Name Attributes Attributes
+N101 98 Entity Identifier Code M ID 2/3 M
+Code identifying an organizational entity, a physical location, property or an individual
+BY Buying Party (Purchaser)
+N102 93 BMD Division Name C AN 1/60
+Free-form name
+N103 66 Identification Code Qualifier C ID 1/2
+Code designating the system/method of code structure used for Identification Code (67)
+9 D-U-N-S+4, D-U-N-S Number with Four
+Character Suffix
+N104 67 BMD Division Identifier C AN 2/80
+Code identifying a party or other code
+850 - Bluewater Medical Purchase Order 3 June 30, 2026Bluewater Medical
+N3
+Segment: BMD Division Address
+Position: 310
+Loop: N1 Mandatory
+Level: Heading
+Usage: Optional
+Max Use: 1
+Purpose: To specify the location of the named party
+Data Element Summary
+Ref. Data Base User
+Des. Element Name Attributes Attributes
+N301 166 Address Information M AN 1/55
+Address information
+N302 166 Address Information O AN 1/55
+Address information
+PO1
+Segment: Baseline Item Data
+Position: 010
+Loop: PO1 Mandatory
+Level: Detail
+Usage: Mandatory
+Max Use: 1
+Purpose: To specify basic and most frequently used line item data
+Notes: Every order line must carry the NDC in the ND qualifier pair.
+Example: PO1|1|24|EA|18.75||ND|4726195022~
+Data Element Summary
+Ref. Data Base User
+Des. Element Name Attributes Attributes
+PO101 350 Assigned Identification O AN 1/20 M
+Alphanumeric characters assigned for differentiation within a transaction set
+PO102 330 Quantity Ordered M R 1/15 M
+Quantity ordered
+PO103 355 Unit or Basis for Measurement Code M ID 2/2 M
+Code specifying the units in which a value is being expressed
+CA Case
+EA Each
+PO106 235 Product/Service ID Qualifier M ID 2/2 M
+Code identifying the type/source of the descriptive number used in Product/Service ID
+ND National Drug Code (NDC)
+UK U.P.C. Shipping Container
+Code (1-2-5-5-1)
+UP U.P.C. Consumer Package Code
+PO107 234 Product/Service ID C AN 1/48
+Identifying number for a product or service
+850 - Bluewater Medical Purchase Order 4 June 30, 2026Bluewater Medical
+CTT
+Segment: Transaction Totals
+Position: 010
+Loop: CTT Mandatory
+Level: Summary
+Usage: Mandatory
+Max Use: 1
+Purpose: To transmit a hash total for a specific element in the transaction set
+Data Element Summary
+Ref. Data Base User
+Des. Element Name Attributes Attributes
+CTT01 354 Number of Line Items M N0 1/6 M
+Total number of line items in the transaction set
+850 - Bluewater Medical Purchase Order 5 June 30, 2026
