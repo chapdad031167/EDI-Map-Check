@@ -1054,6 +1054,27 @@ class TestLoopScopedPlacement:
         fail = _apply_findings(edi, self._rules(loop="N1[ST]"), tmp_path)
         assert len(fail) == 1 and "within the N1[ST] loop" in fail[0].message
 
+    def test_bare_loop_matches_numbered_occurrence_labels(self, tmp_path: Path):
+        """The line loop labels occurrences 'PO1 #1', not 'PO1[...]'; a bare
+        'PO1' loop scope must match those via the ' #' branch of
+        _label_in_loop, and must not match a different loop."""
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import RequiredSegmentDef
+
+        def rule(loop):
+            return PartnerRules(
+                partner="acme", transaction="850",
+                required_segments=[
+                    RequiredSegmentDef(segment="PO1", loop=loop, origin="acme")
+                ],
+            )
+
+        # the PO1 line occurrence is labeled "PO1 #1" — a bare "PO1" scope finds it
+        assert not _apply_findings(_EDI_850, rule("PO1"), tmp_path)
+        # scoping the same rule to the N1 loop finds no PO1 there → fails
+        fail = _apply_findings(_EDI_850, rule("N1"), tmp_path)
+        assert len(fail) == 1 and "within the N1 loop" in fail[0].message
+
 
 class TestLoopScopedElements:
     """The element-level loop filter and its message path, end to end."""
