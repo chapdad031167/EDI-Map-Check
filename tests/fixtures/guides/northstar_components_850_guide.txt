@@ -1,0 +1,97 @@
+Northstar Components
+EDI Specifications User Guide
+850 - Purchase Order
+ANSI X.12 - Release 004010
+All content fictional. Synthetic fixture in the terse guide layout.
+Data Segment Sequence for Heading Area
+Seg. Name Usage Max. Loop
+ID Use Repeat
+ST Transaction Set Header M 1
+BEG Beginning Segment for Purchase Order M 1
+CUR Currency O 1
+REF Reference Identification M >1
+N1 Name M 1 N1 / 3
+N3 Address Information O 1 N1 / 3
+Data Segment Sequence for Detail Area
+Seg. Name Usage Max. Loop
+ID Use Repeat
+PO1 Baseline Item Data M 1 PO1/100000
+Data Segment Sequence for Summary Area
+Seg. Name Usage Max. Loop
+ID Use Repeat
+CTT Transaction Totals M 1
+SE Transaction Set Trailer M 1
+GLOSSARY
+Abbreviations in the columns headed "Usage" have the following definitions:
+C Conditional The presence of this item is dependent on other items.
+M Mandatory This data segment shall be included in the transaction set.
+O Optional The presence of this data segment is at the option of the sender.
+N Not used
+- 1 -Northstar Components
+Segment BEG - Beginning Segment for Purchase Order
+Level Heading
+Max. Use 1
+Purpose To indicate the beginning of the Purchase Order Transaction Set
+Comments The segment will indicate the type of purchase order and the P.O. number.
+Example BEG*00*NE*NS-2026-0450**20260630
+ID ELEMENT NAME FEATURES COMMENTS
+BEG01 Transaction Set Purpose Code M ID 2/2 "00" = Original
+BEG02 Purchase Order Type Code M ID 2/2 "NE" = New Order
+BEG03 Purchase Order Number M AN 1/22 Buyer's purchase order number
+BEG04 Release Number N Not Used
+BEG05 Purchase Order Date M DT 8/8 Date expressed as CCYYMMDD
+- 2 -Northstar Components
+Segment REF - Reference Identification
+Level Heading
+Max. Use >1
+Purpose To specify identifying information
+Comments The Northstar vendor id is required in the heading of every order.
+Example REF*IA*NS-88213
+ID ELEMENT NAME FEATURES COMMENTS
+REF01 Reference Identification Qualifier M ID 2/3 "IA" = Internal Vendor Number
+REF02 Reference Identification M AN 1/30 Reference information
+- 3 -Northstar Components
+Segment N1 - Name
+Level Heading
+Max. Use 3
+Purpose To identify a party by type of organization, name, and code
+Comments This segment identifies the buyer and ship-to party.
+Examples N1*BY*BUYER NAME*92*CC
+N1*ST*SHIP DEST*92*002000
+ID ELEMENT NAME FEATURES COMMENTS
+N101 Entity Identifier Code M ID 2/3 Code identifying an organizational entity:
+"BY" = Buying Party ( Purchaser )
+"ST" = Ship To
+N102 Name M AN 1/60 Free-form name
+N103 Identification Code Qualifier C ID 1/2 "92" = Assigned by Buyer
+N104 Identification Code C AN 2/80 Party code
+- 4 -Northstar Components
+Segment N3 - Address Information
+Level Heading
+Max. Use 1
+Purpose To specify the location of the named party
+ID ELEMENT NAME FEATURES COMMENTS
+N301 Address Information M AN 1/55 Address line
+N302 Address Information O AN 1/55 Address line
+- 5 -Northstar Components
+Segment PO1 - Baseline Item Data
+Level Detail
+Max. Use 100000
+Purpose To specify basic line item data
+Comments Every line must carry the buyer part number in the BP qualifier.
+Example PO1*1*24*EA*18750*CP*BP*NS-1
+ID ELEMENT NAME FEATURES COMMENTS
+PO101 Assigned Identification O AN 1/20 Line number
+PO102 Quantity Ordered M R 1/15 Quantity ordered
+PO103 Unit of Measure Code M ID 2/2 "EA" - Each "CS" - Case "PL" - Pallet
+PO104 Unit Price M R 1/17 Price with implied decimal
+PO106 Product ID Qualifier M ID 2/2 "BP" = Buyer's Part Number
+PO107 Product ID M AN 1/48 Buyer's part number
+- 6 -Northstar Components
+Segment CTT - Transaction Totals
+Level Summary
+Max. Use 1
+Purpose To transmit a hash total for a specific element
+ID ELEMENT NAME FEATURES COMMENTS
+CTT01 Number of Line Items M N0 1/6 Total number of line items
+- 7 -

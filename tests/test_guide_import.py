@@ -620,7 +620,7 @@ class TestFamilyRouting:
             "ZZ01 999 Mixed Row M ID 2/2 M\n",
             encoding="utf-8",
         )
-        with pytest.raises(GuideParseError, match="two guide layout families"):
+        with pytest.raises(GuideParseError, match="at once"):
             parse_guide(both, transaction="850", partner="x")
 
     def test_family_round_trips_through_yaml(self, tmp_path: Path):
@@ -795,6 +795,143 @@ class TestTabularOverlay:
             if r.qualifier is not None
         }
         assert ("DTM", 2, "002") in scoped
+
+
+# --------------------------------------------------------------------------
+# The terse family (Design 019): "EDI Specifications User Guide" layout
+# --------------------------------------------------------------------------
+
+TERSE_TXT = GUIDES / "northstar_components_850_guide.txt"
+TERSE_PDF = GUIDES / "northstar_components_850_guide.pdf"
+
+
+def _terse_profile() -> GuideProfile:
+    return parse_guide(TERSE_TXT, transaction="850", partner="northstar")
+
+
+class TestTerseRouting:
+    def test_routes_to_the_terse_family(self):
+        assert _terse_profile().family == "terse"
+        assert _profile().family == "templated"
+        assert _tabular_profile().family == "tabular"
+
+    def test_rejection_names_all_three_families(self, tmp_path: Path):
+        other = tmp_path / "notes.txt"
+        other.write_text("Just some notes about EDI.\n", encoding="utf-8")
+        with pytest.raises(GuideParseError) as err:
+            parse_guide(other, transaction="850", partner="x")
+        message = str(err.value)
+        assert "templated (Element Summary layout)" in message
+        assert "tabular (Data Element Summary layout)" in message
+        assert "terse (EDI Specifications User Guide layout)" in message
+
+    def test_family_round_trips_through_yaml(self, tmp_path: Path):
+        profile = _terse_profile()
+        assert GuideProfile.load(profile.save(tmp_path / "t.yaml")).family == "terse"
+
+
+class TestTerseGolden:
+    def test_inventory_and_coverage(self):
+        profile = _terse_profile()
+        assert [s.id for s in profile.segments] == [
+            "BEG", "REF", "N1", "N3", "PO1", "CTT",
+        ]
+        assert profile.parse_coverage == 1.0
+        assert profile.review == []
+
+    def test_two_pass_join_usage_and_loop(self):
+        """Usage and loop come from the front index, elements from detail."""
+        profile = _terse_profile()
+        usage = {s.id: s.usage for s in profile.segments}
+        assert usage["BEG"] == "must_use"  # index M
+        assert usage["N3"] == "used"  # index O
+        assert profile.segment("N1").loop == "N1"  # index "N1 / 3"
+        assert profile.segment("N3").loop == "N1"
+        assert profile.segment("BEG").loop == ""
+
+    def test_single_requiredness_column_incl_not_used(self):
+        beg = _terse_profile().segment("BEG")
+        beg04 = beg.element("BEG04")
+        assert (beg04.req, beg04.usage) == ("N", "not_used")  # N = Not Used
+        assert beg04.type == ""  # no TYPE MIN/MAX on an N row
+        assert beg.element("BEG05").usage == "must_use"  # M
+
+    def test_freeform_codes_multiple_per_line(self):
+        po103 = _terse_profile().segment("PO1").element("PO103")
+        assert [(c.code, c.name) for c in po103.codes] == [
+            ("EA", "Each"), ("CS", "Case"), ("PL", "Pallet"),
+        ]
+
+    def test_freeform_codes_quote_and_dash_variants(self):
+        profile = _terse_profile()
+        assert [(c.code, c.name) for c in profile.segment("BEG").element("BEG01").codes] == [
+            ("00", "Original")
+        ]
+        n101 = profile.segment("N1").element("N101")
+        assert [(c.code, c.name) for c in n101.codes] == [
+            ("BY", "Buying Party ( Purchaser )"), ("ST", "Ship To"),
+        ]
+
+    def test_prose_does_not_leak_codes(self):
+        """A comment sentence mentioning a ref must not become a code."""
+        profile = _terse_profile()
+        all_codes = {c.code for s in profile.segments for e in s.elements for c in e.codes}
+        assert "N101" not in all_codes and "N103" not in all_codes
+
+    def test_codes_only_under_id_elements(self):
+        for s in _terse_profile().segments:
+            for e in s.elements:
+                if e.type != "ID":
+                    assert e.codes == ()
+
+    def test_comments_become_notes_examples_filtered(self):
+        profile = _terse_profile()
+        assert profile.segment("REF").notes == (
+            "The Northstar vendor id is required in the heading of every order.",
+        )
+        assert not any("*" in n for s in profile.segments for n in s.notes)
+
+    def test_pdf_twin_extracts_identically(self):
+        pytest.importorskip("pdfplumber")
+        txt = _terse_profile().to_dict()
+        pdf = parse_guide(TERSE_PDF, transaction="850", partner="northstar").to_dict()
+        txt.pop("source")
+        pdf.pop("source")
+        assert txt == pdf
+
+    def test_deterministic(self):
+        assert _terse_profile().to_dict() == _terse_profile().to_dict()
+
+
+class TestTerseReview:
+    def test_detail_without_index_row_is_review(self, tmp_path: Path):
+        text = TERSE_TXT.read_text(encoding="utf-8")
+        # drop REF from the index; its detail page then has unknown usage
+        variant = tmp_path / "v.txt"
+        variant.write_text(
+            text.replace("REF Reference Identification M >1\n", ""),
+            encoding="utf-8",
+        )
+        profile = parse_guide(variant, transaction="850", partner="x")
+        assert any(
+            "segment REF has a detail page but no row" in note
+            for note in profile.review
+        )
+        assert profile.segment("REF").usage == ""  # unknown, not guessed
+
+    def test_index_without_detail_is_not_flagged(self):
+        """ST/SE/CUR appear in the index without detail pages — benign,
+        so the clean fixture stays review-free."""
+        assert _terse_profile().review == []
+
+
+class TestTerseOverlay:
+    def test_emission_is_family_blind(self):
+        rules = emit_partner_rules(_terse_profile())
+        segs = {(r.segment, r.qualifier) for r in rules.required_segments}
+        # REF*IA single-code qualified family, from a terse profile
+        assert ("REF", "IA") in segs
+        assert ("BEG", None) in segs and ("PO1", None) in segs
 
 
 # --------------------------------------------------------------------------
