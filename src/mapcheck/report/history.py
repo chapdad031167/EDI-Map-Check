@@ -51,6 +51,11 @@ def _migrate(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE runs ADD COLUMN interchange_id INTEGER")
     if "document_key" not in existing:
         connection.execute("ALTER TABLE runs ADD COLUMN document_key TEXT")
+    if "partner_file" not in existing:
+        # A partner delta changes what was validated, so it belongs to the
+        # run's identity: without it, `bless` cannot rebuild the key that
+        # `regress --partner` looks its baseline up by.
+        connection.execute("ALTER TABLE runs ADD COLUMN partner_file TEXT")
 
 
 class RunHistory:
@@ -77,12 +82,14 @@ class RunHistory:
         interchange_id: int | None = None,
         document_key: str | None = None,
         counts: dict[Status, int] | None = None,
+        partner_file: str | None = None,
     ) -> int:
         counts = counts if counts is not None else result.counts
         cursor = self._connection.execute(
             "INSERT INTO runs (run_at, spec_file, source_file, output_file, result,"
-            " passed, failed, warnings, not_tested, interchange_id, document_key)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " passed, failed, warnings, not_tested, interchange_id, document_key,"
+            " partner_file)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 result.run_at.isoformat(timespec="seconds"),
                 result.spec_path,
@@ -95,6 +102,7 @@ class RunHistory:
                 counts[Status.NOT_TESTED],
                 interchange_id,
                 document_key,
+                partner_file,
             ),
         )
         run_id = cursor.lastrowid
@@ -119,13 +127,15 @@ class RunHistory:
         )
         return run_id
 
-    def record(self, result: RunResult) -> int:
+    def record(self, result: RunResult, partner_file: str | None = None) -> int:
         """Persist a run and its findings; returns the run id."""
-        run_id = self._insert_run(result)
+        run_id = self._insert_run(result, partner_file=partner_file)
         self._connection.commit()
         return run_id
 
-    def record_interchange(self, interchange: InterchangeResult) -> int:
+    def record_interchange(
+        self, interchange: InterchangeResult, partner_file: str | None = None
+    ) -> int:
         """Persist a whole interchange: a parent row whose count columns are
         the whole-interchange rollup but which stores only the file-level
         findings, plus a child run row per document. Returns the parent id."""
@@ -137,10 +147,15 @@ class RunHistory:
             findings=list(interchange.file_findings),
             run_at=interchange.run_at,
         )
-        parent_id = self._insert_run(parent, counts=interchange.counts)
+        parent_id = self._insert_run(
+            parent, counts=interchange.counts, partner_file=partner_file
+        )
         for document in interchange.documents:
             self._insert_run(
-                document.result, interchange_id=parent_id, document_key=document.key
+                document.result,
+                interchange_id=parent_id,
+                document_key=document.key,
+                partner_file=partner_file,
             )
         self._connection.commit()
         return parent_id
@@ -149,7 +164,8 @@ class RunHistory:
         """Most recent runs, newest first."""
         cursor = self._connection.execute(
             "SELECT id, run_at, spec_file, source_file, output_file, result,"
-            " passed, failed, warnings, not_tested, interchange_id, document_key"
+            " passed, failed, warnings, not_tested, interchange_id, document_key,"
+            " partner_file"
             " FROM runs ORDER BY id DESC LIMIT ?",
             (limit,),
         )
@@ -170,7 +186,8 @@ class RunHistory:
         """One run row by id, or None."""
         cursor = self._connection.execute(
             "SELECT id, run_at, spec_file, source_file, output_file, result,"
-            " passed, failed, warnings, not_tested, interchange_id, document_key"
+            " passed, failed, warnings, not_tested, interchange_id, document_key,"
+            " partner_file"
             " FROM runs WHERE id = ?",
             (run_id,),
         )

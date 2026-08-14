@@ -35,6 +35,7 @@ from mapcheck.guides.profile import (
     GuideElement,
     GuideProfile,
     GuideSegment,
+    element_position,
 )
 
 #: File suffixes the extractor accepts.
@@ -162,6 +163,38 @@ def _normalize_usage(raw: str) -> str | None:
     return _USAGE_VALUES.get(raw.strip().lower())
 
 
+def _attach_element(profile: GuideProfile, segment: dict, element: dict) -> None:
+    """Append a finished element row to the segment block it was read in.
+
+    An element row naming another segment — a ``REF02`` row still inside
+    an open ``N1`` block, from a page break or a mangled column — matches
+    the row grammar but contradicts the layout around it. It is a review
+    fact, never data: downstream numbers an element by stripping the
+    segment id off its ref, which a foreign ref does not survive. The row
+    stops counting as a confident fact, so parse coverage shows the doubt.
+    """
+    if element_position(element["ref"], segment["id"]) is None:
+        profile.facts_confident -= 1
+        profile.review.append(
+            f"segment {segment['id']}: element row {element['ref']} names a "
+            "different segment — verify by hand"
+        )
+        return
+    segment["elements"].append(
+        GuideElement(
+            ref=element["ref"],
+            name=element["name"],
+            req=element["req"],
+            type=element["type"],
+            min=element["min"],
+            max=element["max"],
+            usage=element["usage"],
+            codes=tuple(element["codes"]),
+            notes=tuple(element["notes"]),
+        )
+    )
+
+
 def _templated_fingerprints(lines: list[tuple[int, str]]) -> dict[str, bool]:
     return {
         "segment header block (e.g. 'BEG … Pos: 020 Max: 1')": any(
@@ -240,19 +273,7 @@ def _parse_templated(
     def close_element() -> None:
         nonlocal element
         if element is not None and segment is not None:
-            segment["elements"].append(
-                GuideElement(
-                    ref=element["ref"],
-                    name=element["name"],
-                    req=element["req"],
-                    type=element["type"],
-                    min=element["min"],
-                    max=element["max"],
-                    usage=element["usage"],
-                    codes=tuple(element["codes"]),
-                    notes=tuple(element["notes"]),
-                )
-            )
+            _attach_element(profile, segment, element)
         element = None
 
     def close_segment() -> None:
@@ -601,19 +622,7 @@ def _parse_tabular(
     def close_element() -> None:
         nonlocal element
         if element is not None and segment is not None:
-            segment["elements"].append(
-                GuideElement(
-                    ref=element["ref"],
-                    name=element["name"],
-                    req=element["req"],
-                    type=element["type"],
-                    min=element["min"],
-                    max=element["max"],
-                    usage=element["usage"],
-                    codes=tuple(element["codes"]),
-                    notes=tuple(element["notes"]),
-                )
-            )
+            _attach_element(profile, segment, element)
         element = None
 
     def flush_notes() -> None:
@@ -986,14 +995,7 @@ def _parse_terse(
     def close_element() -> None:
         nonlocal element
         if element is not None and segment is not None:
-            segment["elements"].append(
-                GuideElement(
-                    ref=element["ref"], name=element["name"], req=element["req"],
-                    type=element["type"], min=element["min"], max=element["max"],
-                    usage=element["usage"], codes=tuple(element["codes"]),
-                    notes=tuple(element["notes"]),
-                )
-            )
+            _attach_element(profile, segment, element)
         element = None
 
     def close_segment() -> None:

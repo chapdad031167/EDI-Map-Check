@@ -474,9 +474,9 @@ def _validate_page() -> None:
             db.parent.mkdir(parents=True, exist_ok=True)
             with RunHistory(db) as history:
                 recorded_id = (
-                    history.record_interchange(result)
+                    history.record_interchange(result, partner_file=partner_path)
                     if isinstance(result, InterchangeResult)
-                    else history.record(result)
+                    else history.record(result, partner_file=partner_path)
                 )
         st.session_state["result"] = result
         st.session_state["merge_notes"] = merge_notes

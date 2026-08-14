@@ -358,7 +358,11 @@ mapcheck import-guide acme_850.pdf --transaction 850 --partner acme_pharma \
   the base definition already enforces are skipped; anything the schema
   still cannot express (multi-code qualifiers, loop-scoped placement)
   is named in the overlay's `review` list and echoed at validate time —
-  surfaced, never silently dropped.
+  surfaced, never silently dropped. When hand-editing an overlay, quote
+  every code (`qualifier: '002'`, not `002`): YAML reads a bare code as a
+  number, dropping leading zeros and treating a leading `0` as octal, so
+  `002` would arrive as `2` and `010` as `8`. Both loaders reject the
+  unquoted form rather than match the wrong segment.
 - The **Draft spec** page in the UI takes the guide as an optional
   upload (plus a partner-name field), shows the parse coverage and
   review entries, and offers the profile as a download.

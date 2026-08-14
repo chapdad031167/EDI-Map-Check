@@ -267,6 +267,14 @@ def scrub_text(
     return scrubber.scrub(text), scrubber.report
 
 
+def scrubbed_path(input_path: str | Path, output_path: str | Path | None = None) -> Path:
+    """Where :func:`scrub_file` would write, so a caller can check first."""
+    if output_path is not None:
+        return Path(output_path)
+    input_path = Path(input_path)
+    return input_path.with_suffix(f".scrubbed{input_path.suffix}")
+
+
 def scrub_file(
     input_path: str | Path,
     output_path: str | Path | None = None,
@@ -277,8 +285,6 @@ def scrub_file(
     input_path = Path(input_path)
     text = input_path.read_text(encoding="utf-8")
     scrubbed, report = scrub_text(text, profile, seed)
-    if output_path is None:
-        output_path = input_path.with_suffix(f".scrubbed{input_path.suffix}")
-    output_path = Path(output_path)
-    output_path.write_text(scrubbed, encoding="utf-8")
-    return output_path, report
+    target = scrubbed_path(input_path, output_path)
+    target.write_text(scrubbed, encoding="utf-8")
+    return target, report

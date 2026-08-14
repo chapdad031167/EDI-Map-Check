@@ -19,12 +19,13 @@ from pathlib import Path
 
 import yaml
 
-from mapcheck.guides.profile import GuideProfile
+from mapcheck.guides.profile import GuideProfile, element_position
 from mapcheck.transactions.schema import (
     RequiredElementDef,
     RequiredPairDef,
     RequiredSegmentDef,
     TransactionDefinition,
+    unquoted_code_error,
 )
 
 #: Segments whose qualifier lives in element 01 by X12 convention.
@@ -49,16 +50,20 @@ def _load_codes(
     Mutually exclusive; ``qualifiers`` must be a non-empty list. Problems
     append to ``errors`` and the offending field returns empty.
     """
-    qualifier = str(node["qualifier"]) if node.get("qualifier") is not None else None
+    qualifier = node.get("qualifier")
+    if qualifier is not None and not isinstance(qualifier, str):
+        errors.append(f"{where}: 'qualifier' {unquoted_code_error(qualifier)}")
+        qualifier = None
     raw = node.get("qualifiers")
     qualifiers: tuple[str, ...] = ()
     if raw is not None:
-        if not isinstance(raw, list) or not raw or not all(
-            isinstance(c, (str, int)) for c in raw
-        ):
+        if not isinstance(raw, list) or not raw:
             errors.append(f"{where}: 'qualifiers' must be a non-empty list of codes")
+        elif not all(isinstance(c, str) for c in raw):
+            bare = next(c for c in raw if not isinstance(c, str))
+            errors.append(f"{where}: 'qualifiers' {unquoted_code_error(bare)}")
         else:
-            qualifiers = tuple(str(c) for c in raw)
+            qualifiers = tuple(raw)
     if qualifier is not None and qualifiers:
         errors.append(f"{where}: set 'qualifier' or 'qualifiers', not both")
     return qualifier, qualifiers
@@ -265,8 +270,15 @@ class PartnerRules:
         pairs: list[RequiredPairDef] = []
         for index, node in enumerate(data.get("required_pairs", []) or []):
             where = f"{path}: required_pairs[{index}]"
-            if not isinstance(node, dict) or not node.get("segment") or not node.get("code"):
+            if (
+                not isinstance(node, dict)
+                or not node.get("segment")
+                or node.get("code") is None
+            ):
                 errors.append(f"{where}: expected a mapping with 'segment' and 'code'")
+                continue
+            if not isinstance(node["code"], str):
+                errors.append(f"{where}: 'code' {unquoted_code_error(node['code'])}")
                 continue
             first = node.get("first_element", 6)
             last = node.get("last_element", 24)
@@ -285,7 +297,7 @@ class PartnerRules:
             pairs.append(
                 RequiredPairDef(
                     segment=str(node["segment"]).upper(),
-                    code=str(node["code"]),
+                    code=node["code"],
                     first_element=first,
                     last_element=last,
                     step=step,
@@ -331,6 +343,24 @@ def _el_rule(seg_id, position, codes, loop, name, partner) -> RequiredElementDef
         segment=seg_id, element=position, loop=loop, name=name,
         origin=partner, **kw
     )
+
+
+def _position(el, segment, rules: PartnerRules) -> int | None:
+    """``el``'s position within ``segment``, or ``None`` plus a review note.
+
+    A profile can carry an element whose ref belongs to another segment
+    (see :func:`element_position`). Flag-never-guess applies: emit no
+    rule for it and name it in ``review``, rather than crash the import.
+    """
+    position = element_position(el.ref, segment.id)
+    if position is None:
+        note = (
+            f"{el.ref}: element of another segment inside the {segment.id} "
+            "block — no rule emitted; verify the guide by hand"
+        )
+        if note not in rules.review:
+            rules.review.append(note)
+    return position
 
 
 def emit_partner_rules(profile: GuideProfile) -> PartnerRules:
@@ -390,7 +420,9 @@ def emit_partner_rules(profile: GuideProfile) -> PartnerRules:
             for el in segment.elements:
                 if el.usage != "must_use" or el.ref.endswith("01"):
                     continue
-                position = int(el.ref[len(segment.id):])
+                position = _position(el, segment, rules)
+                if position is None:
+                    continue
                 el_key = (segment.id, position, codes, loop_scope)
                 if el_key in seen_elements:
                     continue
@@ -418,8 +450,8 @@ def emit_partner_rules(profile: GuideProfile) -> PartnerRules:
             for el in segment.elements:
                 if el.usage != "must_use":
                     continue
-                position = int(el.ref[len(segment.id):])
-                if position not in slots or not el.codes:
+                position = _position(el, segment, rules)
+                if position is None or position not in slots or not el.codes:
                     continue
                 slot_codes = [c.code for c in el.codes]
                 if len(slot_codes) > 1:
@@ -448,8 +480,8 @@ def emit_partner_rules(profile: GuideProfile) -> PartnerRules:
         for el in segment.elements:
             if el.usage != "must_use":
                 continue
-            position = int(el.ref[len(segment.id):])
-            if position in consumed:
+            position = _position(el, segment, rules)
+            if position is None or position in consumed:
                 continue
             el_key = (segment.id, position, (), loop_scope)
             if el_key in seen_elements:

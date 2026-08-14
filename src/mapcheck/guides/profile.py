@@ -17,6 +17,24 @@ import yaml
 USAGES = ("must_use", "used", "not_used")
 
 
+def element_position(ref: str, segment_id: str) -> int | None:
+    """The element position ``ref`` names within ``segment_id``, or ``None``.
+
+    ``element_position("BEG03", "BEG")`` is 3. ``None`` means the ref is
+    not this segment's to number: a guide whose element rows drifted out
+    of their block (a ``REF02`` row still inside an open ``N1``, from a
+    page break or a mangled column) parses cleanly but describes a
+    segment that is not the one open. Callers route those to review —
+    numbering them would mean reading ``F02`` as an integer.
+    """
+    if not ref.startswith(segment_id):
+        return None
+    suffix = ref[len(segment_id):]
+    if not suffix.isascii() or not suffix.isdigit():
+        return None
+    return int(suffix)
+
+
 class GuideProfileError(Exception):
     """A profile file failed validation; the message names every problem."""
 
@@ -100,7 +118,9 @@ class GuideProfile:
         table: dict[tuple[str, int], GuideElement] = {}
         for seg in self.segments:
             for el in seg.elements:
-                position = int(el.ref[len(seg.id):] or 0)
+                position = element_position(el.ref, seg.id)
+                if position is None:
+                    continue  # not this segment's element; already in review
                 table[(seg.id, position)] = el
         return table
 

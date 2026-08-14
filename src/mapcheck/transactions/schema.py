@@ -16,6 +16,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+def unquoted_code_error(value: object) -> str:
+    """Why a bare YAML scalar cannot stand in for a qualifier code.
+
+    An EDI code is text that happens to look numeric, and YAML reads the
+    number instead: ``002`` arrives as ``2``, and a leading zero means
+    octal, so ``010`` arrives as ``8``. Either way the rule quietly stops
+    matching the segment it was written for, which is the one failure a
+    validation tool must not have. Both loaders reject the bare scalar
+    and say how to write it instead.
+    """
+    return (
+        f"expected a quoted code, got {type(value).__name__} {value!r} — an "
+        "unquoted YAML code loses leading zeros and reads a leading 0 as "
+        "octal (002 arrives as 2, 010 as 8); quote it exactly as the guide "
+        "prints it"
+    )
+
+
 @dataclass(frozen=True)
 class HierarchyDef:
     """HL-style variable-depth tree configuration for a loop.

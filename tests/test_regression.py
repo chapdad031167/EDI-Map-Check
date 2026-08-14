@@ -9,6 +9,7 @@ document and a multi-transaction interchange.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -344,6 +345,114 @@ class TestCli:
         capsys.readouterr()
         code = main(self._regress_args(examples_dir, out, db, "--label", "L"))
         assert code == 0 and "No changes" in capsys.readouterr().out
+
+
+class TestPartnerBaseline:
+    """``--partner`` puts the delta in the baseline key, so the run has to
+    carry which delta it used or ``bless`` cannot rebuild that key — and a
+    regression run that never finds its baseline passes CI unconditionally."""
+
+    def _args(self, examples_dir, output_path, db, *extra):
+        return [
+            "regress",
+            "--spec", str(examples_dir / "specs" / "partner_base_spec.xlsx"),
+            "--partner", str(examples_dir / "specs" / "partner_acme_delta.xlsx"),
+            "--source", str(examples_dir / "source" / "850_partner.edi"),
+            "--output", str(output_path),
+            "--db", str(db), "--no-color", *extra,
+        ]
+
+    def test_blessed_partner_run_is_found_on_re_run(
+        self, examples_dir, tmp_path, capsys
+    ):
+        db = tmp_path / "h.db"
+        out = tmp_path / "po.json"
+        out.write_bytes((examples_dir / "output" / "partner_order.json").read_bytes())
+
+        main(self._args(examples_dir, out, db))
+        run_id = _recorded_run_id(capsys.readouterr().out)
+        main(["bless", str(run_id), "--db", str(db)])
+        capsys.readouterr()
+
+        code = main(self._args(examples_dir, out, db))
+        text = capsys.readouterr().out
+        assert code == 0 and "No changes" in text
+        assert "No baseline" not in text
+
+    def test_partner_run_still_detects_a_regression(
+        self, examples_dir, tmp_path, capsys
+    ):
+        db = tmp_path / "h.db"
+        out = tmp_path / "po.json"
+        out.write_bytes((examples_dir / "output" / "partner_order.json").read_bytes())
+
+        main(self._args(examples_dir, out, db))
+        run_id = _recorded_run_id(capsys.readouterr().out)
+        main(["bless", str(run_id), "--db", str(db)])
+        capsys.readouterr()
+
+        payload = json.loads(out.read_text())
+        payload["order"]["po_number"] = "REGRESSED"
+        out.write_text(json.dumps(payload))
+
+        code = main(self._args(examples_dir, out, db))
+        assert code == 1
+        assert "REGRESSION" in capsys.readouterr().out
+
+    def test_run_row_records_which_delta_was_applied(
+        self, examples_dir, tmp_path, capsys
+    ):
+        db = tmp_path / "h.db"
+        out = tmp_path / "po.json"
+        out.write_bytes((examples_dir / "output" / "partner_order.json").read_bytes())
+        main(self._args(examples_dir, out, db))
+        run_id = _recorded_run_id(capsys.readouterr().out)
+
+        with RunHistory(db) as history:
+            assert history.run(run_id)["partner_file"].endswith(
+                "partner_acme_delta.xlsx"
+            )
+
+    def test_a_different_delta_does_not_reuse_the_baseline(
+        self, examples_dir, tmp_path, capsys
+    ):
+        """Two deltas over one spec are two different validations."""
+        db = tmp_path / "h.db"
+        out = tmp_path / "po.json"
+        out.write_bytes((examples_dir / "output" / "partner_order.json").read_bytes())
+        main(self._args(examples_dir, out, db))
+        run_id = _recorded_run_id(capsys.readouterr().out)
+        main(["bless", str(run_id), "--db", str(db)])
+        capsys.readouterr()
+
+        globex = [
+            "regress",
+            "--spec", str(examples_dir / "specs" / "partner_base_spec.xlsx"),
+            "--partner", str(examples_dir / "specs" / "partner_globex_delta.xlsx"),
+            "--source", str(examples_dir / "source" / "850_partner.edi"),
+            "--output", str(out), "--db", str(db), "--no-color",
+        ]
+        code = main(globex)
+        assert code == 0 and "No baseline" in capsys.readouterr().out
+
+    def test_legacy_run_without_a_partner_column_still_blesses(
+        self, examples_dir, tmp_path, capsys
+    ):
+        """A run recorded before the column existed reads back as None."""
+        db = tmp_path / "h.db"
+        out = tmp_path / "po.json"
+        out.write_bytes((examples_dir / "output" / "partner_order.json").read_bytes())
+        main([
+            "validate",
+            "--spec", str(examples_dir / "specs" / "partner_base_spec.xlsx"),
+            "--source", str(examples_dir / "source" / "850_partner.edi"),
+            "--output", str(out), "--db", str(db), "--no-color",
+        ])
+        capsys.readouterr()
+        with RunHistory(db) as history:
+            run_id = history.recent_runs(limit=1)[0]["id"]
+            assert history.run(run_id)["partner_file"] is None
+        assert main(["bless", str(run_id), "--db", str(db)]) == 0
 
 
 # ---------------------------------------------------------------------------

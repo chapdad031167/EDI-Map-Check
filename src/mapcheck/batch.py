@@ -191,14 +191,14 @@ def _run_validate(check: Check, history: RunHistory | None) -> CheckOutcome:
             transaction=check.transaction, output_format=output_format, spec=merged,
         )
         if history is not None:
-            history.record_interchange(result)
+            history.record_interchange(result, partner_file=check.partner)
     else:
         result = validate_files(
             check.spec, check.source, check.output,
             transaction=check.transaction, output_format=output_format, spec=merged,
         )
         if history is not None:
-            history.record(result)
+            history.record(result, partner_file=check.partner)
 
     counts = result.counts
     status = "fail" if result.overall is Status.FAIL else "pass"
@@ -226,13 +226,13 @@ def _run_regress(check: Check, history: RunHistory) -> CheckOutcome:
             check.spec, check.source, check.output,
             transaction=check.transaction, spec=merged,
         )
-        current_id = history.record_interchange(result)
+        current_id = history.record_interchange(result, partner_file=check.partner)
     else:
         result = validate_files(
             check.spec, check.source, check.output,
             transaction=check.transaction, spec=merged,
         )
-        current_id = history.record(result)
+        current_id = history.record(result, partner_file=check.partner)
 
     key = check.label or baseline_key(check.spec, check.source, check.output, check.partner)
     baseline = history.baseline_for(key)

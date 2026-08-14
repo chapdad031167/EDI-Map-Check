@@ -25,6 +25,7 @@ from mapcheck.transactions.schema import (
     RequiredPairDef,
     RequiredSegmentDef,
     TransactionDefinition,
+    unquoted_code_error,
 )
 
 
@@ -61,6 +62,18 @@ class _Ctx:
             if isinstance(value, (int, float)):
                 return str(value)
             self.err(f"{path}.{key}", f"expected a string, got {type(value).__name__}")
+            return None
+        return value
+
+    def code_at(self, node: dict, path: str, key: str, required: bool = True) -> str | None:
+        """An EDI code, which must be quoted — never coerced like str_at."""
+        value = node.get(key)
+        if value is None:
+            if required:
+                self.err(f"{path}.{key}", "is required")
+            return None
+        if not isinstance(value, str):
+            self.err(f"{path}.{key}", unquoted_code_error(value))
             return None
         return value
 
@@ -294,14 +307,17 @@ def _parse_qualifier_codes(
 
     Returns ``(qualifier, qualifiers)``; the two are mutually exclusive.
     """
-    qualifier = ctx.str_at(node, path, "qualifier", required=False)
+    qualifier = ctx.code_at(node, path, "qualifier", required=False)
     raw = node.get("qualifiers")
     qualifiers: tuple[str, ...] = ()
     if raw is not None:
-        if not isinstance(raw, list) or not all(isinstance(c, (str, int)) for c in raw) or not raw:
+        if not isinstance(raw, list) or not raw:
             ctx.err(f"{path}.qualifiers", "expected a non-empty list of qualifier codes")
+        elif not all(isinstance(c, str) for c in raw):
+            bare = next(c for c in raw if not isinstance(c, str))
+            ctx.err(f"{path}.qualifiers", unquoted_code_error(bare))
         else:
-            qualifiers = tuple(str(c) for c in raw)
+            qualifiers = tuple(raw)
     if qualifier is not None and qualifiers:
         ctx.err(path, "set 'qualifier' or 'qualifiers', not both")
     return qualifier, qualifiers
@@ -347,7 +363,7 @@ def _parse_required_pair(node: Any, index: int, ctx: _Ctx) -> RequiredPairDef | 
         ctx.err(path, "expected a mapping with segment and code")
         return None
     segment = ctx.str_at(node, path, "segment")
-    code = ctx.str_at(node, path, "code")
+    code = ctx.code_at(node, path, "code")
     if not segment or not code:
         return None
     first = ctx.int_at(node, path, "first_element", default=6)

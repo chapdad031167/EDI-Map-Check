@@ -236,3 +236,31 @@ class TestCli:
         code = main(["scrub", str(src), "--profile", "ghost"])
         assert code == 2
         assert "not found" in capsys.readouterr().err
+
+    def test_explicit_output_is_not_overwritten(self, examples_dir, tmp_path, capsys):
+        """A scrubbed file is the copy that leaves the building; replacing
+        one silently is how an unmasked original travels in its place."""
+        src = tmp_path / "in.edi"
+        src.write_text(_src(examples_dir).read_text())
+        out = tmp_path / "out.edi"
+        assert main(["scrub", str(src), "-o", str(out), "--seed", "s"]) == 0
+        kept = out.read_text()
+
+        code = main(["scrub", str(src), "-o", str(out), "--seed", "other"])
+        assert code == 2
+        assert "already exists" in capsys.readouterr().err
+        assert out.read_text() == kept
+
+    def test_derived_default_output_is_not_overwritten(
+        self, examples_dir, tmp_path, capsys
+    ):
+        src = tmp_path / "in.edi"
+        src.write_text(_src(examples_dir).read_text())
+        assert main(["scrub", str(src), "--seed", "s"]) == 0
+        derived = tmp_path / "in.scrubbed.edi"
+        kept = derived.read_text()
+
+        code = main(["scrub", str(src), "--seed", "other"])
+        assert code == 2
+        assert "already exists" in capsys.readouterr().err
+        assert derived.read_text() == kept
