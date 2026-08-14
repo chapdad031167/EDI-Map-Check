@@ -464,7 +464,9 @@ class TestOverlayEmission:
         assert (up.first_element, up.last_element, up.step) == (6, 24, 2)
         assert up.origin == "acme_pharma"
 
-    def test_multi_code_qualifier_falls_back_unqualified(self, tmp_path: Path):
+    def test_multi_code_qualifier_emits_a_code_set(self, tmp_path: Path):
+        """Design 018: a REF block listing {IA, DP} emits a qualifiers set
+        ('a REF whose REF01 is IA or DP'), not an unqualified rule."""
         guide = tmp_path / "g.txt"
         guide.write_text(
             "REF Reference Identification Pos: 050 Max: 1\n"
@@ -479,12 +481,16 @@ class TestOverlayEmission:
             encoding="utf-8",
         )
         rules = emit_partner_rules(parse_guide(guide, transaction="850", partner="x"))
-        assert [(r.segment, r.qualifier) for r in rules.required_segments] == [("REF", None)]
-        assert any("multiple qualifier codes" in note for note in rules.review)
-        # unqualified fallback also carries the element rules
-        assert {(r.segment, r.element) for r in rules.required_elements} == {
-            ("REF", 1), ("REF", 2),
-        }
+        assert len(rules.required_segments) == 1
+        seg = rules.required_segments[0]
+        assert seg.segment == "REF"
+        assert seg.qualifier is None
+        assert seg.qualifiers == ("IA", "DP")
+        assert not any("multiple qualifier codes" in note for note in rules.review)
+        # REF02 becomes a code-set-scoped element rule, not unqualified
+        ref02 = [r for r in rules.required_elements if r.element == 2]
+        assert len(ref02) == 1
+        assert ref02[0].qualifiers == ("IA", "DP")
 
     def test_apply_dedups_against_unconditional_base_only(self):
         rules = emit_partner_rules(_profile())
@@ -962,6 +968,330 @@ class TestQualifierRuleLoading:
         message = str(err.value)
         assert "required_pairs[0]" in message
         assert "required_pairs[1]" in message
+
+
+# --------------------------------------------------------------------------
+# Design 018: loop-scoped placement and multi-code qualifiers
+# --------------------------------------------------------------------------
+
+
+def _apply_findings(edi_text: str, rules: "PartnerRules", tmp_path: Path):
+    from mapcheck.engine.results import Category, RunResult
+    from mapcheck.engine.validator import (
+        _check_required_elements,
+        _check_required_pairs,
+        _check_required_segments,
+    )
+    from mapcheck.x12.parser import parse_transaction
+
+    path = tmp_path / "v.edi"
+    path.write_text(edi_text, encoding="utf-8")
+    tx = parse_transaction(str(path))
+    tx.definition = rules.apply(tx.definition)
+    result = RunResult(spec_path="", source_path=str(path), output_path="")
+    _check_required_elements(tx, result, Category.SOURCE_DATA, "")
+    _check_required_segments(tx, result, Category.SOURCE_DATA, "")
+    _check_required_pairs(tx, result, Category.SOURCE_DATA, "")
+    return result.findings
+
+
+#: A valid 850 with a heading PER but no PER inside the N1 loop, and a
+#: REF*DP in the header — the shapes the two caveats need.
+_EDI_850 = (
+    "ISA*00*          *00*          *ZZ*SENDER         *ZZ*RECEIVER       "
+    "*260810*0915*U*00401*000000101*0*T*>~"
+    "GS*PO*SENDER*RECEIVER*20260810*0915*101*X*004010~"
+    "ST*850*0001~"
+    "BEG*00*NE*PO-1*20260810~"
+    "REF*DP*054~"
+    "PER*BD*JANE BUYER*TE*6145550142~"
+    "N1*BY*BUYER CORP*92*BUY001~"
+    "N1*ST*SHIP DEST*92*ST01~"
+    "N3*1 DISTRIBUTION DR~"
+    "N4*COLUMBUS*OH*43228~"
+    "PO1*1*24*EA*18.75**VN*SAF-1~"
+    "CTT*1*24~"
+    "SE*11*0001~GE*1*101~IEA*1*000000101~"
+)
+
+
+class TestLoopScopedPlacement:
+    def _rules(self, **kw):
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import RequiredSegmentDef
+
+        return PartnerRules(
+            partner="acme", transaction="850",
+            required_segments=[RequiredSegmentDef(segment="PER", origin="acme", **kw)],
+        )
+
+    def test_global_rule_satisfied_by_heading_occurrence(self, tmp_path: Path):
+        findings = _apply_findings(_EDI_850, self._rules(), tmp_path)
+        assert not findings  # a heading PER satisfies an unscoped PER rule
+
+    def test_loop_scoped_rule_ignores_the_heading_occurrence(self, tmp_path: Path):
+        findings = _apply_findings(_EDI_850, self._rules(loop="N1"), tmp_path)
+        assert len(findings) == 1
+        assert findings[0].source_ref == "PER"
+        assert "within the N1 loop" in findings[0].message
+
+    def test_loop_scoped_rule_satisfied_by_in_loop_occurrence(self, tmp_path: Path):
+        # add a PER inside the ship-to N1 loop
+        edi = _EDI_850.replace(
+            "N4*COLUMBUS*OH*43228~",
+            "N4*COLUMBUS*OH*43228~PER*IC*DESK*TE*6145550000~",
+        )
+        findings = _apply_findings(edi, self._rules(loop="N1"), tmp_path)
+        assert not findings
+
+    def test_qualified_loop_context_matches_only_that_occurrence(self, tmp_path: Path):
+        # PER inside the BY-qualified N1 only; a rule scoped to N1[ST] fails
+        edi = _EDI_850.replace(
+            "N1*BY*BUYER CORP*92*BUY001~",
+            "N1*BY*BUYER CORP*92*BUY001~PER*IC*BUYDESK*TE*6145551111~",
+        )
+        assert not _apply_findings(edi, self._rules(loop="N1[BY]"), tmp_path)
+        fail = _apply_findings(edi, self._rules(loop="N1[ST]"), tmp_path)
+        assert len(fail) == 1 and "within the N1[ST] loop" in fail[0].message
+
+    def test_bare_loop_matches_numbered_occurrence_labels(self, tmp_path: Path):
+        """The line loop labels occurrences 'PO1 #1', not 'PO1[...]'; a bare
+        'PO1' loop scope must match those via the ' #' branch of
+        _label_in_loop, and must not match a different loop."""
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import RequiredSegmentDef
+
+        def rule(loop):
+            return PartnerRules(
+                partner="acme", transaction="850",
+                required_segments=[
+                    RequiredSegmentDef(segment="PO1", loop=loop, origin="acme")
+                ],
+            )
+
+        # the PO1 line occurrence is labeled "PO1 #1" — a bare "PO1" scope finds it
+        assert not _apply_findings(_EDI_850, rule("PO1"), tmp_path)
+        # scoping the same rule to the N1 loop finds no PO1 there → fails
+        fail = _apply_findings(_EDI_850, rule("N1"), tmp_path)
+        assert len(fail) == 1 and "within the N1 loop" in fail[0].message
+
+
+class TestLoopScopedElements:
+    """The element-level loop filter and its message path, end to end."""
+
+    def _el_rules(self, **kw):
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import RequiredElementDef
+
+        return PartnerRules(
+            partner="acme", transaction="850",
+            required_elements=[RequiredElementDef(segment="PER", element=2, origin="acme", **kw)],
+        )
+
+    def test_loop_scoped_element_ignores_heading_occurrence(self, tmp_path: Path):
+        # the file's only PER (heading) has an empty PER02; a global rule
+        # fails it, but that is not the point — scope it to N1 and the
+        # heading occurrence is out of scope, so no finding.
+        edi = _EDI_850.replace(
+            "PER*BD*JANE BUYER*TE*6145550142~", "PER*BD**TE*6145550142~"
+        )
+        assert not _apply_findings(edi, self._el_rules(loop="N1"), tmp_path)
+
+    def test_loop_scoped_element_fires_inside_the_loop(self, tmp_path: Path):
+        edi = _EDI_850.replace(
+            "N4*COLUMBUS*OH*43228~",
+            "N4*COLUMBUS*OH*43228~PER*IC**TE*6145550000~",  # PER02 empty in-loop
+        )
+        findings = _apply_findings(edi, self._el_rules(loop="N1"), tmp_path)
+        assert len(findings) == 1
+        assert "within the N1 loop" in findings[0].message
+
+    def test_loop_and_qualifier_compose_on_a_segment(self, tmp_path: Path):
+        """A rule carrying BOTH a loop scope and a qualifier: PER*IC within
+        N1 — satisfied only by an IC-qualified PER inside the N1 loop."""
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import RequiredSegmentDef
+
+        rules = PartnerRules(
+            partner="acme", transaction="850",
+            required_segments=[
+                RequiredSegmentDef(segment="PER", qualifier="IC", loop="N1", origin="acme")
+            ],
+        )
+        # heading PER is BD, not IC, and not in N1 → fails
+        fail = _apply_findings(_EDI_850, rules, tmp_path)
+        assert len(fail) == 1
+        assert fail[0].source_ref == "PER*IC"
+        assert "within the N1 loop" in fail[0].message
+        # an IC-qualified PER inside the N1 loop satisfies it
+        edi = _EDI_850.replace(
+            "N4*COLUMBUS*OH*43228~",
+            "N4*COLUMBUS*OH*43228~PER*IC*DESK*TE*6145550000~",
+        )
+        assert not _apply_findings(edi, rules, tmp_path)
+
+
+class TestMultiCodeEnforcement:
+    def _rules(self, qualifiers):
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import RequiredSegmentDef
+
+        return PartnerRules(
+            partner="acme", transaction="850",
+            required_segments=[
+                RequiredSegmentDef(segment="REF", qualifiers=qualifiers, origin="acme")
+            ],
+        )
+
+    def test_either_code_satisfies_the_set(self, tmp_path: Path):
+        # the file carries REF*DP; a {IA, DP} rule is satisfied
+        assert not _apply_findings(_EDI_850, self._rules(("IA", "DP")), tmp_path)
+
+    def test_no_code_in_the_set_fails_naming_the_set(self, tmp_path: Path):
+        findings = _apply_findings(_EDI_850, self._rules(("IA", "ZZ")), tmp_path)
+        assert len(findings) == 1
+        assert findings[0].source_ref == "REF*{IA|ZZ}"
+        assert "REF*{IA|ZZ}" in findings[0].message
+
+    def test_scoped_element_over_a_code_set(self, tmp_path: Path):
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import RequiredElementDef
+
+        # REF03 required in REF*{IA|DP}; the file's REF*DP has no REF03
+        rules = PartnerRules(
+            partner="acme", transaction="850",
+            required_elements=[
+                RequiredElementDef(
+                    segment="REF", element=3, qualifiers=("IA", "DP"), origin="acme"
+                )
+            ],
+        )
+        findings = _apply_findings(_EDI_850, rules, tmp_path)
+        assert len(findings) == 1
+        assert "in REF*{IA|DP}" in findings[0].message
+
+
+class TestDesign018Loader:
+    def test_overlay_round_trip_loop_and_qualifiers(self, tmp_path: Path):
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import (
+            RequiredElementDef,
+            RequiredSegmentDef,
+        )
+
+        rules = PartnerRules(
+            partner="acme", transaction="850",
+            required_segments=[
+                RequiredSegmentDef(segment="PER", loop="N1", origin="acme"),
+                RequiredSegmentDef(
+                    segment="REF", qualifiers=("IA", "DP"), origin="acme"
+                ),
+            ],
+            required_elements=[
+                RequiredElementDef(
+                    segment="REF", element=2, qualifiers=("IA", "DP"),
+                    loop="", origin="acme",
+                )
+            ],
+        )
+        again = PartnerRules.load(rules.save(tmp_path / "r.yaml"))
+        assert again.to_dict() == rules.to_dict()
+        assert again.required_segments[0].loop == "N1"
+        assert again.required_segments[1].qualifiers == ("IA", "DP")
+
+    def test_qualifier_and_qualifiers_together_is_an_error(self, tmp_path: Path):
+        from mapcheck.guides.overlay import PartnerRules, PartnerRulesError
+
+        path = tmp_path / "bad.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "transaction": "850", "partner": "x",
+                    "required_segments": [
+                        {"segment": "REF", "qualifier": "IA", "qualifiers": ["IA", "DP"]}
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        with pytest.raises(PartnerRulesError, match="not both"):
+            PartnerRules.load(path)
+
+    def test_definition_loader_parses_both(self):
+        from mapcheck.transactions.loader import parse_definition
+
+        data = {
+            "transaction": {"set": "850", "name": "PO", "functional_group": "PO"},
+            "structure": [{"area": "heading", "segments": ["BEG"]}],
+            "required_segments": [
+                {"segment": "per", "loop": "N1"},
+                {"segment": "ref", "qualifiers": ["IA", "DP"]},
+            ],
+        }
+        definition = parse_definition(data, source="inline")
+        assert definition.required_segments[0].loop == "N1"
+        assert definition.required_segments[1].qualifiers == ("IA", "DP")
+
+
+class TestDesign018Apply:
+    def test_qualifiers_dedup_is_order_insensitive(self):
+        """apply() treats {IA,DP} and {DP,IA} as the same rule (frozenset
+        key), so a reordered base rule suppresses the overlay duplicate."""
+        import dataclasses
+
+        from mapcheck.guides.overlay import PartnerRules
+        from mapcheck.transactions.schema import RequiredSegmentDef
+
+        base = dataclasses.replace(
+            DEFINITION_850,
+            required_segments=(RequiredSegmentDef(segment="REF", qualifiers=("IA", "DP")),),
+        )
+        overlay = PartnerRules(
+            partner="x", transaction="850",
+            required_segments=[
+                RequiredSegmentDef(segment="REF", qualifiers=("DP", "IA"), origin="x")
+            ],
+        )
+        merged = overlay.apply(base)
+        ref_rules = [r for r in merged.required_segments if r.segment == "REF"]
+        assert len(ref_rules) == 1  # the reordered duplicate was deduped
+
+
+class TestDesign018Emission:
+    def test_loop_member_segment_gets_a_loop_scope(self):
+        """A must_use segment inside a loop it does not trigger is
+        loop-scoped; the loop trigger is not."""
+        profile = _tabular_profile()  # Bluewater: N3 is must_use? check N1/PO1
+        rules = emit_partner_rules(profile)
+        by_seg = {}
+        for r in rules.required_segments:
+            by_seg.setdefault(r.segment, []).append(r)
+        # N1 is the trigger of loop N1 → not loop-scoped
+        assert all(r.loop == "" for r in by_seg.get("N1", []))
+        # PO1 is the trigger of loop PO1 → not loop-scoped
+        assert all(r.loop == "" for r in by_seg.get("PO1", []))
+
+    def test_loop_member_scope_from_a_synthetic_member(self, tmp_path: Path):
+        guide = tmp_path / "g.txt"
+        guide.write_text(
+            "N1 Name Pos: 300 Max: 1\n"
+            "Loop: N1\n"
+            "User Option (Usage): Must use\n\n"
+            "Element Summary:\n"
+            "N101 98 Entity Identifier Code M ID 2/3 Must use\n\n"
+            "N3 Address Information Pos: 330 Max: 1\n"
+            "Loop: N1\n"
+            "User Option (Usage): Must use\n\n"
+            "Element Summary:\n"
+            "N301 166 Address Information M AN 1/55 Must use\n",
+            encoding="utf-8",
+        )
+        rules = emit_partner_rules(parse_guide(guide, transaction="850", partner="x"))
+        by_seg = {r.segment: r for r in rules.required_segments}
+        assert by_seg["N1"].loop == ""  # trigger
+        assert by_seg["N3"].loop == "N1"  # member scoped to its loop
+        n301 = [r for r in rules.required_elements if r.segment == "N3"]
+        assert n301 and all(r.loop == "N1" for r in n301)
 
 
 # --------------------------------------------------------------------------
