@@ -20,7 +20,7 @@ _RESULT_RANK = {"FAIL": 0, "WARNING": 1, "PASS": 2}
 class SpecTrend:
     """Trend for one spec file across its recent top-level runs."""
 
-    spec: str  # basename
+    spec: str  # file name, plus the partner delta when one was applied
     runs: list[dict]  # chronological (oldest → newest)
 
     @property
@@ -61,6 +61,20 @@ class Trends:
         return self.total_runs == 0
 
 
+def _spec_label(run: dict) -> str:
+    """How a run is grouped and shown in the trends table.
+
+    Runs group by file name, not path: the UI's uploads land in a fresh
+    temp directory every time, so the path is not stable enough to group
+    on. The partner delta belongs in that name — one base spec validated
+    under two partners is two different checks, and pooling them averages
+    a failing partner into a passing one until neither is visible.
+    """
+    spec = Path(run["spec_file"]).name
+    partner = run.get("partner_file")
+    return f"{spec} + {Path(partner).name}" if partner else spec
+
+
 def compute_trends(history: RunHistory, limit: int = 200) -> Trends:
     """Aggregate recent history into per-spec pass-rate + top root causes."""
     runs = history.recent_runs(limit=limit)
@@ -70,7 +84,7 @@ def compute_trends(history: RunHistory, limit: int = 200) -> Trends:
 
     by_spec: dict[str, list[dict]] = {}
     for run in top_level:
-        by_spec.setdefault(Path(run["spec_file"]).name, []).append(run)
+        by_spec.setdefault(_spec_label(run), []).append(run)
 
     specs: list[SpecTrend] = []
     for name, spec_runs in by_spec.items():

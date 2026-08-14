@@ -1047,9 +1047,11 @@ def _parse_terse(
                     profile.facts_detected += 1
                     profile.facts_confident += 1
                     index_usage[seg_id] = _T_REQ_USAGE.get(usage, "used")
-                    if loop and loop != seg_id:
-                        index_loop[seg_id] = loop
-                    elif loop:
+                    # A segment named as its own loop is that loop's
+                    # trigger, and records the loop id like any member —
+                    # the other two families do the same, and the overlay
+                    # is what decides trigger-vs-member from id == loop.
+                    if loop:
                         index_loop[seg_id] = loop
             continue
 

@@ -21,6 +21,7 @@ dict shape and return ``CanonicalOutput`` with the right ``typed`` flag.
 
 from __future__ import annotations
 
+import codecs
 import json
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -32,17 +33,57 @@ class OutputLoadError(Exception):
     """Raised when the output file cannot be loaded into the canonical model."""
 
 
+#: Byte-order marks and the encoding each one announces. UTF-32's BOMs
+#: begin with UTF-16's, so the wider pair has to be tested first.
+_BOM_ENCODINGS = (
+    (codecs.BOM_UTF32_LE, "utf-32-le"),
+    (codecs.BOM_UTF32_BE, "utf-32-be"),
+    (codecs.BOM_UTF8, "utf-8"),
+    (codecs.BOM_UTF16_LE, "utf-16-le"),
+    (codecs.BOM_UTF16_BE, "utf-16-be"),
+)
+
+
+def _readings(data: bytes) -> Iterator[str]:
+    """Every way this document might plausibly be read as text.
+
+    A guard that scans raw bytes only sees the encoding it assumed. In
+    UTF-16 ``<!DOCTYPE`` is ``<\\x00!\\x00D\\x00…``, which contains the
+    literal substring nowhere, so a byte scan waves the declaration
+    through and ElementTree — which honors the BOM — expands the
+    entities anyway. Yielding each candidate reading and rejecting if
+    *any* of them declares a DOCTYPE keeps the guard ahead of the parser
+    without taking on a dependency. Over-rejecting is the safe side: EDI
+    and IDoc XML never carries a DOCTYPE at all.
+    """
+    for bom, encoding in _BOM_ENCODINGS:
+        if data.startswith(bom):
+            yield data[len(bom):].decode(encoding, errors="replace")
+            break
+    else:
+        # No BOM: XML requires an ASCII-compatible encoding here, and
+        # latin-1 maps every byte without raising, so the declaration and
+        # any DOCTYPE survive intact.
+        yield data.decode("latin-1", errors="replace")
+    # A BOM-less UTF-16 document is malformed per the XML spec, but read
+    # it anyway rather than trust an attacker to be well-formed.
+    for encoding in ("utf-16-le", "utf-16-be"):
+        yield data.decode(encoding, errors="replace")
+
+
 def parse_xml_safely(path: Path) -> "ET.Element":
     """Parse an XML file, refusing a DOCTYPE.
 
     ElementTree does not resolve *external* entities (no XXE), but it does
     expand *internal* ones, so a DTD entity bomb could amplify memory/CPU.
     IDoc/EDI XML never needs a DOCTYPE, so any is rejected outright — a
-    dependency-free block on entity-expansion attacks. Raises
+    dependency-free block on entity-expansion attacks. The check runs over
+    every plausible decoding of the bytes (see :func:`_readings`), because
+    a scan of the raw bytes alone misses a UTF-16 declaration. Raises
     :class:`OutputLoadError` on a DOCTYPE or malformed XML.
     """
     data = path.read_bytes()
-    if b"<!DOCTYPE" in data.upper():
+    if any("<!DOCTYPE" in text.upper() for text in _readings(data)):
         raise OutputLoadError(f"{path}: XML DOCTYPE declarations are not allowed")
     try:
         return ET.fromstring(data)

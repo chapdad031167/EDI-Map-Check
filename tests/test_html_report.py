@@ -132,6 +132,23 @@ class TestTrends:
         # top root causes come from the defective run
         assert dict(trends.top_categories)["missing_output"] >= 1
 
+    def test_partner_runs_group_separately(self, examples_dir, tmp_path):
+        """One base spec under two deltas is two checks — pooling them
+        averages a failing partner into a passing one until neither shows."""
+        db = tmp_path / "h.db"
+        with RunHistory(db) as h:
+            h.record(_run(examples_dir, "po_baseline.json"))
+            h.record(
+                _run(examples_dir, "po_baseline_defects.json"),
+                partner_file=str(examples_dir / "specs" / "partner_acme_delta.xlsx"),
+            )
+        with RunHistory(db) as h:
+            trends = compute_trends(h)
+        labels = {s.spec for s in trends.specs}
+        assert trends.distinct_specs == 2
+        assert "850_reference_spec.xlsx" in labels
+        assert "850_reference_spec.xlsx + partner_acme_delta.xlsx" in labels
+
     def test_series_oldest_to_newest(self, examples_dir, tmp_path):
         db = tmp_path / "h.db"
         self._seed(db, examples_dir)

@@ -59,6 +59,19 @@ class TestBaselineKey:
     def test_partner_is_part_of_the_key(self):
         assert baseline_key("a", "b", "c") != baseline_key("a", "b", "c", "acme")
 
+    def test_a_pipe_in_a_path_cannot_forge_the_separator(self):
+        """'|' is legal in a POSIX filename; unescaped it shifts the
+        boundary and hands one validation another's baseline."""
+        assert baseline_key("a|b", "c.edi", "d.json") != baseline_key(
+            "a", "b|c.edi", "d.json"
+        )
+
+    def test_ordinary_paths_keep_their_existing_key(self):
+        """Escaping must not orphan baselines already blessed."""
+        assert baseline_key("spec.xlsx", "s.edi", "o.json") == (
+            "spec.xlsx|s.edi|o.json"
+        )
+
 
 # ---------------------------------------------------------------------------
 # diff classifier (pure, hand-built snapshots)
@@ -76,6 +89,34 @@ class TestDiffClassifier:
         curr = {"": [_f("PASS", row_id="M-002"),
                      _f("FAIL", row_id="M-001", message="now worded differently")]}
         assert diff_snapshots(base, curr) == []
+
+    def test_file_level_findings_do_not_collapse_into_one(self):
+        """Envelope and truncation findings carry no row id, target or
+        source ref, so they all share a location. Keyed on that alone
+        they overwrote each other and only the last survived the diff."""
+        def envelope(status, message):
+            return _f(status, message=message)
+
+        base = {"": [envelope("PASS", "ISA13/IEA02 match"),
+                     envelope("PASS", "GS06/GE02 match"),
+                     envelope("PASS", "no truncation")]}
+        curr = {"": [envelope("PASS", "ISA13/IEA02 match"),
+                     envelope("FAIL", "GS06/GE02 MISMATCH"),
+                     envelope("PASS", "no truncation")]}
+        changes = diff_snapshots(base, curr)
+        assert [c.kind for c in changes] == [CHANGED]
+        assert changes[0].regression is True
+
+    def test_file_level_findings_are_named_individually(self):
+        base = {"": [_f("PASS"), _f("PASS")]}
+        curr = {"": [_f("PASS"), _f("FAIL")]}
+        changes = diff_snapshots(base, curr)
+        assert changes[0].where == "file-level #2"
+
+    def test_unchanged_file_level_findings_stay_quiet(self):
+        snap = {"": [_f("PASS", message="a"), _f("PASS", message="b"),
+                     _f("FAIL", message="c")]}
+        assert diff_snapshots(snap, snap) == []
 
     def test_new_fail_is_a_regression(self):
         base = {"": [_f("PASS", row_id="M-001")]}
