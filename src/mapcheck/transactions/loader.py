@@ -287,6 +287,26 @@ def _parse_recon(node: Any, index: int, ctx: _Ctx) -> ReconRule | None:
     )
 
 
+def _parse_qualifier_codes(
+    node: dict, path: str, ctx: _Ctx
+) -> tuple[str | None, tuple[str, ...]]:
+    """Parse the ``qualifier`` / ``qualifiers`` pair (Design 018).
+
+    Returns ``(qualifier, qualifiers)``; the two are mutually exclusive.
+    """
+    qualifier = ctx.str_at(node, path, "qualifier", required=False)
+    raw = node.get("qualifiers")
+    qualifiers: tuple[str, ...] = ()
+    if raw is not None:
+        if not isinstance(raw, list) or not all(isinstance(c, (str, int)) for c in raw) or not raw:
+            ctx.err(f"{path}.qualifiers", "expected a non-empty list of qualifier codes")
+        else:
+            qualifiers = tuple(str(c) for c in raw)
+    if qualifier is not None and qualifiers:
+        ctx.err(path, "set 'qualifier' or 'qualifiers', not both")
+    return qualifier, qualifiers
+
+
 def _parse_required(node: Any, index: int, ctx: _Ctx) -> RequiredElementDef | None:
     path = f"required_elements[{index}]"
     if not isinstance(node, dict):
@@ -307,14 +327,17 @@ def _parse_required(node: Any, index: int, ctx: _Ctx) -> RequiredElementDef | No
     if qualifier_element is None or qualifier_element < 1:
         ctx.err(f"{path}.qualifier_element", "expected a 1-based element position")
         qualifier_element = 1
+    qualifier, qualifiers = _parse_qualifier_codes(node, path, ctx)
     return RequiredElementDef(
         segment=segment.upper(),
         element=element,
         name=ctx.str_at(node, path, "name", required=False) or "",
         when_present=when_present,
         when_name=ctx.str_at(node, path, "when_name", required=False) or "",
-        qualifier=ctx.str_at(node, path, "qualifier", required=False),
+        qualifier=qualifier,
+        qualifiers=qualifiers,
         qualifier_element=qualifier_element,
+        loop=ctx.str_at(node, path, "loop", required=False) or "",
     )
 
 
@@ -358,15 +381,17 @@ def _parse_required_segment(node: Any, index: int, ctx: _Ctx) -> RequiredSegment
     segment = ctx.str_at(node, path, "segment")
     if not segment:
         return None
-    qualifier = ctx.str_at(node, path, "qualifier", required=False)
     qualifier_element = ctx.int_at(node, path, "qualifier_element", default=1)
     if qualifier_element is None or qualifier_element < 1:
         ctx.err(f"{path}.qualifier_element", "expected a 1-based element position")
         qualifier_element = 1
+    qualifier, qualifiers = _parse_qualifier_codes(node, path, ctx)
     return RequiredSegmentDef(
         segment=segment.upper(),
         qualifier=qualifier,
+        qualifiers=qualifiers,
         qualifier_element=qualifier_element,
+        loop=ctx.str_at(node, path, "loop", required=False) or "",
         name=ctx.str_at(node, path, "name", required=False) or "",
         origin=ctx.str_at(node, path, "origin", required=False) or "",
     )

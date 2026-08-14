@@ -87,15 +87,17 @@ the two enforcement holes above are covered by regression tests
 (`TestQualifierScopedEnforcement` — the truth table as tests, plus the
 `REF*IA~` empty-value case).
 
-Still named, still honest:
+Still named, still honest *(both closed by Design 018)*:
 
 - **Loop-scoped placement.** "N3 required *within the N1[ST] loop*"
   enforces as global presence; a file with N3 in the wrong loop passes.
   Same class of work (a loop-context filter on presence rules); waiting
-  for a real guide to demand it.
+  for a real guide to demand it. *(Closed: presence rules gained a
+  ``loop`` scope.)*
 - **Multi-code qualifiers.** A REF block allowing {IA, DP} still emits
   an unqualified requirement plus a review note — picking one would be
-  guessing.
+  guessing. *(Closed: presence rules gained a ``qualifiers`` code set,
+  "a REF whose REF01 ∈ {IA, DP}".)*
 
 ## Testing
 

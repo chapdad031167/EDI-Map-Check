@@ -143,6 +143,12 @@ download. After every recorded run, the Validate page automatically shows
 the **delta against the blessed baseline** — new failures first — or
 offers to bless the run when no baseline exists yet.
 
+An optional **partner rules overlay** (`.yaml` from `import-guide --overlay`)
+can be uploaded alongside the three files; its presence rules are enforced
+on top of the base standard for the run, and any rule the overlay could not
+express is surfaced as a caption — the same `--partner-rules` behavior the
+CLI has, without a terminal.
+
 ### Run it as an app (no terminal)
 
 For non-CLI users, run the whole thing as a web app in a container — one
@@ -814,11 +820,15 @@ overlay is applied — regression tests pin both halves, plus the
 truth-table cases (a UP pair in either slot passes; a filled segment
 with no UP fails; `REF*IA` with an empty REF02 fails).
 
-Still named honestly, in each overlay's `review` list where relevant:
-**loop-scoped placement** ("N3 required *within the N1[ST] loop*"
-enforces as global presence) and **multi-code qualifiers** (a REF block
-allowing {IA, DP} emits an unqualified requirement plus a review note —
-picking one would be guessing).
+Two shapes Design 015 left open are closed by **Design 018**:
+**loop-scoped placement** — a rule can be scoped to a loop context
+(`PER within the N1 loop`), so a heading PER no longer satisfies a rule
+the partner meant about the ship-to party; and **multi-code
+qualifiers** — a guide block listing several allowed qualifier codes
+emits a code *set* (`a REF whose REF01 ∈ {IA, DP}`) rather than an
+unqualified requirement. The one residual, hand-editable in the overlay
+YAML: a loop member scoped to a *specific qualified* loop occurrence
+(`PER within N1[ST]`), which the guides do not state.
 
 ### Backlog
 
