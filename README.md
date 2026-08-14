@@ -306,20 +306,26 @@ mapcheck import-guide acme_850.pdf --transaction 850 --partner acme_pharma \
 # Parsed: 12 segment(s), 40 element(s) — parse coverage 1.00 (64/64 facts)
 ```
 
-- **Two layout families, stated honestly.** The **templated** family
-  (SpecBuilder-style: `Pos:/Max:` headers, `Element Summary` tables,
-  `Must use`/`Used` wording) and the **tabular** family (Gentran /
-  EDI-Notepad-style: `Segment:`/`Position:`/`Usage:` keyed headers,
-  `Data Element Summary` tables with dual Base/User attribute columns —
-  the User column overrides only when present, else the base X12
-  requiredness applies). The family is detected automatically and named
-  in the output; tabular guides also get their front index table
-  **cross-checked** against the detail pages, so editing defects in the
-  partner's own document surface at import, not mid-mapping. A guide
-  matching neither family is rejected naming what each was missing —
-  never half-parsed. Scanned/image PDFs and free-form Word documents are
-  out of scope. `.txt` exports work with no extra dependency; PDF
-  extraction needs `pip install "edi-mapcheck[guides]"` (pdfplumber).
+- **Three layout families, stated honestly**, detected automatically and
+  named in the output:
+  - **templated** (SpecBuilder-style: `Pos:/Max:` headers, `Element
+    Summary` tables, `Must use`/`Used` wording);
+  - **tabular** (Gentran / EDI-Notepad-style: `Segment:`/`Position:`/
+    `Usage:` keyed headers, `Data Element Summary` tables with dual
+    Base/User attribute columns — the User column overrides only when
+    present, else the base X12 requiredness applies), whose front index
+    table is **cross-checked** against the detail pages so editing
+    defects in the partner's own document surface at import;
+  - **terse** (the "EDI Specifications User Guide" layout: `Segment X –
+    name` headers, a `Data Segment Sequence` index that supplies segment
+    usage and loop, and `ID ELEMENT NAME` tables with a single
+    requiredness column and freeform quoted code lists).
+
+  A guide matching no family is rejected naming what each was missing —
+  never half-parsed; one matching more than one is a defined error, not
+  a coin flip. Scanned/image PDFs and free-form Word documents are out
+  of scope. `.txt` exports work with no extra dependency; PDF extraction
+  needs `pip install "edi-mapcheck[guides]"` (pdfplumber).
 - **Flag-never-guess.** A line that looks like data but does not match
   the family grammar lands in the profile's `review` list with page
   context — never in the data. The **parse coverage** metric

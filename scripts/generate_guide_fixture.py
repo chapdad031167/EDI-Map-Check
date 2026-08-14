@@ -25,6 +25,7 @@ FIXTURES = REPO_ROOT / "tests" / "fixtures" / "guides"
 PAIRS = [
     ("acme_pharma_850_guide.txt", "acme_pharma_850_guide.pdf"),
     ("bluewater_medical_850_guide.txt", "bluewater_medical_850_guide.pdf"),
+    ("northstar_components_850_guide.txt", "northstar_components_850_guide.pdf"),
 ]
 
 
