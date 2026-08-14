@@ -350,7 +350,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
     if not args.no_history:
         with RunHistory(args.db) as history:
-            run_id = history.record(result)
+            run_id = history.record(result, partner_file=args.partner)
         print(f"\nRun #{run_id} recorded in {args.db}")
 
     if args.export_xlsx:
@@ -378,7 +378,7 @@ def _run_interchange(
 
     if not args.no_history:
         with RunHistory(args.db) as history:
-            run_id = history.record_interchange(result)
+            run_id = history.record_interchange(result, partner_file=args.partner)
         print(f"\nInterchange run #{run_id} ({len(result.documents)} documents) recorded in {args.db}")
 
     if args.export_xlsx:
@@ -694,7 +694,10 @@ def _cmd_bless(args: argparse.Namespace) -> int:
             print(f"mapcheck: no run #{args.run_id} in {args.db}", file=sys.stderr)
             return EXIT_USAGE
         key = args.label or baseline_key(
-            run["spec_file"], run["source_file"], run["output_file"]
+            run["spec_file"],
+            run["source_file"],
+            run["output_file"],
+            run["partner_file"],
         )
         history.bless(args.run_id, key, label=args.label)
     print(f"Run #{args.run_id} blessed as the baseline for '{key}'.")
@@ -739,7 +742,9 @@ def _cmd_regress(args: argparse.Namespace) -> int:
     key = args.label or baseline_key(args.spec, args.source, args.output, args.partner)
     with RunHistory(args.db) as history:
         current_id = (
-            history.record_interchange(result) if interchange else history.record(result)
+            history.record_interchange(result, partner_file=args.partner)
+            if interchange
+            else history.record(result, partner_file=args.partner)
         )
         baseline = history.baseline_for(key)
         if baseline is None:
@@ -806,10 +811,16 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
 def _cmd_scrub(args: argparse.Namespace) -> int:
     from mapcheck.scrub import ProfileError, load_profile
-    from mapcheck.scrub.scrubber import scrub_file
+    from mapcheck.scrub.scrubber import scrub_file, scrubbed_path
 
     if not Path(args.input).exists():
         print(f"mapcheck: input file not found: {args.input}", file=sys.stderr)
+        return EXIT_USAGE
+    # Guard the derived default too — a scrubbed file is the copy that gets
+    # shared, so silently replacing one is how the unmasked original travels.
+    out_target = scrubbed_path(args.input, args.output)
+    if out_target.exists():
+        print(f"mapcheck: {out_target} already exists, not overwriting", file=sys.stderr)
         return EXIT_USAGE
     try:
         profile = load_profile(args.profile)

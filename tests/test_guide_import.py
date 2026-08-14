@@ -21,7 +21,11 @@ from mapcheck.guides.overlay import (
     emit_partner_rules,
 )
 from mapcheck.guides.parser import GuideParseError, parse_guide
-from mapcheck.guides.profile import GuideProfile, GuideProfileError
+from mapcheck.guides.profile import (
+    GuideProfile,
+    GuideProfileError,
+    element_position,
+)
 from mapcheck.output.idoc import default_output_registry
 from mapcheck.spec.draft import (
     Crosswalk,
@@ -352,6 +356,58 @@ class TestFlagNeverGuess:
         profile = parse_guide(guide, transaction="850", partner="x")
         assert profile.segment("CUR").usage == ""
         assert any("Sometimes" in note for note in profile.review)
+
+    def test_foreign_element_row_is_review_not_data(self, tmp_path: Path):
+        """A row naming another segment matches the row grammar but
+        contradicts the block it sits in — a page break or a mangled
+        column, never a fact about the open segment."""
+        guide = tmp_path / "g.txt"
+        guide.write_text(
+            _guide_text(
+                "\nN1 Name Pos: 310 Max: 1\n"
+                "User Option (Usage): Must use\n\n"
+                "Element Summary:\n"
+                "N101 98 Entity Identifier Code M ID 2/3 Must use\n"
+                "REF02 127 Reference Identification M AN 1/30 Must use\n"
+            ),
+            encoding="utf-8",
+        )
+        profile = parse_guide(guide, transaction="850", partner="x")
+        n1 = profile.segment("N1")
+        assert n1.element("N101") is not None
+        assert n1.element("REF02") is None
+        assert any("REF02" in note for note in profile.review)
+        assert profile.parse_coverage < 1.0
+
+    def test_foreign_element_row_does_not_crash_the_overlay(self, tmp_path: Path):
+        """Numbering an element means stripping the segment id off its
+        ref; a foreign ref does not survive that, so it must never reach
+        the arithmetic. Reported as review, and no rule is emitted."""
+        guide = tmp_path / "g.txt"
+        guide.write_text(
+            _guide_text(
+                "\nN1 Name Pos: 310 Max: 1\n"
+                "User Option (Usage): Must use\n\n"
+                "Element Summary:\n"
+                "N101 98 Entity Identifier Code M ID 2/3 Must use\n"
+                "REF02 127 Reference Identification M AN 1/30 Must use\n"
+            ),
+            encoding="utf-8",
+        )
+        profile = parse_guide(guide, transaction="850", partner="x")
+        # the crash was reachable through a saved profile too, so go via one
+        saved = tmp_path / "p.yaml"
+        profile.save(saved)
+        reloaded = GuideProfile.load(saved)
+
+        rules = emit_partner_rules(reloaded)
+        assert all(el.segment != "REF" for el in rules.required_elements)
+        assert reloaded.element_usage()  # the lookup table still builds
+
+    def test_element_position_rejects_a_foreign_ref(self):
+        assert element_position("BEG03", "BEG") == 3
+        assert element_position("REF02", "N1") is None
+        assert element_position("BEG", "BEG") is None
 
     def test_orphan_code_row_is_review(self, tmp_path: Path):
         guide = tmp_path / "g.txt"
@@ -1038,6 +1094,122 @@ class TestQualifierScopedEnforcement:
         findings = _presence_findings(self._base(), tmp_path)
         assert not any("REF02" in f.message for f in findings)
         assert any("required segment REF*IA" in f.message for f in findings)
+
+
+class TestUnquotedQualifierCodes:
+    """YAML reads a bare EDI code as a number, and the number is not the
+    code: 002 arrives as 2, and 010 is octal so it arrives as 8. Either
+    silently stops matching the segment it was written for, so both
+    loaders reject the bare scalar rather than coerce it."""
+
+    def test_yaml_really_does_mangle_bare_codes(self):
+        # the premise, pinned: if this ever stops being true the strict
+        # loaders below are guarding nothing.
+        assert yaml.safe_load("q: 002")["q"] == 2
+        assert yaml.safe_load("q: 010")["q"] == 8
+
+    def _overlay(self, tmp_path: Path, body: str) -> Path:
+        path = tmp_path / "ov.yaml"
+        path.write_text(
+            "partner: acme\ntransaction: '850'\n" + body, encoding="utf-8"
+        )
+        return path
+
+    def test_overlay_rejects_bare_qualifier(self, tmp_path: Path):
+        path = self._overlay(
+            tmp_path,
+            "required_segments:\n- segment: DTM\n  qualifier: 002\n",
+        )
+        with pytest.raises(PartnerRulesError) as exc:
+            PartnerRules.load(path)
+        assert "quoted code" in str(exc.value) and "002" in str(exc.value)
+
+    def test_overlay_rejects_bare_qualifiers_entry(self, tmp_path: Path):
+        path = self._overlay(
+            tmp_path,
+            "required_elements:\n- segment: DTM\n  element: 2\n"
+            "  qualifiers: ['001', 002]\n",
+        )
+        with pytest.raises(PartnerRulesError) as exc:
+            PartnerRules.load(path)
+        assert "quoted code" in str(exc.value)
+
+    def test_overlay_rejects_bare_pair_code(self, tmp_path: Path):
+        path = self._overlay(
+            tmp_path, "required_pairs:\n- segment: PO1\n  code: 010\n"
+        )
+        with pytest.raises(PartnerRulesError) as exc:
+            PartnerRules.load(path)
+        assert "quoted code" in str(exc.value)
+
+    def test_overlay_accepts_the_quoted_form(self, tmp_path: Path):
+        path = self._overlay(
+            tmp_path,
+            "required_segments:\n- segment: DTM\n  qualifier: '002'\n"
+            "required_pairs:\n- segment: PO1\n  code: '010'\n",
+        )
+        rules = PartnerRules.load(path)
+        assert rules.required_segments[0].qualifier == "002"
+        assert rules.required_pairs[0].code == "010"
+
+    def test_emitted_overlays_survive_their_own_round_trip(self, tmp_path: Path):
+        """import-guide writes codes quoted, so its output must reload."""
+        rules = emit_partner_rules(_profile())
+        path = tmp_path / "ov.yaml"
+        rules.save(path)
+        assert any(
+            r.qualifier == "002" for r in PartnerRules.load(path).required_segments
+        )
+
+    def _definition(self, **extra) -> dict:
+        return {
+            "transaction": {"set": "850", "name": "PO", "functional_group": "PO"},
+            "structure": [{"area": "heading", "segments": ["BEG"]}],
+            **extra,
+        }
+
+    def test_definition_rejects_bare_qualifier(self):
+        from mapcheck.transactions.loader import DefinitionError, parse_definition
+
+        data = self._definition(
+            required_elements=[{"segment": "DTM", "element": 2, "qualifier": 2}]
+        )
+        with pytest.raises(DefinitionError) as exc:
+            parse_definition(data, source="inline")
+        assert "quoted code" in str(exc.value)
+
+    def test_definition_rejects_bare_pair_code(self):
+        from mapcheck.transactions.loader import DefinitionError, parse_definition
+
+        with pytest.raises(DefinitionError) as exc:
+            parse_definition(
+                self._definition(required_pairs=[{"segment": "PO1", "code": 8}]),
+                source="inline",
+            )
+        assert "quoted code" in str(exc.value)
+
+    def test_every_bundled_definition_still_loads(self):
+        """The strict rule must not have broken the shipped definitions."""
+        registry = default_registry
+        assert registry.get("850").required_elements is not None
+
+    def test_loop_qualifier_stays_an_element_position(self):
+        """`loops: {qualifier: 1}` is a position, not a code — still an int."""
+        from mapcheck.transactions.loader import parse_definition
+
+        definition = parse_definition(
+            self._definition(
+                structure=[
+                    {
+                        "area": "heading",
+                        "segments": ["BEG"],
+                        "loops": [{"id": "N1", "trigger": "N1", "qualifier": 1}],
+                    }
+                ]
+            ),
+            source="inline",
+        )
+        assert definition.areas[0].loops[0].qualifier == 1
 
 
 class TestQualifierRuleLoading:
