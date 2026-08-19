@@ -12,6 +12,7 @@ Subcommands:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -28,6 +29,18 @@ from mapcheck.spec.template import create_template
 from mapcheck.x12.parser import X12ParseError
 
 DEFAULT_DB = "mapcheck_history.db"
+
+
+def _default_db() -> str:
+    """Where run history goes when ``--db`` is not given.
+
+    ``MAPCHECK_HISTORY_DB`` overrides it, the same variable the UI has
+    always honored (Design 016). Without this the two halves of a
+    container disagreed: the UI wrote where the variable pointed and
+    the CLI wrote beside the working directory, so ``mapcheck history``
+    showed none of the runs the UI had just recorded.
+    """
+    return os.environ.get("MAPCHECK_HISTORY_DB") or DEFAULT_DB
 
 #: Exit code for input/usage problems (1 is reserved for FAIL results).
 EXIT_USAGE = 2
@@ -91,11 +104,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_val.add_argument(
         "--db",
-        default=DEFAULT_DB,
-        help=f"SQLite history database (default: ./{DEFAULT_DB})",
+        default=_default_db(),
+        help=f"SQLite history database (default: {_default_db()})",
     )
     p_val.add_argument(
-        "--no-history", action="store_true", help="do not record this run in the history db"
+        "--no-history", action="store_true",
+        help="do not record this run in the history db (a recorded run stores expected/actual values verbatim, unmasked)",
     )
     p_val.add_argument(
         "-v", "--verbose", action="store_true", help="include PASS rows in the report"
@@ -196,13 +210,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     p_hist = sub.add_parser("history", help="list recent validation runs")
-    p_hist.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
+    p_hist.add_argument("--db", default=_default_db(), help="SQLite history database")
     p_hist.add_argument("--limit", type=int, default=20, help="number of runs to show")
 
     p_report = sub.add_parser(
         "report", help="history trends (pass-rate per spec, top root causes)"
     )
-    p_report.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
+    p_report.add_argument("--db", default=_default_db(), help="SQLite history database")
     p_report.add_argument("--html", metavar="PATH", help="write a self-contained HTML dashboard")
     p_report.add_argument(
         "--limit", type=int, default=200, help="how many recent runs to aggregate"
@@ -217,7 +231,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="name this baseline instead of auto-keying by the run's paths "
         "(use when paths differ across machines, or for partner baselines)",
     )
-    p_bless.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
+    p_bless.add_argument("--db", default=_default_db(), help="SQLite history database")
 
     p_reg = sub.add_parser(
         "regress", help="validate now and report only the delta from the blessed baseline"
@@ -235,7 +249,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_reg.add_argument(
         "--label", help="match the baseline by this name instead of the input paths"
     )
-    p_reg.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
+    p_reg.add_argument("--db", default=_default_db(), help="SQLite history database")
     p_reg.add_argument("--no-color", action="store_true", help="disable ANSI colors")
 
     p_batch = sub.add_parser(
@@ -249,9 +263,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_batch.add_argument(
         "--strict", action="store_true", help="promote any WARNING to a build failure"
     )
-    p_batch.add_argument("--db", default=DEFAULT_DB, help="SQLite history database")
+    p_batch.add_argument("--db", default=_default_db(), help="SQLite history database")
     p_batch.add_argument(
-        "--no-history", action="store_true", help="do not record these runs in the history db"
+        "--no-history", action="store_true",
+        help="do not record these runs in the history db (a recorded run stores expected/actual values verbatim, unmasked)",
     )
     p_batch.add_argument("--no-color", action="store_true", help="disable ANSI colors")
 

@@ -13,6 +13,7 @@ regression is a pure history-layer comparison; the engine is untouched.
 from __future__ import annotations
 
 import os
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,6 +29,19 @@ DOC_REMOVED = "DOC REMOVED"
 _BAD_STATUSES = {"FAIL", "WARNING"}
 
 
+def _escape_part(part: str) -> str:
+    """Percent-escape the separator so a path cannot forge one.
+
+    ``|`` is legal in a POSIX filename, and a raw join lets one path's
+    pipe pass for the boundary between two: ``("a|b", "c")`` and
+    ``("a", "b|c")`` produce the same key, which would hand one
+    validation another's baseline. Escaping ``%`` first keeps the
+    mapping reversible. Only a path containing ``%`` or ``|`` changes
+    shape, so keys blessed for ordinary paths keep matching.
+    """
+    return part.replace("%", "%25").replace("|", "%7C")
+
+
 def baseline_key(spec: str, source: str, output: str, partner: str | None = None) -> str:
     """The normalized ``spec|source|output[|partner]`` that identifies which
     validation two runs share, so a re-run of the same inputs finds its
@@ -35,16 +49,47 @@ def baseline_key(spec: str, source: str, output: str, partner: str | None = None
     parts = [os.path.normpath(spec), os.path.normpath(source), os.path.normpath(output)]
     if partner:
         parts.append(os.path.normpath(partner))
-    return "|".join(parts)
+    return "|".join(_escape_part(p) for p in parts)
 
 
-def _identity(document_key: str, finding: dict[str, Any]) -> tuple[str, str, str]:
-    """Stable location of a check: (document, rule row, target or source)."""
+def _identity(
+    document_key: str, finding: dict[str, Any], occurrence: int = 0
+) -> tuple[str, str, str, int]:
+    """Stable location of a check: (document, rule row, target or source).
+
+    ``occurrence`` separates findings that share all three. File-level
+    findings — envelope reconciliation, truncation — carry no row id, no
+    target and no source ref, so every one of them lands on the same
+    triple; numbering the repeats keeps them apart. It stays 0 for any
+    finding whose location is already unique, which is all of them once
+    a rule row is involved.
+    """
     return (
         document_key,
         finding.get("row_id") or "",
         finding.get("target") or finding.get("source_ref") or "",
+        occurrence,
     )
+
+
+def _by_identity(
+    document_key: str, findings: list[dict[str, Any]]
+) -> dict[tuple[str, str, str, int], dict[str, Any]]:
+    """Index findings by identity, numbering any that share a location.
+
+    Building this map by plain comprehension let a repeated location
+    overwrite itself and kept only the last, so a file-level FAIL sitting
+    beside other file-level findings never reached the diff at all.
+    Findings are stored and read back in the engine's sort order, so the
+    same check draws the same number in both runs.
+    """
+    table: dict[tuple[str, str, str, int], dict[str, Any]] = {}
+    counts: Counter[tuple[str, str, str, int]] = Counter()
+    for finding in findings:
+        base = _identity(document_key, finding)
+        table[_identity(document_key, finding, counts[base])] = finding
+        counts[base] += 1
+    return table
 
 
 def _payload(finding: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
@@ -63,7 +108,7 @@ class Change:
 
     kind: str  # NEW / RESOLVED / CHANGED / DOC ADDED / DOC REMOVED
     document_key: str
-    identity: tuple[str, str, str] | None
+    identity: tuple[str, str, str, int] | None
     baseline: dict[str, Any] | None
     current: dict[str, Any] | None
     regression: bool
@@ -74,8 +119,10 @@ class Change:
         """Human-readable location for the report."""
         if self.identity is None:
             return self.document_key or "(interchange)"
-        _, row_id, ref = self.identity
-        loc = row_id or ref or "?"
+        _, row_id, ref, occurrence = self.identity
+        # A file-level finding has no row or ref to name it by; say which
+        # one it is rather than print a bare "?" for every one of them.
+        loc = row_id or ref or f"file-level #{occurrence + 1}"
         if self.document_key:
             return f"{self.document_key} · {loc}"
         return loc
@@ -151,8 +198,8 @@ def diff_snapshots(
 
     # Finding-level diff within each shared document.
     for doc_key in sorted(baseline_docs & current_docs):
-        base_by_id = {_identity(doc_key, f): f for f in baseline[doc_key]}
-        curr_by_id = {_identity(doc_key, f): f for f in current[doc_key]}
+        base_by_id = _by_identity(doc_key, baseline[doc_key])
+        curr_by_id = _by_identity(doc_key, current[doc_key])
 
         for identity, curr in curr_by_id.items():
             base = base_by_id.get(identity)

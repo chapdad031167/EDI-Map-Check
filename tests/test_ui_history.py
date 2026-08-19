@@ -59,6 +59,86 @@ class TestBaselineLabel:
         monkeypatch.delenv("MAPCHECK_HISTORY_DB")
         assert app._history_db() == Path("mapcheck_history.db")
 
+    def test_cli_honors_the_same_env(self, monkeypatch):
+        """The UI and the CLI share one database or the History page shows
+        none of the runs the other half just recorded."""
+        from mapcheck.cli import _build_parser
+
+        monkeypatch.setenv("MAPCHECK_HISTORY_DB", "/data/mapcheck_history.db")
+        args = _build_parser().parse_args(["history"])
+        assert args.db == "/data/mapcheck_history.db"
+        assert str(app._history_db()) == args.db
+        monkeypatch.delenv("MAPCHECK_HISTORY_DB")
+        assert _build_parser().parse_args(["history"]).db == "mapcheck_history.db"
+
+
+class TestUploadHandling:
+    """Uploads are unscrubbed partner data living in server temp dirs."""
+
+    class _Upload:
+        def __init__(self, name: str, data: bytes = b"ISA*00*~") -> None:
+            self.name = name
+            self._data = data
+
+        def getvalue(self) -> bytes:
+            return self._data
+
+    @pytest.fixture(autouse=True)
+    def _clean_state(self):
+        import streamlit as st
+
+        st.session_state.pop(app._UPLOAD_DIRS, None)
+        yield
+        st.session_state.pop(app._UPLOAD_DIRS, None)
+
+    @pytest.mark.parametrize("name", [".", "..", ""])
+    def test_directory_like_names_do_not_crash_the_save(self, name):
+        """'.' and '..' name a directory, so the write landed on the temp
+        directory itself and raised IsADirectoryError."""
+        path = Path(app._save_upload_named(self._Upload(name)))
+        assert path.is_file()
+        assert path.read_bytes() == b"ISA*00*~"
+
+    def test_ordinary_name_is_kept(self):
+        path = Path(app._save_upload_named(self._Upload("order 850.edi")))
+        assert path.name == "order 850.edi"
+
+    def test_a_path_in_the_name_cannot_escape_the_temp_dir(self):
+        import streamlit as st
+
+        path = Path(app._save_upload_named(self._Upload("../../etc/passwd")))
+        tracked = Path(st.session_state[app._UPLOAD_DIRS][-1])
+        assert path.name == "passwd"
+        assert path.parent == tracked  # written inside its own temp dir
+        assert path.read_bytes() == b"ISA*00*~"
+
+    def test_each_upload_is_tracked_and_discarded(self):
+        import streamlit as st
+
+        paths = [Path(app._save_upload_named(self._Upload(f"f{i}.edi"))) for i in range(3)]
+        paths.append(Path(app._save_upload(self._Upload("out"), ".flat")))
+        assert all(p.exists() for p in paths)
+        assert len(st.session_state[app._UPLOAD_DIRS]) == 4
+
+        app._discard_saved_uploads()
+        assert not any(p.exists() for p in paths)
+        assert app._UPLOAD_DIRS not in st.session_state
+
+    def test_discarding_twice_is_harmless(self):
+        app._save_upload_named(self._Upload("f.edi"))
+        app._discard_saved_uploads()
+        app._discard_saved_uploads()  # nothing tracked; must not raise
+
+    def test_generated_name_keeps_its_suffix(self):
+        """The suffix is what drives output-format detection."""
+        assert Path(app._save_upload(self._Upload("x"), ".flat")).suffix == ".flat"
+
+    def test_messages_name_the_file_not_the_temp_path(self):
+        path = app._save_upload_named(self._Upload("order.json"))
+        message = f"{path}: not valid JSON — line 1"
+        assert app._clean_message(message) == "order.json: not valid JSON — line 1"
+        assert "/tmp" not in app._clean_message(message)
+
 
 class TestRecordAndRebuild:
     def test_stored_findings_redraw_the_live_table(self, tmp_path: Path):
@@ -118,17 +198,17 @@ class TestBlessAndRegress:
 class TestDeltaRendering:
     def _delta(self) -> RegressionDelta:
         new = Change(
-            kind="NEW", document_key="", identity=("", "M-003", ""),
+            kind="NEW", document_key="", identity=("", "M-003", "", 0),
             baseline=None, current={"status": "FAIL"},
             regression=True, detail="FAIL",
         )
         resolved = Change(
-            kind="RESOLVED", document_key="", identity=("", "M-007", ""),
+            kind="RESOLVED", document_key="", identity=("", "M-007", "", 0),
             baseline={"status": "FAIL"}, current=None,
             regression=False, detail="FAIL",
         )
         changed = Change(
-            kind="CHANGED", document_key="", identity=("", "M-009", ""),
+            kind="CHANGED", document_key="", identity=("", "M-009", "", 0),
             baseline={"status": "PASS"}, current={"status": "WARNING"},
             regression=False, detail="status: 'PASS' -> 'WARNING'",
         )

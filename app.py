@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -247,19 +248,63 @@ def baseline_label(
     return label
 
 
+#: Session-scoped list of temp directories holding uploaded files. Kept
+#: in session state, never at module level: the directories of one
+#: visitor's uploads must not be reachable from another's script run.
+_UPLOAD_DIRS = "_upload_temp_dirs"
+
+
+def _discard_saved_uploads() -> None:
+    """Delete the temp directories the previous batch of uploads went to.
+
+    An uploaded file is unscrubbed partner data — the very thing this
+    tool's scrubber exists to keep off disks it does not control. The
+    uploader re-saves on every script run, so without this each widget
+    click left another copy behind for the life of the process. Cleared
+    when the next batch replaces it, so nothing the current run still
+    needs is removed underneath it.
+    """
+    for directory in st.session_state.pop(_UPLOAD_DIRS, []):
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def _upload_dir() -> Path:
+    """A fresh temp directory for one upload, tracked for cleanup."""
+    directory = Path(tempfile.mkdtemp())
+    st.session_state.setdefault(_UPLOAD_DIRS, []).append(str(directory))
+    return directory
+
+
 def _save_upload(upload, suffix: str) -> str:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(upload.getvalue())
-        return tmp.name
+    """Save an upload under a generated name carrying ``suffix``."""
+    path = _upload_dir() / f"upload{suffix}"
+    path.write_bytes(upload.getvalue())
+    return str(path)
 
 
 def _save_upload_named(upload) -> str:
     """Save an upload keeping its original file name (in a fresh temp dir),
     so error messages and reports name the file the user recognizes."""
-    directory = Path(tempfile.mkdtemp())
-    path = directory / Path(upload.name).name
+    # "." and ".." name a directory rather than a file, and would send the
+    # write at the temp directory itself; a browser will not normally send
+    # either, so fall back rather than reject the upload.
+    name = Path(upload.name).name
+    path = _upload_dir() / (name if name not in ("", ".", "..") else "upload")
     path.write_bytes(upload.getvalue())
     return str(path)
+
+
+def _clean_message(text: str) -> str:
+    """Name uploaded files the way the user does, not the way disk does.
+
+    Uploads live in a generated temp directory, so an error carrying the
+    path shows the server's scratch layout instead of the file the user
+    chose. Every upload sits in a tracked directory, so dropping those
+    prefixes leaves the name the user recognizes.
+    """
+    for directory in st.session_state.get(_UPLOAD_DIRS, []):
+        text = text.replace(f"{directory}{os.sep}", "")
+    return text
 
 
 def _findings_frame(result: RunResult) -> pd.DataFrame:
@@ -400,6 +445,9 @@ def _validate_page() -> None:
                 "enforces the partner's presence rules on top of the base standard",
                 type=["yaml", "yml"],
             )
+            # this block re-runs on every interaction, so clear the copies
+            # the last one left before writing a fresh set
+            _discard_saved_uploads()
             # named saves: history rows and baseline labels carry the
             # file names the user recognizes, not temp gibberish
             if spec_upload:
@@ -446,7 +494,8 @@ def _validate_page() -> None:
                     partner_rules = PartnerRules.load(rules_path)
                     rules_review = list(partner_rules.review)
                 except PartnerRulesError as exc:
-                    st.error(f"Partner rules did not load:\n\n```\n{exc}\n```")
+                    detail = _clean_message(str(exc))
+                    st.error(f"Partner rules did not load:\n\n```\n{detail}\n```")
                     return
             merged_spec = None
             merge_notes: list[str] = []
@@ -466,7 +515,8 @@ def _validate_page() -> None:
                     partner_rules=partner_rules,
                 )
         except (SpecLoadError, X12ParseError, OutputLoadError) as exc:
-            st.error(f"Validation did not run:\n\n```\n{exc}\n```")
+            detail = _clean_message(str(exc))
+            st.error(f"Validation did not run:\n\n```\n{detail}\n```")
             return
         recorded_id = None
         if not skip_history:
@@ -615,6 +665,7 @@ def _draft_page() -> None:
         from mapcheck.guides.profile import GuideProfile, GuideProfileError
         from mapcheck.spec.draft import CrosswalkError, DraftSpecError
 
+        _discard_saved_uploads()
         definition = default_registry.get(tx_code)
         target_def = default_output_registry.get(target_format)
         short_target = target_format.rsplit("-", 1)[-1]
@@ -656,7 +707,7 @@ def _draft_page() -> None:
                     guide,
                 )
         except (CrosswalkError, DraftSpecError, GuideParseError, GuideProfileError) as exc:
-            st.error(f"Draft did not run:\n\n```\n{exc}\n```")
+            st.error(f"Draft did not run:\n\n```\n{_clean_message(str(exc))}\n```")
             return
 
     if "draft" not in st.session_state:
@@ -838,6 +889,7 @@ def _import_page() -> None:
         )
 
     if st.button("Import mapping", type="primary", disabled=upload is None):
+        _discard_saved_uploads()
         meta: dict[str, str] = {}
         if tx_choice != "(from the document)":
             meta["Transaction Set"] = tx_choice
@@ -856,7 +908,7 @@ def _import_page() -> None:
                 ),
             )
         except (ImportError_, ValueError) as exc:
-            st.error(f"Import did not run:\n\n```\n{exc}\n```")
+            st.error(f"Import did not run:\n\n```\n{_clean_message(str(exc))}\n```")
             return
         stem = Path(upload.name).stem
         with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
@@ -955,6 +1007,7 @@ def _scrub_page() -> None:
     profile_upload = st.file_uploader("Custom profile (optional, .yaml)", type=["yaml", "yml"])
 
     if st.button("Scrub file", type="primary", disabled=upload is None):
+        _discard_saved_uploads()
         try:
             profile = load_profile(
                 _save_upload_named(profile_upload) if profile_upload else profile_name
@@ -968,7 +1021,7 @@ def _scrub_page() -> None:
                 report.render(),
             )
         except (ProfileError, ValueError, OSError) as exc:
-            st.error(f"Scrub did not run:\n\n```\n{exc}\n```")
+            st.error(f"Scrub did not run:\n\n```\n{_clean_message(str(exc))}\n```")
             return
 
     if "scrub" not in st.session_state:

@@ -143,6 +143,16 @@ download. After every recorded run, the Validate page automatically shows
 the **delta against the blessed baseline** — new failures first — or
 offers to bless the run when no baseline exists yet.
 
+> **What the history database holds.** A recorded run stores each finding's
+> **expected and actual values verbatim** — that is what makes a regression
+> diff possible, and it means real partner data lands in
+> `mapcheck_history.db` unmasked. The file is an ordinary unencrypted
+> SQLite database with no access control of its own, so treat it as
+> carrying whatever the validated files carried: keep it off shared disks,
+> and scrub the inputs first (`mapcheck scrub`) when that matters. Skip
+> recording entirely with `--no-history` on the CLI, or the *Don't record
+> this run* toggle in the UI.
+
 An optional **partner rules overlay** (`.yaml` from `import-guide --overlay`)
 can be uploaded alongside the three files; its presence rules are enforced
 on top of the base standard for the run, and any rule the overlay could not

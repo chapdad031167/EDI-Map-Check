@@ -111,6 +111,54 @@ class TestXmlDoctype:
         with pytest.raises(OutputLoadError):
             parse_xml_safely(p)
 
+    #: A DOCTYPE is invisible to a raw byte scan in any encoding that is
+    #: not ASCII-compatible, but ElementTree honors the BOM and expands
+    #: the entities regardless.
+    _BOMB = (
+        '<?xml version="1.0" encoding="{}"?>'
+        '<!DOCTYPE lolz [<!ENTITY a "aa">]>'
+        "<ORDERS05>&a;</ORDERS05>"
+    )
+
+    @pytest.mark.parametrize(
+        "encoding,label",
+        [
+            ("utf-16", "UTF-16"),      # codec writes the BOM
+            ("utf-16-le", "UTF-16"),   # no BOM: malformed, still refused
+            ("utf-16-be", "UTF-16"),
+            ("utf-32", "UTF-32"),
+        ],
+    )
+    def test_doctype_refused_in_wide_encodings(self, tmp_path, encoding, label):
+        p = tmp_path / "b.xml"
+        p.write_bytes(self._BOMB.format(label).encode(encoding))
+        with pytest.raises(OutputLoadError, match="DOCTYPE"):
+            parse_xml_safely(p)
+
+    def test_utf16_entity_is_not_expanded(self, tmp_path):
+        """The guard has to win before ElementTree does the expanding."""
+        p = tmp_path / "b.xml"
+        p.write_bytes(self._BOMB.format("UTF-16").encode("utf-16"))
+        try:
+            root = parse_xml_safely(p)
+        except OutputLoadError:
+            return
+        raise AssertionError(f"entity expanded to {root.text!r} instead of refusing")
+
+    # UTF-32 is absent on purpose: expat, and so ElementTree, has never
+    # read it, which is why a UTF-32 DOCTYPE is refused above for
+    # completeness rather than because it could otherwise be expanded.
+    @pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
+    def test_clean_xml_still_parses_in_every_encoding(self, tmp_path, encoding):
+        """Over-rejecting would break legitimate IDoc XML — it must not."""
+        declared = "UTF-8" if encoding.startswith("utf-8") else encoding.upper()
+        p = tmp_path / "ok.xml"
+        p.write_bytes(
+            f'<?xml version="1.0" encoding="{declared}"?>'
+            "<ORDERS05><E1EDK01>x</E1EDK01></ORDERS05>".encode(encoding)
+        )
+        assert parse_xml_safely(p).findtext("E1EDK01") == "x"
+
 
 # ---------------------------------------------------------------------------
 # M-3 — batch resilience
