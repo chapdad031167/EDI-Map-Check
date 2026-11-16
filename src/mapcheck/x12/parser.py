@@ -50,6 +50,24 @@ class X12ParseError(Exception):
     """Raised when the file cannot be read as an X12 interchange."""
 
 
+def _reject_non_ascii(path: Path) -> None:
+    """Refuse a file holding any byte outside ASCII, naming the first one.
+
+    X12 here is ASCII. This used to fall out of pyx12 opening the file as
+    ASCII; pyx12 4.0.1 opens it as latin-1 instead, which decodes every
+    byte, so a BOM or a UTF-8 name would parse into mojibake and be
+    compared as if it were data. The check is ours now, so the answer does
+    not depend on which pyx12 is installed.
+    """
+    data = path.read_bytes()
+    try:
+        data.decode("ascii")
+    except UnicodeDecodeError as exc:
+        raise X12ParseError(
+            f"{path}: file is not valid X12 (non-ASCII bytes at position {exc.start})"
+        ) from exc
+
+
 def _raw_segments(path: Path) -> list[Segment]:
     """Tokenize the file with pyx12 into :class:`Segment` values.
 
@@ -58,14 +76,11 @@ def _raw_segments(path: Path) -> list[Segment]:
     control-number agreement, and truncation, with precise messages and
     strict severity.
     """
+    _reject_non_ascii(path)
     try:
         reader = pyx12.x12file.X12Reader(str(path))
     except pyx12.errors.X12Error as exc:
         raise X12ParseError(f"{path}: {exc}") from exc
-    except UnicodeDecodeError as exc:
-        raise X12ParseError(
-            f"{path}: file is not valid X12 (non-ASCII bytes at position {exc.start})"
-        ) from exc
 
     segments: list[Segment] = []
     ele_term = "*"
@@ -87,10 +102,6 @@ def _raw_segments(path: Path) -> list[Segment]:
             )
     except pyx12.errors.X12Error as exc:
         raise X12ParseError(f"{path}: {exc}") from exc
-    except UnicodeDecodeError as exc:
-        raise X12ParseError(
-            f"{path}: file is not valid X12 (non-ASCII bytes at position {exc.start})"
-        ) from exc
     return segments
 
 

@@ -504,6 +504,20 @@ class TestRobustness:
             "file is not valid X12 (non-ASCII bytes at position 0)"
         )
 
+    def test_non_ascii_byte_mid_file_rejected_at_its_offset(self, tmp_path: Path):
+        """Not only a leading BOM: a UTF-8 character inside an element is
+        refused too, at its own byte offset, rather than parsed as latin-1
+        mojibake and compared as data."""
+        clean = (KIT / "850_01_clean.edi").read_bytes()
+        offset = clean.index(b"~", clean.index(b"N1*"))
+        accented = tmp_path / "850_01_accent.edi"
+        accented.write_bytes(clean[:offset] + "é".encode("utf-8") + clean[offset:])
+        with pytest.raises(X12ParseError) as excinfo:
+            parse_transaction(accented)
+        assert str(excinfo.value).endswith(
+            f"file is not valid X12 (non-ASCII bytes at position {offset})"
+        )
+
     def test_version_mismatch_warns_but_validates(
         self, harness_dir: Path, tmp_path: Path
     ):
