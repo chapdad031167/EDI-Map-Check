@@ -972,6 +972,16 @@ def _import_page() -> None:
         )
 
 
+def scrub_residual_warning(count: int) -> str:
+    """What the Scrub page says above the download when the scrub left
+    something that looks like an identifier (Design 020)."""
+    return (
+        f"{count} position(s) still hold values that look like identifiers. "
+        "They are listed in the masking report below. Review them before "
+        "you share this file."
+    )
+
+
 def _scrub_page() -> None:
     from importlib import resources
 
@@ -996,13 +1006,22 @@ def _scrub_page() -> None:
     col_profile, col_seed = st.columns(2)
     profile_name = col_profile.selectbox(
         "Profile", bundled,
-        help="Which elements get masked. Bundled profiles ship with the tool; "
-        "upload a custom one below to override.",
+        help="Which elements get masked. pharma masks the positions it "
+        "lists and passes the rest through. strict masks everything that is "
+        "not a control number, a code or math. Upload a custom one below "
+        "to override.",
     )
     seed = col_seed.text_input(
         "Seed (optional)",
-        help="Same seed plus same input produces the same masked output — "
-        "use one when a partner needs reproducible test data.",
+        help="Same seed plus same input produces the same masked output. "
+        "Use one seed for files that must still match each other. Treat it "
+        "as a secret: anyone who has it can reverse low-entropy fields such "
+        "as postal codes by trying every value.",
+    )
+    mask_math = st.checkbox(
+        "Also mask quantities, amounts and dates",
+        help="Only changes deny-by-default profiles such as strict. Totals "
+        "on the scrubbed file will no longer reconcile.",
     )
     profile_upload = st.file_uploader("Custom profile (optional, .yaml)", type=["yaml", "yml"])
 
@@ -1014,11 +1033,15 @@ def _scrub_page() -> None:
             )
             source_path = Path(_save_upload_named(upload))
             out_path = source_path.with_suffix(f".scrubbed{source_path.suffix}")
-            written, report = scrub_file(source_path, out_path, profile, seed=seed or None)
+            written, report = scrub_file(
+                source_path, out_path, profile, seed=seed or None,
+                keep_math=not mask_math,
+            )
             st.session_state["scrub"] = (
                 written.read_bytes(),
                 written.name,
                 report.render(),
+                len(report.residuals),
             )
         except (ProfileError, ValueError, OSError) as exc:
             st.error(f"Scrub did not run:\n\n```\n{_clean_message(str(exc))}\n```")
@@ -1028,7 +1051,9 @@ def _scrub_page() -> None:
         st.info("Upload an X12 file and pick a profile, then run Scrub file.")
         return
 
-    scrubbed_bytes, scrubbed_name, report_text = st.session_state["scrub"]
+    scrubbed_bytes, scrubbed_name, report_text, residual_count = st.session_state["scrub"]
+    if residual_count:
+        st.warning(scrub_residual_warning(residual_count))
     st.download_button(
         "Download scrubbed file",
         data=scrubbed_bytes,

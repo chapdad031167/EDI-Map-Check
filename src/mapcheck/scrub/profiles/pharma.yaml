@@ -6,17 +6,28 @@
 # NDC and a repeated value masks the same way everywhere (pairing keys survive).
 #
 # `envelope: true` also masks the ISA/GS trading-partner IDs.
+#
+# This is an allow-list: a position no rule names passes through. The
+# scrub report names what passed through and looks like an identifier
+# (Design 020). For the opposite default, see the `strict` profile.
 
 name: pharma-default
 envelope: true
 
 rules:
-  # Party names and addresses (N1 loop).
+  # Party names, identifiers and addresses (N1 loop). The identifier is
+  # masked with the name: left beside it, it gives the name back to anyone
+  # who holds the ID-to-name mapping.
   - { segment: N1, element: 2, strategy: name }   # entity name
+  - { segment: N1, element: 4, strategy: id }     # party identifier
   - { segment: N2, element: 1, strategy: name }   # additional name
+  - { segment: N2, element: 2, strategy: name }
   - { segment: N3, element: 1, strategy: text }   # address line 1
   - { segment: N3, element: 2, strategy: text }   # address line 2
+  - { segment: N3, element: "3+", strategy: text }  # anything a partner adds
   - { segment: N4, element: 1, strategy: text }   # city
+  - { segment: N4, element: 2, strategy: text }   # state or province
+  - { segment: N4, element: 3, strategy: id }     # postal code (it names the city)
 
   # Contact details (PER).
   - { segment: PER, element: 2, strategy: name }  # contact name
@@ -24,8 +35,18 @@ rules:
   - { segment: PER, element: 6, strategy: text }
   - { segment: PER, element: 8, strategy: text }
 
-  # DEA / HIN registration numbers carried on REF, keyed by qualifier.
-  - segment: REF
-    element: 2
-    strategy: id
-    when: { element: 1, in: [DEA, HN, "1J", "9L"] }
+  # Reference numbers (DEA, HIN, account, contract...) under any qualifier.
+  - { segment: REF, element: 2, strategy: id }
+
+  # The purchase order number: usually the partner's own sequence.
+  - { segment: BEG, element: 3, strategy: id }
+
+  # Product identifiers on the line (UPC, NDC, buyer and vendor part
+  # numbers). The qualifiers beside them are codes and stay.
+  - { segment: PO1, element: 7, strategy: id }
+  - { segment: PO1, element: 9, strategy: id }
+  - { segment: PO1, element: 11, strategy: id }
+
+  # Free text, where operators paste anything.
+  - { segment: NTE, element: 2, strategy: text }
+  - { segment: MSG, element: 1, strategy: text }

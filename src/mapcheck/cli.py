@@ -280,14 +280,30 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_scrub.add_argument(
         "--profile", metavar="NAME|PATH", default="pharma",
-        help="scrub profile — a bundled name (pharma) or a .yaml path",
+        help="scrub profile: a bundled name (pharma masks the positions it "
+        "lists; strict masks everything that is not a control number, a code "
+        "or math) or a .yaml path",
     )
     p_scrub.add_argument(
         "--seed", metavar="VALUE",
-        help="salt for reproducible masking (default: random per run)",
+        help="salt for reproducible masking (default: random per run). Use "
+        "the same seed on two files that must still match each other. Treat "
+        "it as a secret: anyone who has it can reverse low-entropy fields "
+        "such as postal codes by trying every value",
     )
     p_scrub.add_argument(
-        "--report", action="store_true", help="print a summary of what was masked"
+        "--report", action="store_true",
+        help="print what was masked, and what was left that looks like an identifier",
+    )
+    p_scrub.add_argument(
+        "--fail-on-residual", action="store_true",
+        help="exit 1 when an unmasked value looks like an identifier "
+        "(the file is still written), so a script can gate on it",
+    )
+    p_scrub.add_argument(
+        "--mask-math", action="store_true",
+        help="deny-by-default profiles (strict) only: mask quantities, amounts "
+        "and dates too. Totals on the scrubbed file will no longer reconcile",
     )
 
     sub.add_parser("transactions", help="list registered transaction definitions")
@@ -842,15 +858,46 @@ def _cmd_scrub(args: argparse.Namespace) -> int:
     except ProfileError as exc:
         print(f"mapcheck: {exc}", file=sys.stderr)
         return EXIT_USAGE
+    if args.mask_math and not profile.deny_by_default:
+        print(
+            f"mapcheck: --mask-math has no effect on profile {profile.name!r}: "
+            "it masks only the positions its rules name",
+            file=sys.stderr,
+        )
+    # A second scrubbed file landing beside a first one is a pair in the
+    # making, and without a shared seed the two will not match each other.
+    siblings = (
+        sorted(p.name for p in out_target.parent.glob("*.scrubbed.*") if p != out_target)
+        if args.seed is None
+        else []
+    )
     try:
-        out_path, report = scrub_file(args.input, args.output, profile, seed=args.seed)
+        out_path, report = scrub_file(
+            args.input, args.output, profile, seed=args.seed,
+            keep_math=not args.mask_math,
+        )
     except (OSError, ValueError) as exc:
         print(f"mapcheck: {exc}", file=sys.stderr)
         return EXIT_USAGE
     print(f"Scrubbed file written to {out_path} (profile: {profile.name})")
+    if siblings:
+        print(
+            f"mapcheck: warning: no --seed given, and {siblings[0]} is already "
+            "here. Files scrubbed without a shared seed mask the same value "
+            "differently, so they will not match each other. Scrub both with "
+            "the same --seed if they belong together.",
+            file=sys.stderr,
+        )
     if args.report:
         print()
         print(report.render())
+    elif report.residuals:
+        print(
+            f"{len(report.residuals)} position(s) still hold values that look "
+            "like identifiers. Run again with --report to see them."
+        )
+    if args.fail_on_residual and report.residuals:
+        return 1  # findings, same meaning as a FAIL result elsewhere
     return 0
 
 

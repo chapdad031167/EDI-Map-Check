@@ -9,6 +9,7 @@ value) are preserved; only the configured values change.
 
 from __future__ import annotations
 
+from mapcheck.scrub.residual import Positions, Residual, classify
 from mapcheck.scrub.scrubber import (
     Profile,
     ProfileError,
@@ -20,11 +21,14 @@ from mapcheck.scrub.scrubber import (
 )
 
 __all__ = [
+    "Positions",
     "Profile",
     "ProfileError",
+    "Residual",
     "Rule",
     "ScrubReport",
     "Scrubber",
+    "classify",
     "load_profile",
     "scrub_text",
 ]

@@ -1,6 +1,8 @@
 # Design 020: the scrubber tells you what it did *not* mask
 
-**Status:** Draft, for sign-off. No implementation until approved.
+**Status:** Approved 2026-11-16 (open questions answered in review),
+implementation in this PR. See "Decisions in review" at the end for the
+answers and for where the build departs from the text below.
 **Applies to:** `src/mapcheck/scrub/` (profile model, scrubber, report),
 `src/mapcheck/scrub/profiles/pharma.yaml`, `mapcheck scrub` and the UI's
 Scrub page.
@@ -223,3 +225,50 @@ history database (that is Design 021).
    explicit `--fail-on-residual`, so the default stays informational.
 4. **Scope of Decision 4.** Is `--pair` worth building now, or is a
    README section plus the missing-seed warning enough for this round?
+
+## Decisions in review (2026-11-16)
+
+The four open questions, answered:
+
+1. **`BEG03`: mask it.** Masking is deterministic, so the masked PO number
+   still lines up across files scrubbed with one seed.
+2. **`strict` keeps the math by default.** The flag is therefore inverted
+   from the text above: `--mask-math` opts out, there is no `--keep-math`.
+   The report says in words what was kept on purpose.
+3. **`--fail-on-residual`: yes, opt-in.** Exit 1, file still written.
+4. **`--pair`: not built.** README section plus the missing-seed warning
+   only. See the second departure below for why that turned out to be the
+   right size.
+
+Where the build departs from the design, and why:
+
+- **The definitions carry no code lists.** Decisions 2 and 3 assumed a
+  value could be checked against "the transaction definition's code list".
+  There is none: definitions hold structure, reconciliation rules and, for
+  the 850 only, element names. Code and math positions come instead from a
+  bundled table (`src/mapcheck/scrub/positions.yaml`, the common commercial
+  subset) widened at scrub time from the file's own definition:
+  reconciliation operands count as math, loop and rule qualifier elements
+  as codes, element names where a definition has them. The spec's
+  `CodeLists` sheet is not consulted; `scrub` takes no spec.
+- **The scrubber is X12-only, and no validation has X12 on both sides.**
+  Inbound output is JSON, XML, IDoc or CSV; outbound source is JSON. So
+  Decision 1's "safe provided both sides are scrubbed with the same seed"
+  cannot be met for an existing pair, and the test "a scrubbed source plus
+  scrubbed output still validates to the same findings" is not buildable.
+  What is tested instead is the property under it: two different X12 files
+  scrubbed with one seed mask a shared value identically. The README now
+  says the workable order out loud: scrub the source, then translate it.
+- **`strict` keeps values of three characters or fewer.** Without code
+  lists, that is what stands in for "this is a code". Identifier and
+  free-text positions are exempt (a three-digit `REF02` is masked), and
+  explicit rules win over every keep (state and country are masked).
+- **`PO107`/`PO109`/`PO111` and `N202` are masked by `pharma`.** Decision 1
+  did not list them, but its own test demands the shipped PII example scrub
+  with nothing flagged, and the UPC was one of the measured leaks.
+- **The missing-seed warning keys on a sibling file.** "The output path
+  suggests a pair" is implemented as: no `--seed`, and another
+  `*.scrubbed.*` file is already in the target directory.
+- **Two flags the table did not list:** unmasked `ISA02`/`ISA04`
+  (authorization and security information) and, when a profile turns
+  envelope masking off, the trading-partner IDs.
