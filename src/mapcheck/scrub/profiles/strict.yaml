@@ -1,0 +1,35 @@
+# Deny-by-default scrub profile for `mapcheck scrub --profile strict`
+# (Design 020).
+#
+# The opposite of `pharma`: every element is masked unless it has to
+# survive for the file to stay validatable. What survives:
+#
+#   - envelope control numbers and counts (ISA13/IEA02, GS06/GE02,
+#     ST02/SE02, SE01, GE01, IEA01, CTT01), or envelope reconciliation
+#     fails on the scrubbed file;
+#   - the rest of the envelope's structure (qualifiers, date and time,
+#     version, separators), but not the trading-partner IDs and not
+#     ISA02/ISA04;
+#   - qualifiers and codes, from the bundled positions table and the
+#     file's own transaction definition;
+#   - values of `keep_short` characters or fewer: at that length a value
+#     is a code, a unit or a small count, and masking it breaks every
+#     rule that addresses data by qualifier;
+#   - quantities, amounts and dates, so the totals still reconcile.
+#     `--mask-math` masks those too.
+#
+# `rules` still apply and win over every keep: they are how a short value
+# that is not a code gets masked anyway.
+
+name: strict
+mode: deny
+envelope: true
+keep_short: 3
+
+rules:
+  - { segment: N1, element: 2, strategy: name }   # so an ID beside it is reported
+  - { segment: N2, element: 1, strategy: name }
+  - { segment: N2, element: 2, strategy: name }
+  - { segment: PER, element: 2, strategy: name }
+  - { segment: N4, element: 2, strategy: text }   # state: short, not a code
+  - { segment: N4, element: 4, strategy: text }   # country: short, not a code

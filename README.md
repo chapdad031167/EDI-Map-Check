@@ -728,22 +728,93 @@ mapcheck scrub partner_850.edi --seed prod-2026   # reproducible corpus
 Masking is deterministic and **length- and character-class preserving**: a
 DEA `AB1234563` stays two-letters-seven-digits, an NDC keeps its dashes, so
 the scrubbed file still exercises the same format and length rules. Which
-elements are masked is a **scrub profile** (a bundled pharma default, or your
-own `--profile my.yaml`) keyed by segment + element, optionally gated on a
+elements are masked is a **scrub profile** (a bundled one, or your own
+`--profile my.yaml`) keyed by segment + element, optionally gated on a
 qualifier:
 
 ```yaml
 rules:
-  - { segment: N1, element: 2, strategy: name }   # entity name
-  - { segment: N3, element: 1, strategy: text }   # address
-  - segment: REF                                   # DEA/HIN number, by qualifier
+  - { segment: N1, element: 2, strategy: name }    # entity name
+  - { segment: N1, element: 4, strategy: id }      # the party ID beside it
+  - { segment: N3, element: "3+", strategy: text } # element 3 and everything after
+  - segment: REF                                    # only under these qualifiers
     element: 2
     strategy: id
     when: { element: 1, in: [DEA, HN] }
 ```
 
-Without `--seed` each run uses a fresh random salt (no fixed reversible
-mapping); the ISA/GS trading-partner IDs are masked too. This is a tool for
+### The report tells you what was *not* masked
+
+A profile is a list of positions somebody thought of. An element nobody
+thought of ships in the clear, so `--report` does not stop at what it masked.
+It reads every value it left alone and names the ones that look like they
+should not have been:
+
+```
+Masked 6 value(s) (5 distinct):
+  ...
+
+2 position(s) hold values that look like identifiers and were NOT masked:
+  N104  0042, 0001  identifier beside a masked N102
+  N403  80301       postal-code shape  (2 occurrences)
+Review these before sharing the file, or add rules to the profile.
+```
+
+It flags postal-code, phone, UPC/GTIN, DEA, NDC, email and account-style
+shapes; any free text (`NTE`, `MSG`, `PID05`); a position the profile masks
+elsewhere in the same file but not here; and an identifier left beside a
+masked name, which is the one that makes the mask worthless (whoever holds
+the ID-to-name mapping reads the name straight back). Qualifiers, codes,
+control numbers and known quantity, amount and date positions are not
+flagged. It is a pattern check, so it errs toward speaking up, and a clean
+report is not a promise: read the file before you share it.
+
+Without `--report` the scrub still says so in one line when anything was
+flagged. `--fail-on-residual` exits `1` in that case (the file is still
+written), so a script can refuse to pass a file along.
+
+### Two profiles: `pharma` and `strict`
+
+- **`pharma`** (the default) is an allow-list: it masks party names and
+  identifiers, addresses including state and postal code, contacts, every
+  `REF02`, the PO number, line product IDs, and `NTE`/`MSG` text, and passes
+  the rest through. Pair it with `--report`.
+- **`strict`** (`--profile strict`) is deny-by-default: it masks **every**
+  element except what has to survive for the file to stay validatable. That
+  is envelope control numbers and counts, qualifiers and codes, values of
+  three characters or fewer (at that length a value is a code, a unit or a
+  small count), and quantities, amounts and dates so the totals still
+  reconcile. `--mask-math` masks those last ones too, at the cost of CTT and
+  invoice totals failing on the scrubbed file.
+
+`strict` is not the default because the bundled table of code and math
+positions covers the common commercial segments, not the whole X12
+dictionary: in a segment it does not know, a code longer than three
+characters gets masked. A custom profile can set `mode: deny` and add its
+own `keep:` list.
+
+### Scrubbing files that have to match each other
+
+Without `--seed` each run uses a fresh random salt, so the same value masks
+differently in every file. Two files that must still agree need the **same
+`--seed`**; the scrub warns when a second unseeded file lands beside a first.
+
+The scrubber reads **X12 only**. It cannot mask a JSON, XML, IDoc or CSV
+output to match a scrubbed source, so a scrubbed source will not validate
+against an output produced from the original. To get a scrubbed test case,
+**scrub the source first, then run the scrubbed file through your
+translator**: the output is born scrubbed, and the pair validates.
+
+### What a seed costs
+
+A fixed seed makes masking reproducible, and reversible by brute force for
+low-entropy fields: anyone who has the seed can mask all 100,000 possible
+five-digit postal codes and match yours. That is inherent to deterministic,
+shape-preserving masking and a fair trade for a reusable test corpus.
+**Treat the seed as a secret**, do not send it with the file, and leave it
+off when you do not need two files to agree.
+
+The ISA/GS trading-partner IDs are masked too. This is a tool for
 sanitizing *your* files — **this repo's own examples stay fully synthetic**,
 and the scrubber's fixture (`examples/source/850_pii.edi`) is a generated file
 that merely *looks* like it carries PII.

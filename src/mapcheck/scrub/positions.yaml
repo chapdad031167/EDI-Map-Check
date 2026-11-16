@@ -1,0 +1,95 @@
+# What a known element position holds (Design 020).
+#
+# Read by the residual-risk scan, so it stays quiet about codes and
+# arithmetic, and by deny-by-default profiles such as `strict`, so they
+# know what has to survive for the file to stay validatable.
+#
+# This is the commonly used commercial subset, not the X12 dictionary. A
+# position that is not listed is unknown: every detector looks at it, and
+# a deny-by-default profile masks it unless its value is a short code.
+# At scrub time the table is widened from the file's own transaction
+# definition: reconciliation operands count as math, loop and rule
+# qualifier elements count as codes.
+
+# Envelope control numbers and counts. Always kept, or envelope
+# reconciliation fails on the scrubbed file.
+control:
+  ISA: [13]
+  IEA: [1, 2]
+  GS: [6]
+  GE: [1, 2]
+  ST: [2]
+  SE: [1, 2]
+  CTT: [1]
+  AK1: [2]
+  AK2: [2]
+  AK9: [2, 3, 4]
+
+# Envelope elements that are neither a trading-partner ID nor a secret:
+# qualifiers, date and time, version, usage indicator, separators.
+structure:
+  ISA: [1, 3, 5, 7, 9, 10, 11, 12, 14, 15, 16]
+  GS: [1, 4, 5, 7, 8]
+  ST: [1, 3]
+
+# Qualifiers and codes: shared vocabulary, not partner data.
+code:
+  BEG: [1, 2]
+  BIG: [7, 8]
+  BSN: [1, 5]
+  BAK: [1, 2]
+  CUR: [1, 2]
+  REF: [1]
+  PER: [1, 3, 5, 7]
+  DTM: [1]
+  N1: [1, 3]
+  N9: [1]
+  PO1: [3, 5, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]
+  IT1: [3, 5, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24]
+  LIN: [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]
+  SN1: [3, 6]
+  PID: [1, 2, 3, 4]
+  SAC: [1, 2, 3, 4, 6, 9]
+  ITD: [1, 2]
+  HL: [3, 4]
+  AMT: [1]
+  QTY: [1, 3]
+  ACK: [1, 3, 4]
+
+# Quantities, prices, amounts, dates: what the math checks run on.
+# Kept by a deny-by-default profile unless --mask-math is passed.
+math:
+  BEG: [5]
+  BIG: [1, 3]
+  BSN: [3, 4]
+  BAK: [4]
+  DTM: [2, 3]
+  PO1: [2, 4]
+  IT1: [2, 4]
+  SN1: [2, 4, 5]
+  PO4: [1, 2]
+  CTT: [2]
+  TDS: [1, 2, 3, 4]
+  AMT: [2]
+  SAC: [5, 7, 8, 10]
+  QTY: [2]
+  ACK: [2, 5]
+  ITD: [3, 4, 5, 6, 7, 8]
+
+# Identifiers that sit beside a name. Unmasked next to a masked name,
+# they give the name back to anyone holding the ID-to-name mapping, so
+# they are reported whatever they contain.
+identifier:
+  N1: [4]
+  PER: [4, 6, 8]
+  REF: [2]
+  N9: [2]
+
+# Free text, where operators paste anything. Any unmasked value here is
+# reported.
+free_text:
+  NTE: [2]
+  MSG: [1]
+  PID: [5]
+  REF: [3]
+  N9: [3]

@@ -35,8 +35,9 @@ class TestProfileLoader:
         p = load_profile("pharma")
         assert p.name == "pharma-default" and p.envelope is True
         assert any(r.segment == "N1" and r.element == 2 for r in p.rules)
+        # Design 020: REF02 is masked under any qualifier, not four named ones.
         ref = next(r for r in p.rules if r.segment == "REF")
-        assert ref.when_element == 1 and "DEA" in ref.when_in
+        assert ref.element == 2 and ref.when_element is None
 
     def test_default_is_pharma(self):
         assert load_profile().name == "pharma-default"
@@ -185,9 +186,12 @@ class TestFidelity:
     def test_non_configured_elements_untouched(self, examples_dir):
         text = _src(examples_dir).read_text()
         scrubbed, _ = scrub_text(text, load_profile(), seed="x")
-        # PO1 line and BEG po number are not in the profile
-        assert "PO1*1*12*EA*8.5**UP*614141007349" in scrubbed
-        assert "POPII001" in scrubbed
+        # Qualifiers, quantities, prices and dates are not in the profile.
+        # (The PO number and the UPC used to be listed here too; Design 020
+        # masks both.)
+        assert "PO1*1*12*EA*8.5**UP*" in scrubbed
+        assert "BEG*00*SA*" in scrubbed and "**20260615~" in scrubbed
+        assert "CTT*1~" in scrubbed
 
 
 # ---------------------------------------------------------------------------
@@ -196,11 +200,25 @@ class TestFidelity:
 
 
 class TestQualifierAndReport:
-    def test_ref_masked_only_under_dea_qualifier(self, examples_dir):
+    def test_ref_masked_under_dea_qualifier(self, examples_dir):
         text = _src(examples_dir).read_text()
         scrubbed, report = scrub_text(text, load_profile(), seed="x")
         assert "AB1234563" not in scrubbed  # DEA REF02 masked
         assert report.masked.get(("REF", 2)) == 1
+
+    def test_qualifier_gate_still_works_in_a_custom_profile(self, examples_dir):
+        """The bundled profile no longer gates REF02, but the mechanism is
+        still there for a profile that wants it."""
+        text = _src(examples_dir).read_text().replace(
+            "REF*DEA*AB1234563~", "REF*DEA*AB1234563~\nREF*ZZ*KEEPME~"
+        )
+        gated = Profile(
+            name="t",
+            rules=[Rule("REF", 2, "id", when_element=1, when_in=("DEA",))],
+        )
+        scrubbed, _ = scrub_text(text, gated, seed="x")
+        assert "AB1234563" not in scrubbed
+        assert "REF*ZZ*KEEPME~" in scrubbed
 
     def test_report_counts(self, examples_dir):
         text = _src(examples_dir).read_text()

@@ -45,6 +45,7 @@ mapcheck = [
     "transactions/definitions/*.yaml",
     "output/definitions/*.yaml",
     "scrub/profiles/*.yaml",
+    "scrub/positions.yaml",
     "crosswalks/*.yaml",
 ]
 
