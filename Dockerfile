@@ -6,6 +6,12 @@
 #
 # Honors $PORT (default 8501) so the same image runs unchanged on Cloud Run,
 # Render, Railway, Fly.io, etc.
+#
+# The image defaults to MAPCHECK_MODE=shared (Design 021): history is scoped
+# to the browser session, there is no database download, and stored values
+# are redacted. Running it only for yourself:
+#         docker run --rm -p 8501:8501 -e MAPCHECK_MODE=single edi-mapcheck
+# (docker-compose.yml, the laptop path, already pins single.)
 
 FROM python:3.12-slim AS base
 
@@ -13,7 +19,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PORT=8501
+    PORT=8501 \
+    MAPCHECK_MODE=shared
 
 WORKDIR /app
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import os
+import secrets
 import shutil
 import tempfile
 from pathlib import Path
@@ -21,6 +22,20 @@ import streamlit as st
 import yaml
 
 from mapcheck.cli import _is_interchange
+from mapcheck.deployment import (
+    ENV_MODE,
+    ENV_VALUES,
+    MODE_SHARED,
+    VALUES_FULL,
+    VALUES_NONE,
+    VALUES_REDACTED,
+    DeploymentConfigError,
+    app_password,
+    deployment_mode,
+    history_values,
+    history_values_explicit,
+    password_matches,
+)
 from mapcheck.engine import (
     InterchangeResult,
     RunResult,
@@ -30,9 +45,13 @@ from mapcheck.engine import (
 )
 from mapcheck.output.adapter import OutputLoadError
 from mapcheck.report.excel import export_excel
-from mapcheck.report.history import RunHistory
+from mapcheck.report.history import REDACTED, RunHistory
 from mapcheck.report.html import render_run_html, render_trends_html
-from mapcheck.report.regression import RegressionDelta, regress
+from mapcheck.report.regression import (
+    RegressionDelta,
+    RegressionUnavailable,
+    regress,
+)
 from mapcheck.report.trends import compute_trends
 from mapcheck.spec.overrides import export_spec, resolve_spec
 from mapcheck.spec.parser import SpecLoadError, load_spec
@@ -228,6 +247,92 @@ def _history_db() -> Path:
     return Path(os.environ.get("MAPCHECK_HISTORY_DB", "mapcheck_history.db"))
 
 
+#: Session-state keys for Design 021. The session id never leaves the
+#: server: it is what scopes a visitor's history, so the browser has no
+#: use for it and no way to present someone else's.
+_SESSION_ID = "_mapcheck_session_id"
+_AUTHENTICATED = "_mapcheck_authenticated"
+
+
+def _is_shared() -> bool:
+    """Whether more than one person is assumed able to reach this URL."""
+    return deployment_mode() == MODE_SHARED
+
+
+def _session_id() -> str:
+    """This browser session's opaque id, minted on first use.
+
+    It lives in session state and nowhere else, so it ends with the
+    session: a page refresh starts a new one and the earlier runs are no
+    longer listed. That is the cost of scoping without accounts.
+    """
+    if _SESSION_ID not in st.session_state:
+        st.session_state[_SESSION_ID] = secrets.token_urlsafe(24)
+    return st.session_state[_SESSION_ID]
+
+
+def _open_history() -> RunHistory:
+    """The history as this visitor may see it (Design 021).
+
+    ``single`` mode opens the whole store, as before. ``shared`` mode
+    opens it scoped to the browser session, and the scoping lives in the
+    handle rather than at each call, so no page can forget to apply it.
+    """
+    return RunHistory(
+        _history_db(), session_id=_session_id() if _is_shared() else None
+    )
+
+
+_VALUES_NOTES = {
+    VALUES_FULL: "expected and actual values are stored as they were.",
+    VALUES_REDACTED: (
+        "expected and actual values are stored as hashes and messages are "
+        "withheld. A regression still detects a changed value but cannot "
+        "show it."
+    ),
+    VALUES_NONE: (
+        "only counts and results are stored. Trends work; regression "
+        "cannot run."
+    ),
+}
+
+
+def history_values_note() -> str | None:
+    """One line naming the active storage setting, or None when it is the
+    untouched default (``single`` mode storing ``full``), which reads the
+    way the app always has."""
+    values = history_values()
+    if not _is_shared() and values == VALUES_FULL:
+        return None
+    if history_values_explicit():
+        origin = f"set by `{ENV_VALUES}`"
+    else:
+        origin = f"the default for `{ENV_MODE}={deployment_mode()}`"
+    return f"History values: **{values}** ({origin}): {_VALUES_NOTES[values]}"
+
+
+def password_gate() -> bool:
+    """Whether this session may see the app (Design 021, Decision 3).
+
+    Open unless ``MAPCHECK_PASSWORD`` is set. One shared secret for the
+    whole app, checked in constant time: it keeps an anonymous visitor
+    off a public URL and is nothing like accounts.
+    """
+    expected = app_password()
+    if expected is None or st.session_state.get(_AUTHENTICATED):
+        return True
+    st.subheader("Password required")
+    with st.form("mapcheck_password_gate"):
+        entered = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Enter")
+    if submitted:
+        if password_matches(entered, expected):
+            st.session_state[_AUTHENTICATED] = True
+            st.rerun()
+        st.error("That password is not correct.")
+    return False
+
+
 def baseline_label(
     spec_path: str, source_path: str, output_path: str, partner_path: str | None = None
 ) -> str:
@@ -389,6 +494,15 @@ def main() -> None:
     )
     load_css()
     st.markdown('<div class="wordmark">EDI MapCheck</div>', unsafe_allow_html=True)
+    try:
+        deployment_mode()
+        history_values()
+    except DeploymentConfigError as exc:
+        # refuse to guess: a mistyped mode must not fall back to the open one
+        st.error(f"EDI MapCheck is misconfigured and will not start: {exc}")
+        return
+    if not password_gate():
+        return
     pages = st.navigation(
         [
             st.Page(_validate_page, title="Validate", default=True),
@@ -473,10 +587,16 @@ def _validate_page() -> None:
             help="Recorded runs feed the History page: baselines, "
             "regression deltas, and trends.",
         )
-        st.caption(
-            f"Runs record to `{_history_db()}` — the same history the CLI "
-            "reads and writes."
-        )
+        if _is_shared():
+            st.caption(
+                "Recorded runs are visible to this browser session only. "
+                "A page refresh starts a new session."
+            )
+        else:
+            st.caption(
+                f"Runs record to `{_history_db()}` — the same history the CLI "
+                "reads and writes."
+            )
         run = st.button(
             "Run validation",
             type="primary",
@@ -520,9 +640,8 @@ def _validate_page() -> None:
             return
         recorded_id = None
         if not skip_history:
-            db = _history_db()
-            db.parent.mkdir(parents=True, exist_ok=True)
-            with RunHistory(db) as history:
+            _history_db().parent.mkdir(parents=True, exist_ok=True)
+            with _open_history() as history:
                 recorded_id = (
                     history.record_interchange(result, partner_file=partner_path)
                     if isinstance(result, InterchangeResult)
@@ -1119,18 +1238,39 @@ def _render_regression_strip(run_id: int | None, label: str) -> None:
     if run_id is None:
         st.caption("This run was not recorded, so there is nothing to compare.")
         return
-    db = _history_db()
-    with RunHistory(db) as history:
+    with _open_history() as history:
+        run_row = history.run(run_id)
+        if run_row is None:
+            st.caption("This run is no longer in the history.")
+            return
+        if (run_row["values_mode"] or VALUES_FULL) == VALUES_NONE:
+            # say so rather than offer a baseline that could only ever
+            # compare nothing with nothing
+            st.caption(
+                "This run was recorded without findings "
+                f"(`{ENV_VALUES}=none`), so it cannot be compared to a "
+                "baseline or become one."
+            )
+            return
         baseline = history.baseline_for(label)
         if baseline is not None and baseline["run_id"] == run_id:
             st.caption(f"This run is the blessed baseline for `{label}`.")
             return
         if baseline is not None:
-            delta = regress(history, baseline["run_id"], run_id)
+            try:
+                delta = regress(history, baseline["run_id"], run_id)
+            except RegressionUnavailable as exc:
+                st.warning(f"Regression could not run: {exc}")
+                return
             st.markdown(
                 regression_strip_html(delta, baseline["run_id"]),
                 unsafe_allow_html=True,
             )
+            if delta.redacted:
+                st.caption(
+                    "Stored values are redacted: the delta shows that a "
+                    "value changed, not what it was."
+                )
             if delta.is_empty:
                 st.caption(
                     f"Identical findings to baseline run #{baseline['run_id']} "
@@ -1153,14 +1293,21 @@ def _render_regression_strip(run_id: int | None, label: str) -> None:
         "the derived label above; the CLI reaches it with --label.",
     )
     if st.button("Bless this run as baseline"):
-        with RunHistory(db) as history:
+        with _open_history() as history:
             history.bless(run_id, label, label=name.strip() or None)
         st.rerun()
 
 
-def _stored_findings_frame(rows: list[dict]) -> pd.DataFrame:
+def _stored_findings_frame(rows: list[dict], redacted: bool = False) -> pd.DataFrame:
     """Findings from the history database, in the live findings-frame
-    shape so the same table renderer draws them."""
+    shape so the same table renderer draws them. A redacted run stored
+    hashes; those print as the placeholder, never as the hash."""
+
+    def value(stored: str | None) -> str:
+        if redacted and stored is not None:
+            return REDACTED
+        return stored or ""
+
     return pd.DataFrame(
         [
             {
@@ -1168,8 +1315,8 @@ def _stored_findings_frame(rows: list[dict]) -> pd.DataFrame:
                 "Row ID": r["row_id"] or "",
                 "Source": r["source_ref"] or "",
                 "Target": r["target"] or "",
-                "Expected": r["expected"] or "",
-                "Actual": r["actual"] or "",
+                "Expected": value(r["expected"]),
+                "Actual": value(r["actual"]),
                 "Category": r["category"] or "",
                 "Message": r["message"],
             }
@@ -1225,6 +1372,15 @@ def _history_page() -> None:
         "measured against, and read the trends. The Validate page "
         "compares each recorded run to its baseline automatically."
     )
+    shared = _is_shared()
+    if shared:
+        st.caption(
+            "Shared mode: this page lists only the runs recorded in this "
+            "browser session. A page refresh starts a new session, and "
+            "earlier runs are no longer listed."
+        )
+    if note := history_values_note():
+        st.caption(note)
     db = _history_db()
     if not db.exists():
         st.info(
@@ -1232,7 +1388,7 @@ def _history_page() -> None:
             "and it lands here."
         )
         return
-    with RunHistory(db) as history:
+    with _open_history() as history:
         runs = history.recent_runs(limit=50)
         blessed = {b["run_id"]: b for b in history.baselines()}
         if not runs:
@@ -1288,8 +1444,15 @@ def _history_page() -> None:
                 detail_id = next(
                     c["id"] for c in child_rows if (c["document_key"] or "?") == doc
                 )
-        frame = _stored_findings_frame(history.findings_for(detail_id))
-        if frame.empty:
+        run_values = run_row.get("values_mode") or VALUES_FULL
+        frame = _stored_findings_frame(
+            history.findings_for(detail_id), redacted=run_values == VALUES_REDACTED
+        )
+        if run_values == VALUES_NONE:
+            st.caption(
+                f"Findings were not stored for this run (`{ENV_VALUES}=none`)."
+            )
+        elif frame.empty:
             st.caption("No findings were recorded for this run.")
         else:
             selected = st.multiselect(
@@ -1331,7 +1494,10 @@ def _history_page() -> None:
                 f"Blessing replaces the baseline currently held by run "
                 f"#{previous['run_id']}."
             )
-        if st.button("Bless as baseline", disabled=not key_value.strip()):
+        if st.button(
+            "Bless as baseline",
+            disabled=not key_value.strip() or run_values == VALUES_NONE,
+        ):
             history.bless(run_row["id"], key_value.strip())
             st.rerun()
 
@@ -1371,6 +1537,11 @@ def _history_page() -> None:
                 file_name="mapcheck_trends.html",
                 mime="text/html",
             )
+    if shared:
+        # The file holds every visitor's runs. On a shared URL there is no
+        # version of handing that to one of them, so the button is absent,
+        # and so is the server path it lives at.
+        return
     st.download_button(
         "Download history database (.db)",
         data=db.read_bytes(),

@@ -17,7 +17,22 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-from mapcheck.report.history import RunHistory
+from mapcheck.deployment import VALUES_NONE, VALUES_REDACTED
+from mapcheck.report.history import REDACTED, RunHistory
+
+def require_findings(values: str) -> None:
+    """Refuse a regression up front when the store keeps no findings.
+
+    Under ``none`` no run can ever be blessed, so ``regress`` would
+    answer "no baseline yet, exit 0" on every run for good: a gate that
+    is wired in and can never close.
+    """
+    if values == VALUES_NONE:
+        raise RegressionUnavailable(
+            "MAPCHECK_HISTORY_VALUES=none stores no findings, so a regression "
+            "has nothing to compare. Use 'full' or 'redacted'."
+        )
+
 
 # Delta classes -------------------------------------------------------------
 NEW = "NEW"
@@ -27,6 +42,15 @@ DOC_ADDED = "DOC ADDED"
 DOC_REMOVED = "DOC REMOVED"
 
 _BAD_STATUSES = {"FAIL", "WARNING"}
+
+
+class RegressionUnavailable(Exception):
+    """A regression cannot be computed for these runs.
+
+    Raised rather than returning an empty delta: a run recorded with
+    ``MAPCHECK_HISTORY_VALUES=none`` has no finding rows, and diffing
+    nothing against nothing reads as "matches the baseline, exit 0".
+    """
 
 
 def _escape_part(part: str) -> str:
@@ -135,6 +159,9 @@ class RegressionDelta:
     baseline_run_id: int
     current_run_id: int
     changes: list[Change] = field(default_factory=list)
+    #: Either run stored hashes in place of values, so the delta can say
+    #: that a value changed but not what it was (Design 021).
+    redacted: bool = False
 
     @property
     def regressions(self) -> list[Change]:
@@ -156,8 +183,16 @@ class RegressionDelta:
         return [c for c in self.changes if c.kind == kind]
 
 
-def _describe(baseline: dict[str, Any] | None, current: dict[str, Any] | None) -> str:
-    """A compact 'was X, now Y' for the fields that differ."""
+def _describe(
+    baseline: dict[str, Any] | None,
+    current: dict[str, Any] | None,
+    redacted: bool = False,
+) -> str:
+    """A compact 'was X, now Y' for the fields that differ.
+
+    Under ``redacted`` the two sides of a value are hashes, and a hash is
+    not shown: a value prints as the placeholder, an absent one as None.
+    """
     if baseline is None:
         return (current or {}).get("status", "") or ""
     if current is None:
@@ -167,6 +202,9 @@ def _describe(baseline: dict[str, Any] | None, current: dict[str, Any] | None) -
                        ("expected", "expected"), ("actual", "actual")):
         was, now = baseline.get(key), current.get(key)
         if was != now:
+            if redacted and key in ("expected", "actual"):
+                was = REDACTED if was is not None else None
+                now = REDACTED if now is not None else None
             bits.append(f"{label}: {was!r} -> {now!r}")
     return "; ".join(bits)
 
@@ -174,6 +212,7 @@ def _describe(baseline: dict[str, Any] | None, current: dict[str, Any] | None) -
 def diff_snapshots(
     baseline: dict[str, list[dict[str, Any]]],
     current: dict[str, list[dict[str, Any]]],
+    redacted: bool = False,
 ) -> list[Change]:
     """Classify the difference between two ``RunHistory.snapshot`` dicts.
 
@@ -209,19 +248,19 @@ def diff_snapshots(
                     changes.append(Change(
                         NEW, doc_key, identity, None, curr,
                         regression=curr["status"] == "FAIL",
-                        detail=_describe(None, curr)))
+                        detail=_describe(None, curr, redacted)))
                 continue
             if _payload(base) == _payload(curr):
                 continue  # identical outcome — silent
             if base["status"] in _BAD_STATUSES and curr["status"] == "PASS":
                 changes.append(Change(
                     RESOLVED, doc_key, identity, base, curr, False,
-                    _describe(base, curr)))
+                    _describe(base, curr, redacted)))
             else:
                 changes.append(Change(
                     CHANGED, doc_key, identity, base, curr,
                     regression=curr["status"] == "FAIL" and base["status"] != "FAIL",
-                    detail=_describe(base, curr)))
+                    detail=_describe(base, curr, redacted)))
 
         for identity, base in base_by_id.items():
             if identity in curr_by_id:
@@ -231,7 +270,7 @@ def diff_snapshots(
             if base["status"] in _BAD_STATUSES:
                 changes.append(Change(
                     RESOLVED, doc_key, identity, base, None, False,
-                    _describe(base, None)))
+                    _describe(base, None, redacted)))
 
     return changes
 
@@ -240,12 +279,32 @@ _ORDER = {DOC_REMOVED: 0, NEW: 1, CHANGED: 2, DOC_ADDED: 3, RESOLVED: 4}
 
 
 def regress(history: RunHistory, baseline_run_id: int, current_run_id: int) -> RegressionDelta:
-    """Diff a recorded current run against a recorded baseline run."""
+    """Diff a recorded current run against a recorded baseline run.
+
+    Raises :class:`RegressionUnavailable` when either run was recorded
+    without findings. When either stored hashes, both are compared as
+    hashes, so a baseline blessed before the store was switched to
+    ``redacted`` keeps working.
+    """
+    modes = {
+        run_id: history.values_mode_of(run_id)
+        for run_id in (baseline_run_id, current_run_id)
+    }
+    for run_id, mode in modes.items():
+        if mode == VALUES_NONE:
+            raise RegressionUnavailable(
+                f"run #{run_id} was recorded with MAPCHECK_HISTORY_VALUES=none, "
+                "which stores no findings, so there is nothing to compare. "
+                "Regression needs 'full' or 'redacted'."
+            )
+    redacted = VALUES_REDACTED in modes.values()
     changes = diff_snapshots(
-        history.snapshot(baseline_run_id), history.snapshot(current_run_id)
+        history.snapshot(baseline_run_id, redact=redacted),
+        history.snapshot(current_run_id, redact=redacted),
+        redacted=redacted,
     )
     changes.sort(key=lambda c: (_ORDER.get(c.kind, 9), c.document_key, c.where))
-    return RegressionDelta(baseline_run_id, current_run_id, changes)
+    return RegressionDelta(baseline_run_id, current_run_id, changes, redacted=redacted)
 
 
 def format_delta(delta: RegressionDelta, color: bool | None = None) -> str:
@@ -267,6 +326,11 @@ def format_delta(delta: RegressionDelta, color: bool | None = None) -> str:
         lines.append(paint("VERDICT: no regression (exit 0)", "32"))
         return "\n".join(lines)
 
+    if delta.redacted:
+        lines.append(
+            "  Stored values are redacted: this shows that a value changed, "
+            "not what it was."
+        )
     palette = {
         DOC_REMOVED: "31", NEW: "31", CHANGED: "33", DOC_ADDED: "36", RESOLVED: "32",
     }

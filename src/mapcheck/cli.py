@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from mapcheck import __version__
+from mapcheck.deployment import DeploymentConfigError, history_values
 from mapcheck.engine.validator import validate_files, validate_interchange_files
 from mapcheck.guides.overlay import PartnerRulesError
 from mapcheck.output.adapter import OutputLoadError
@@ -730,14 +731,31 @@ def _cmd_bless(args: argparse.Namespace) -> int:
             run["output_file"],
             run["partner_file"],
         )
-        history.bless(args.run_id, key, label=args.label)
+        try:
+            history.bless(args.run_id, key, label=args.label)
+        except ValueError as exc:
+            # a run recorded without findings cannot be a baseline
+            print(f"mapcheck: {exc}", file=sys.stderr)
+            return EXIT_USAGE
     print(f"Run #{args.run_id} blessed as the baseline for '{key}'.")
     return 0
 
 
 def _cmd_regress(args: argparse.Namespace) -> int:
-    from mapcheck.report.regression import baseline_key, format_delta, regress
+    from mapcheck.report.regression import (
+        RegressionUnavailable,
+        baseline_key,
+        format_delta,
+        regress,
+        require_findings,
+    )
 
+    try:
+        require_findings(history_values())
+    except RegressionUnavailable as exc:
+        # never exit 0 here: nothing can be compared, so nothing passed
+        print(f"mapcheck: regression cannot run: {exc}", file=sys.stderr)
+        return EXIT_USAGE
     color = False if args.no_color else None
     output_format = None
     merged_spec = None
@@ -784,7 +802,12 @@ def _cmd_regress(args: argparse.Namespace) -> int:
             print(f"Recorded run #{current_id}. Bless it to establish the baseline:")
             print(f"    mapcheck bless {current_id}{label_arg}")
             return 0
-        delta = regress(history, baseline["run_id"], current_id)
+        try:
+            delta = regress(history, baseline["run_id"], current_id)
+        except RegressionUnavailable as exc:
+            # never exit 0 here: nothing was compared, so nothing passed
+            print(f"mapcheck: regression cannot run: {exc}", file=sys.stderr)
+            return EXIT_USAGE
     print(format_delta(delta, color=color))
     return delta.exit_code
 
@@ -933,7 +956,11 @@ def main(argv: list[str] | None = None) -> int:
         "scrub": _cmd_scrub,
         "transactions": _cmd_transactions,
     }
-    return handlers[args.command](args)
+    try:
+        return handlers[args.command](args)
+    except DeploymentConfigError as exc:
+        print(f"mapcheck: {exc}", file=sys.stderr)
+        return EXIT_USAGE
 
 
 if __name__ == "__main__":

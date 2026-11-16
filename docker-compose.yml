@@ -12,6 +12,12 @@ services:
       - "8501:8501"
     environment:
       - PORT=8501
+      # The image defaults to shared mode, built for a host several people
+      # can reach. This file is the laptop path, so it pins single: the
+      # History page shows every run and keeps its database download
+      # (Design 021). Deploying this compose file somewhere shared? Change
+      # it to shared.
+      - MAPCHECK_MODE=single
       # run history (baselines, trends) on a named volume, so it
       # survives container rebuilds (Design 016)
       - MAPCHECK_HISTORY_DB=/data/mapcheck_history.db
