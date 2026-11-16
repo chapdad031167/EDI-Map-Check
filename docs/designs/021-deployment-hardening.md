@@ -1,6 +1,7 @@
 # Design 021: who can see the history, and what it holds
 
-**Status:** Draft, for sign-off. No implementation until approved.
+**Status:** Approved 2026-11-16 (open questions answered in review),
+implementation in this PR.
 **Applies to:** `app.py` (History page, `_history_db`, the download
 button), `src/mapcheck/report/history.py`, `README.md` deployment
 section, `Dockerfile`.
@@ -160,7 +161,73 @@ about the store; that one is about the files.
   false-green regression path in PR #14; this must not add a second.)
 - Password gate on and off.
 
-## Open questions for review
+## Open questions, answered (2026-11-16)
+
+1. **Docker default:** the image defaults to `shared`, and
+   `docker-compose.yml` pins `single`. Compose is the README's laptop
+   path; the bare image is what gets deployed to a host. A plain
+   Streamlit session ends on a page refresh, so `shared` on a laptop
+   would hide a user's own history from them after every reload.
+2. **`redacted` in `shared` mode:** coupled. `shared` stores `redacted`
+   unless `MAPCHECK_HISTORY_VALUES` is set explicitly, and the History
+   page names the setting in force and where it came from, so the mode
+   flag does not change storage silently.
+3. **Session scoping and CI:** confirmed. This repo's CI runs the CLI
+   with `--no-history`. The CLI opens the history without a session, so
+   it reads and writes every run whatever the mode.
+4. **Password gate:** built. One shared secret, off unless
+   `MAPCHECK_PASSWORD` is set.
+
+## Implementation notes
+
+Where the code had to decide something the decisions above left open:
+
+- **`redacted` withholds more than expected and actual.** A finding's
+  message quotes both values ("expected 'X', output has 'Y'"), so it is
+  replaced by a fixed placeholder. An interchange's document keys are
+  pairing values (a PO number, typically) stored on the run row, so
+  they are hashed too. Positional labels (`#1`) are kept. File names are
+  stored in every setting.
+- **The hash is keyed per database.** HMAC-SHA256 with a random key
+  created on first use and stored in a new `meta` table. That defeats
+  precomputed tables and correlation across databases. It does not stop
+  someone holding the file from guessing a short value, and the README
+  says so.
+- **Each run records its own setting** (`values_mode`, additive, `NULL`
+  reads as `full`). Without it a `none` run is indistinguishable from a
+  run with no findings, and a store switched from `full` to `redacted`
+  would compare verbatim baselines against hashes. With it, regression
+  refuses a `none` run by name and hashes a `full` baseline on the way
+  out, so baselines blessed before a switch keep working.
+- **`none` refuses rather than passes, in four places.** `regress()`
+  raises when either run stored no findings; `mapcheck regress` and a
+  batch `regress:` check fail fast with exit code 2 while the setting is
+  `none`; a `none` run cannot be blessed; the app says the run cannot be
+  compared instead of offering to bless it.
+- **The storage setting belongs to the store, not the app.** The CLI
+  honors `MAPCHECK_HISTORY_VALUES`, including the `shared` default, so
+  the two halves of one container never write different shapes of row
+  to one database. Session scoping is the app's alone.
+- **Session baselines are namespaced in the key**, not by a new column.
+  `baseline_key` is unique table-wide, and widening that to a second
+  column means rebuilding the table. A session's keys carry its id
+  instead, which is never sent to the browser.
+- **The session id lives in `st.session_state` only.** No cookie, no
+  query parameter. A refresh starts a new session, the earlier runs are
+  no longer listed, and the password is asked for again. The app and
+  the README both say so.
+- **An unknown setting is an error.** `MAPCHECK_MODE=shard` stops the
+  app and fails the CLI with exit code 2. Falling back to `single`
+  would publish every visitor's runs on a deployment its operator
+  believes is shared.
+- **The password gate is the "simple gate" branch of Decision 3.**
+  Streamlit's native authentication is OIDC sign-in, which is accounts,
+  the thing this decision declines to build. The comparison is
+  `hmac.compare_digest`. There is no lockout or rate limit.
+- **In `shared` mode the app stops printing the database path** on the
+  Validate and History pages, along with dropping the download.
+
+## Open questions for review (as drafted)
 
 1. **Is `shared` the right Docker default?** It changes behavior for
    anyone already running the container privately — their History page

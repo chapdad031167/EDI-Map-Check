@@ -208,8 +208,16 @@ def _run_validate(check: Check, history: RunHistory | None) -> CheckOutcome:
 
 def _run_regress(check: Check, history: RunHistory) -> CheckOutcome:
     from mapcheck.cli import _is_interchange
-    from mapcheck.report.regression import baseline_key, format_delta, regress
+    from mapcheck.report.regression import (
+        baseline_key,
+        format_delta,
+        regress,
+        require_findings,
+    )
 
+    # raises, and run_batch reports the check as an execution error:
+    # a regress check that cannot compare must not count as a pass
+    require_findings(history.values)
     merged = None
     if check.partner:
         from mapcheck.spec.overrides import resolve_spec

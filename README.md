@@ -139,7 +139,9 @@ Runs are **recorded by default** to the same `mapcheck_history.db` the CLI
 uses (one visible toggle skips a run). The **History** page browses recent
 runs, reopens any run's findings from storage, blesses a run as the
 baseline for its inputs, shows trends, and offers the raw database as a
-download. After every recorded run, the Validate page automatically shows
+download (a `shared` deployment scopes the page to your browser session and
+has no database download; see [Deployment](#deployment-who-can-see-the-history-and-what-it-holds)).
+After every recorded run, the Validate page automatically shows
 the **delta against the blessed baseline** — new failures first — or
 offers to bless the run when no baseline exists yet.
 
@@ -151,7 +153,9 @@ offers to bless the run when no baseline exists yet.
 > carrying whatever the validated files carried: keep it off shared disks,
 > and scrub the inputs first (`mapcheck scrub`) when that matters. Skip
 > recording entirely with `--no-history` on the CLI, or the *Don't record
-> this run* toggle in the UI.
+> this run* toggle in the UI. To keep recording but store hashes, or
+> nothing per finding, set `MAPCHECK_HISTORY_VALUES` (see
+> [Deployment](#deployment-who-can-see-the-history-and-what-it-holds)).
 
 An optional **partner rules overlay** (`.yaml` from `import-guide --overlay`)
 can be uploaded alongside the three files; its presence rules are enforced
@@ -161,26 +165,121 @@ CLI has, without a terminal.
 
 ### Run it as an app (no terminal)
 
-For non-CLI users, run the whole thing as a web app in a container — one
+For non-CLI users, run the whole thing as a web app in a container: one
 command, then open a browser. No Python install, no command line:
 
 ```bash
 docker compose up            # then open http://localhost:8501
 ```
 
-or with plain Docker:
+`docker compose up` is the laptop path. It pins `MAPCHECK_MODE=single`, so
+the History page shows every run and offers the database download, the same
+as `streamlit run app.py`.
+
+The image on its own is built for a host. It honors `$PORT`, so the same
+build runs unchanged on **Cloud Run, Render, Railway, Fly.io**, and it is
+published to **GitHub Container Registry** on each release:
 
 ```bash
-docker build -t edi-mapcheck .
-docker run --rm -p 8501:8501 edi-mapcheck
+docker run --rm -p 8501:8501 ghcr.io/chapdad031167/edi-map-check:latest
 ```
 
-The image honors `$PORT`, so the same build runs unchanged on any container
-host — **Cloud Run, Render, Railway, Fly.io** — and is published to
-**GitHub Container Registry** on each release
-(`docker run -p 8501:8501 ghcr.io/chapdad031167/edi-map-check:latest`). To put
-it online for free, point **[Streamlit Community Cloud](https://streamlit.io/cloud)**
-at this repo with `app.py` as the entrypoint — users just get a URL.
+The image **defaults to `MAPCHECK_MODE=shared`**, because a container
+someone deployed is more likely to be reachable by several people than a
+laptop is. Running the bare image only for yourself? Add
+`-e MAPCHECK_MODE=single`.
+
+### Deployment: who can see the history, and what it holds
+
+Three environment variables decide it. An unknown value stops the app (and
+fails the CLI with exit code 2) instead of falling back to a default.
+
+| Variable | Values | Default |
+|---|---|---|
+| `MAPCHECK_MODE` | `single`, `shared` | `single` (`shared` in the Docker image) |
+| `MAPCHECK_HISTORY_VALUES` | `full`, `redacted`, `none` | `full` in `single`, `redacted` in `shared` |
+| `MAPCHECK_PASSWORD` | any non-empty text | unset (no gate) |
+
+**`MAPCHECK_MODE=single`** is one operator on a laptop or a private
+container. One history, all of it visible, with a download button for the
+raw database. Nothing about it changed.
+
+**`MAPCHECK_MODE=shared`** assumes more than one person can reach the URL:
+
+- **History is scoped to the browser session.** The History page, trends,
+  and baseline lookups show a visitor their own runs and nobody else's.
+- **A page refresh starts a new session.** The session id lives in server
+  memory only, with no cookie and no URL parameter, so after a refresh the
+  earlier runs are no longer listed. Download the Excel or HTML report of a
+  run you want to keep.
+- **There is no database download.** The file holds every visitor's runs.
+  Per-run exports stay, because they carry only the run you just did.
+- **Blessing is scoped too.** A visitor can bless only their own runs, and
+  two visitors using the same label keep separate baselines.
+- **Stored values default to `redacted`** unless you set
+  `MAPCHECK_HISTORY_VALUES` yourself. The History page names the setting in
+  force.
+
+Session scoping is privacy, not security. A session id is not an identity,
+anyone with access to the server's disk still reads the whole file, and
+runs recorded by the CLI belong to no session, so the shared app does not
+list them. It stops one visitor from reading another's runs through the
+app. It does not make the app multi-tenant.
+
+**`MAPCHECK_HISTORY_VALUES`** sets what a recorded finding keeps. It is a
+property of the store, so the CLI follows it as well as the app:
+
+| Setting | Stored per finding | Regression | Trends |
+|---|---|---|---|
+| `full` | expected and actual, verbatim, plus the message | full delta | yes |
+| `redacted` | status, category, row id, target; expected and actual as hashes; no message | detects every change, shows `'<redacted>' -> '<redacted>'` | yes |
+| `none` | nothing (run counts and results only) | refuses to run, exit code 2 | pass rates only |
+
+Things to know about `redacted`:
+
+- The message is withheld because it quotes the values. An interchange's
+  document keys are hashed for the same reason (a pairing key is usually a
+  PO or invoice number).
+- **File names are stored in every setting.** Do not put partner names in
+  them if that matters.
+- Hashes are keyed per database, and the key sits in the same file. That
+  makes them useless across databases, but someone holding the file can
+  still recover a short or guessable value (a ZIP code, a quantity) by
+  trying candidates. `redacted` makes the file uninteresting, not safe to
+  publish.
+- Switching the setting does not rewrite rows already stored. A baseline
+  blessed under `full` keeps working after a switch to `redacted`; the
+  comparison hashes its values on the way out.
+
+Under `none`, `mapcheck regress` and a batch `regress:` check report that
+they cannot run (exit code 2) and a run cannot be blessed, so a pipeline
+never reads "nothing stored" as "nothing changed".
+
+**`MAPCHECK_PASSWORD`** puts one password in front of the whole app, in
+either mode. It is a **shared secret, not user accounts**: everyone uses
+the same one, there is no lockout or rate limit, and it travels in the
+clear unless the host terminates TLS. Use a long random value. It is
+asked for again after a page refresh, since a refresh starts a new
+session. The container health check at `/_stcore/health` stays open so the
+host can still probe it. For anything stricter, put the app behind your host's own
+authentication.
+
+**Streamlit Community Cloud** (point it at this repo with `app.py` as the
+entrypoint) is fine for the bundled examples and for evaluating the tool.
+**Do not put real partner data there.** The URL is public and every visitor
+shares one store. If you deploy there anyway, set `MAPCHECK_MODE=shared`
+and a `MAPCHECK_PASSWORD` as root-level secrets, which Streamlit exposes to
+the app as environment variables. For real data, run the container with
+`MAPCHECK_MODE=shared`, a password if you want one, and a volume you
+control:
+
+```bash
+docker run -p 8501:8501 \
+  -e MAPCHECK_PASSWORD='a-long-random-secret' \
+  -e MAPCHECK_HISTORY_DB=/data/mapcheck_history.db \
+  -v mapcheck-data:/data \
+  ghcr.io/chapdad031167/edi-map-check:latest
+```
 
 ### Install the CLI (pipx)
 
@@ -656,7 +755,14 @@ match it.
 **In Docker**, history lives on a named volume (`docker compose up`
 creates it), so it survives container rebuilds; the History page's
 "Download history database" button hands you the raw SQLite file whenever
-you want it.
+you want it. That button exists in `single` mode only. In a `shared`
+deployment, copy the file from the volume instead.
+
+**What is stored is configurable.** `regress` works unchanged under
+`MAPCHECK_HISTORY_VALUES=redacted`: it still exits nonzero on a regression
+and prints `'<redacted>'` where it would have printed a value. Under
+`none` it exits 2 and says it cannot run. See
+[Deployment](#deployment-who-can-see-the-history-and-what-it-holds).
 
 ## Batch / CI mode
 
@@ -793,6 +899,7 @@ src/mapcheck/
 ├── engine/        rule evaluation, format checks, reconciliation, findings
 ├── guides/        implementation-guide parser, profile, partner-rules overlay
 ├── report/        terminal report, Excel export, SQLite history
+├── deployment.py  MAPCHECK_MODE / MAPCHECK_HISTORY_VALUES / MAPCHECK_PASSWORD
 └── cli.py         the mapcheck command
 app.py             Streamlit UI
 examples/          synthetic specs + source files + outputs (clean and defective)
