@@ -67,7 +67,8 @@ class TestBaselineLabel:
         monkeypatch.setenv("MAPCHECK_HISTORY_DB", "/data/mapcheck_history.db")
         args = _build_parser().parse_args(["history"])
         assert args.db == "/data/mapcheck_history.db"
-        assert str(app._history_db()) == args.db
+        # compared as paths: on Windows the string form uses backslashes
+        assert app._history_db() == Path(args.db)
         monkeypatch.delenv("MAPCHECK_HISTORY_DB")
         assert _build_parser().parse_args(["history"]).db == "mapcheck_history.db"
 
