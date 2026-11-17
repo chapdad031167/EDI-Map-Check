@@ -249,3 +249,106 @@ class TestRoundTrip:
         text = wl.read_text()
         assert "Needs review" in text
         assert "mystery" in text
+
+
+# ---------------------------------------------------------------------------
+# a document already in the native layout imports faithfully
+# ---------------------------------------------------------------------------
+
+CODED = "Condition (Coded)"
+
+NATIVE_CSV = """\
+Row ID,Source Field,Loop Context,Target Field,Rule Type,Condition (Text),Condition (Coded),Then,Else,Default Value,Code List Ref,Data Type,Format,Notes
+C-001,BEG03,,order.po,DIRECT,,,,,,,string,len:1..22,
+C-002,N104,N1[ST],ship_to.id,CONDITIONAL,Only when the qualifier is 92,N103 = '92',SOURCE,SKIP,,,string,,
+C-003,BEG02,,order.type,CONDITIONAL,SA becomes STANDARD,BEG02 = 'SA','STANDARD','OTHER',,,string,,
+C-004,,,order.source,CONSTANT,,,,,EDI,,string,,
+C-005,,,order.ship_name,TODO,Join N102 and N104 with a dash,,,,,,,,GAP: concatenation
+"""
+
+
+class TestSuppliedCodedCondition:
+    """The column was matched and reported as mapped, and its value was
+    then never read: a condition the author had already coded was replaced
+    by whatever the prose happened to translate to, or by nothing."""
+
+    def test_kept_as_written(self):
+        r = _classify(**{SOURCE_FIELD: "N104", TARGET_FIELD: "st.id", RULE_TYPE: "CONDITIONAL",
+                         CONDITION_TEXT: "ship-to stores and DCs",
+                         CODED: "N103 IN ('92', 'ZZ')"})
+        assert not r.needs_review
+        assert r.values[CODED] == "N103 IN ('92', 'ZZ')"
+        assert r.values["Then"] == "SOURCE"
+
+    def test_wins_over_what_the_prose_would_translate_to(self):
+        r = _classify(**{SOURCE_FIELD: "N104", TARGET_FIELD: "st.id",
+                         CONDITION_TEXT: "when N103 = 92",
+                         CODED: "N103 = '92' AND EXISTS(N104)"})
+        assert r.values[CODED] == "N103 = '92' AND EXISTS(N104)"
+
+    def test_alone_it_makes_the_row_conditional(self):
+        r = _classify(**{SOURCE_FIELD: "REF02", TARGET_FIELD: "order.ref",
+                         CODED: "EXISTS(REF02)"})
+        assert r.rule_type is RuleType.CONDITIONAL and not r.needs_review
+
+    def test_invalid_one_is_flagged_and_not_thrown_away(self):
+        r = _classify(**{SOURCE_FIELD: "N104", TARGET_FIELD: "st.id", RULE_TYPE: "CONDITIONAL",
+                         CODED: "N103 is roughly 92"})
+        assert r.needs_review and "not valid" in r.reason
+        assert r.values[CODED] == "N103 is roughly 92"
+
+    def test_on_a_row_of_another_type_it_goes_to_a_human(self):
+        r = _classify(**{SOURCE_FIELD: "BEG03", TARGET_FIELD: "order.po", RULE_TYPE: "DIRECT",
+                         CODED: "EXISTS(BEG03)"})
+        assert r.needs_review and "CONDITIONAL?" in r.reason
+        assert r.values[CODED] == "EXISTS(BEG03)"
+
+
+class TestNativeLayoutImport:
+    @pytest.fixture
+    def result(self, tmp_path):
+        doc = tmp_path / "rows.csv"
+        doc.write_text(NATIVE_CSV, encoding="utf-8")
+        return import_mapping(doc, meta={"Transaction Set": "850"})
+
+    def test_nothing_needs_review_and_nothing_is_ignored(self, result):
+        assert result.review_rows == []
+        assert result.unmapped_columns == []
+
+    def test_row_ids_and_notes_survive(self, result, tmp_path):
+        assert [r.row_id for r in result.rows] == [f"C-00{n}" for n in range(1, 6)]
+        out = write_workbook(result, tmp_path / "spec.xlsx")
+        from openpyxl import load_workbook
+
+        rows = list(load_workbook(out)["Mapping"].iter_rows(min_row=2, values_only=True))
+        assert rows[4][0] == "C-005"
+        assert rows[4][-1].startswith("GAP: concatenation | ")
+
+    def test_todo_stays_todo(self, result, tmp_path):
+        todo = result.rows[4]
+        assert todo.rule_type is RuleType.TODO and not todo.needs_review
+        text = write_worklist(result, tmp_path / "wl.txt").read_text()
+        assert "TODO rows: 1" in text
+
+    def test_imported_spec_loads_with_its_conditions(self, result, tmp_path):
+        spec = load_spec(write_workbook(result, tmp_path / "spec.xlsx"))
+        by_id = {r.row_id: r for r in spec.rules}
+        assert len(by_id) == 5
+        assert by_id["C-002"].rule_type is RuleType.CONDITIONAL
+        assert by_id["C-005"].rule_type is RuleType.TODO
+
+    def test_row_ids_are_generated_when_one_repeats(self, tmp_path):
+        doc = tmp_path / "rows.csv"
+        doc.write_text(NATIVE_CSV.replace("C-002", "C-001"), encoding="utf-8")
+        result = import_mapping(doc)
+        assert [r.row_id for r in result.rows][:2] == ["IMP-001", "IMP-002"]
+        assert "Row ID" in result.unmapped_columns  # said out loud, not dropped
+
+    def test_a_partner_comments_column_is_not_taken_for_notes(self, tmp_path):
+        doc = tmp_path / "partner.csv"
+        doc.write_text(
+            "X12 Element,ERP Field,Comments\nBEG03,order.po,ask Dana about this\n",
+            encoding="utf-8",
+        )
+        result = import_mapping(doc)
+        assert result.rows[0].notes == ""
