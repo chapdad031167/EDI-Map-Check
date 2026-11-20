@@ -93,6 +93,13 @@ CONDITION       (Text) is documentation for humans. (Coded) is what the
 THEN / ELSE     SOURCE (map the source value), SKIP (field must be absent),
                 BLANK (present but empty), or a 'quoted literal'.
                 Else defaults to SKIP when left empty.
+                Else may also be NEXT: the condition was false, so the
+                next row decides the same Target Field. Rows linked by
+                NEXT are an if / else-if chain, read top to bottom, and
+                the first true condition wins. Each row keeps its own
+                Source Field and Loop Context. The last row can be any
+                rule and is the final else. "A or B" is two rows with
+                the same Then.
 DEFAULT VALUE   CONSTANT rules: the hardcoded value. Other rules: fallback
                 used when the source element is empty/absent.
 DATA TYPE       string | integer | decimal | date | time

@@ -490,7 +490,7 @@ The mapping spec is a structured Excel workbook (`Mapping`, `CodeLists`,
 | Target Field | dot path into the output | `order.po_number`, `lines[].qty` |
 | Rule Type | `DIRECT`, `CONDITIONAL`, `CODE_LIST`, `CONSTANT`, `LOOP_COUNT` | |
 | Condition (Text / Coded) | human text + machine predicate | `N103 = '92'`, `EXISTS(REF02)` |
-| Then / Else | `SOURCE`, `SKIP`, `BLANK`, or `'literal'` | |
+| Then / Else | `SOURCE`, `SKIP`, `BLANK`, or `'literal'`; Else may be `NEXT` (see [chains](#if--else-if-chains)) | |
 | Default Value | constant, or fallback when the source is empty | `NONE` |
 | Code List Ref | lookup table on the CodeLists sheet | `UOM` |
 | Data Type / Format | `date` + `%Y-%m-%d`, `decimal` + `implied:2;places:2`, `len:2..2` | |
@@ -575,6 +575,58 @@ one; a missing lookup file fails at spec load, and a source value absent from
 the file is the ordinary `code_translation` finding. The bundled
 `850_ergonomics_spec.xlsx` scenario exercises all three, with a defect variant
 that trips exactly one finding per feature.
+
+### If / else-if chains
+
+A CONDITIONAL row is one condition with a Then and an Else. When a target
+needs a sequence of them ("use the store number, else the vendor
+reference, else a default"), set **`Else = NEXT`**: the condition was
+false, so the next Mapping row decides the same target.
+
+| Row ID | Source Field | Loop Context | Target Field | Rule Type | Condition (Coded) | Then | Else | Default Value |
+|---|---|---|---|---|---|---|---|---|
+| C-010 | `N104` | `N1[ST]` | `ship_to.id` | CONDITIONAL | `N103 = '92'` | `SOURCE` | `NEXT` | |
+| C-011 | `REF02` | `REF[IA]` | `ship_to.id` | CONDITIONAL | `EXISTS(REF02)` | `SOURCE` | `NEXT` | |
+| C-012 | | | `ship_to.id` | CONSTANT | | | | `UNKNOWN` |
+
+- Rows linked by `NEXT` are read top to bottom and **the first true
+  condition decides**. Each row keeps its own Source Field, Loop Context,
+  code list and format, so each branch can read a different segment.
+- The last row ends the chain and can be any rule that could stand alone:
+  a CONDITIONAL with an ordinary Else, or an unconditional DIRECT,
+  CODE_LIST or CONSTANT as the final else. A TODO there means "the final
+  else is not decided": the chain is tested whenever an earlier row
+  decides and reports NOT TESTED only when the TODO is reached.
+- A chain produces **one finding per scope** (one per line for a per-line
+  chain), filed under the chain's **first Row ID** whichever row decided.
+  That keeps a regression baseline stable when different data takes a
+  different branch; the message says which row decided and why:
+
+  ```
+  decided by C-011: C-010 N103 = '92' is false; C-011 EXISTS(REF02) is true
+  ```
+
+- **"A or B"** needs no operator. It is two rows with the same Then:
+  `PO103 = 'EA'` → `'Y'` / `NEXT`, then `PO103 = 'CA'` → `'Y'` / `'N'`.
+- A chain whose every row tests the same field against a fixed value and
+  yields a fixed value is a lookup table. Write it as a `CODE_LIST` with a
+  Default Value: shorter, and a miss reports as `code_translation`.
+- A malformed chain is a **spec error at load**, naming the rows: `NEXT`
+  anywhere but the Else of a CONDITIONAL, a next row with a different
+  target, a chain that mixes per-line and header rows, or a partner delta
+  that breaks a chain that was whole in the base spec.
+
+Do **not** put two plain CONDITIONAL rows on one target instead. Each is
+judged alone, and the first row's default Else expects the target absent
+at exactly the moment the second expects a value. `850_chains_spec.xlsx`
+exercises all three patterns, with a defect variant that trips exactly one
+finding:
+
+```bash
+mapcheck validate --spec examples/specs/850_chains_spec.xlsx \
+  --source examples/source/850_chains.edi \
+  --output examples/output/chains_defects.json
+```
 
 ## Output formats
 

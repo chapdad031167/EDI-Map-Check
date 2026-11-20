@@ -3773,6 +3773,131 @@ ERGO_DEFECTS_OUTPUT = {
 }
 
 
+# --------------------------------------------------------------------------
+# If / else-if chains (Design 022). A trimmed 850 whose every source element
+# is mapped, so the only findings come from the chains under test.
+# --------------------------------------------------------------------------
+
+SPEC_CHAIN_ROWS: list[tuple[str, ...]] = [
+    ("C-001", "BEG01", "", "order.purpose", "DIRECT", "", "", "", "",
+     "", "", "string", "", "Transaction set purpose."),
+    ("C-002", "BEG02", "", "order.po_type", "DIRECT", "", "", "", "",
+     "", "", "string", "", "PO type code."),
+    ("C-003", "BEG03", "", "order.po_number", "DIRECT", "", "", "", "",
+     "", "", "string", "", "Customer PO number."),
+    ("C-004", "BEG05", "", "order.po_date", "DIRECT", "", "", "", "",
+     "", "", "date", "%Y-%m-%d", "PO date."),
+    ("C-005", "N102", "N1[ST]", "ship_to.name", "DIRECT", "", "", "", "",
+     "", "", "string", "", "Ship-to name."),
+    # Chain 1: three rows, three different sources, one target.
+    ("C-010", "N104", "N1[ST]", "ship_to.id", "CONDITIONAL",
+     "Use the store number when the ship-to is identified by one",
+     "N103 = '92'", "SOURCE", "NEXT", "", "", "string", "",
+     "First link: Else is NEXT, so the next row decides when this is false."),
+    ("C-011", "REF02", "REF[IA]", "ship_to.id", "CONDITIONAL",
+     "Else use the vendor reference when there is one",
+     "EXISTS(REF02)", "SOURCE", "NEXT", "", "", "string", "",
+     "Second link: reads a different segment from the first."),
+    ("C-012", "", "", "ship_to.id", "CONSTANT", "Else hardcode a default",
+     "", "", "", "UNKNOWN", "", "string", "",
+     "The tail: any rule that could stand alone ends a chain."),
+    ("C-020", "PO101", "PO1", "lines[].line_no", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Line number."),
+    ("C-021", "PO102", "PO1", "lines[].qty", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Quantity ordered."),
+    ("C-022", "PO103", "PO1", "lines[].uom", "DIRECT", "", "", "", "",
+     "", "", "string", "", "Unit of measure."),
+    ("C-023", "PO104", "PO1", "lines[].unit_price", "DIRECT", "", "", "", "",
+     "", "", "decimal", "", "Unit price."),
+    # Chain 2: per-line. Each line decides for itself.
+    ("C-030", "PO107", "PO1", "lines[].item_id", "CONDITIONAL",
+     "Use the UPC when the line carries one",
+     "PO106 = 'UP'", "SOURCE", "NEXT", "", "", "string", "", ""),
+    ("C-031", "PO107", "PO1", "lines[].item_id", "CONDITIONAL",
+     "Else the vendor part number",
+     "PO106 = 'VN'", "SOURCE", "NEXT", "", "", "string", "", ""),
+    ("C-032", "", "PO1", "lines[].item_id", "CONSTANT", "Else no id",
+     "", "", "", "NONE", "", "string", "", ""),
+    # Chain 3: "A or B" is two rows with the same Then. No OR operator.
+    ("C-040", "", "PO1", "lines[].unit_or_case", "CONDITIONAL",
+     "Sold by the each or by the case",
+     "PO103 = 'EA'", "'Y'", "NEXT", "", "", "string", "",
+     "OR, first half."),
+    ("C-041", "", "PO1", "lines[].unit_or_case", "CONDITIONAL",
+     "Sold by the each or by the case",
+     "PO103 = 'CA'", "'Y'", "'N'", "", "", "string", "",
+     "OR, second half: same Then, and an ordinary Else ends the chain."),
+    ("C-050", "CTT01", "", "summary.line_count", "DIRECT", "", "", "", "",
+     "", "", "integer", "", "Number of line items (closes the line loops)."),
+]
+
+SPEC_CHAIN_META = {
+    "Transaction Set": "850",
+    "Direction": "inbound",
+    "X12 Version": "004010",
+    "Spec Name": "Synthetic 850 - if / else-if chains (Else = NEXT)",
+    "Author": "EDI MapCheck project",
+    "Date": "2026-11-20",
+}
+
+# The ship-to carries a qualifier other than 92, so the store-number row is
+# false and the vendor reference decides. The three lines take one branch
+# each of the item-id chain.
+CHAIN_SOURCE_SEGMENTS = [
+    "BEG*00*SA*POCHN01**20260615",
+    "REF*IA*VEND8821",
+    "N1*ST*ALPINE OUTFITTERS STORE 118*91*0118",
+    "PO1*1*12*EA*8.5**UP*614141007349",
+    "PO1*2*6*CA*24**VN*PART77",
+    "PO1*3*5*DZ*12",
+    "CTT*3",
+]
+
+CHAIN_BASELINE_OUTPUT = {
+    "order": {
+        "purpose": "00",
+        "po_type": "SA",
+        "po_number": "POCHN01",
+        "po_date": "2026-06-15",
+    },
+    "ship_to": {
+        "name": "ALPINE OUTFITTERS STORE 118",
+        "id": "VEND8821",  # second link decided
+    },
+    "lines": [
+        {"line_no": 1, "qty": 12, "uom": "EA", "unit_price": 8.5,
+         "item_id": "614141007349", "unit_or_case": "Y"},
+        {"line_no": 2, "qty": 6, "uom": "CA", "unit_price": 24,
+         "item_id": "PART77", "unit_or_case": "Y"},
+        {"line_no": 3, "qty": 5, "uom": "DZ", "unit_price": 12,
+         "item_id": "NONE", "unit_or_case": "N"},
+    ],
+    "summary": {"line_count": 3},
+}
+
+# One planted defect: the map took the store number although the ship-to
+# was not identified by one. The chain reports it once, under its first row.
+CHAIN_DEFECTS_OUTPUT = json.loads(json.dumps(CHAIN_BASELINE_OUTPUT))
+CHAIN_DEFECTS_OUTPUT["ship_to"]["id"] = "0118"
+
+
+def generate_chain_files() -> None:
+    generate_spec(
+        EXAMPLES / "specs" / "850_chains_spec.xlsx",
+        SPEC_CHAIN_ROWS, [], SPEC_CHAIN_META,
+    )
+    src = EXAMPLES / "source" / "850_chains.edi"
+    src.write_text(build_850(CHAIN_SOURCE_SEGMENTS, "0001"))
+    print(f"wrote {src.relative_to(REPO_ROOT)}")
+    for name, data in (
+        ("chains_baseline.json", CHAIN_BASELINE_OUTPUT),
+        ("chains_defects.json", CHAIN_DEFECTS_OUTPUT),
+    ):
+        path = EXAMPLES / "output" / name
+        path.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"wrote {path.relative_to(REPO_ROOT)}")
+
+
 def generate_ergonomics_files() -> None:
     import csv as _csv
 
@@ -3857,6 +3982,7 @@ def main() -> None:
     generate_partner_specs()
     generate_partner_override_files()
     generate_ergonomics_files()
+    generate_chain_files()
     generate_scrub_files()
 
 
