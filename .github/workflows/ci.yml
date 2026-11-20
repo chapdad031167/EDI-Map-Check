@@ -7,10 +7,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      # one combination failing must not hide what the others would say
+      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        # Windows is where this tool is actually run; 3.14 is what a fresh
+        # install gets today.
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,6 +26,7 @@ jobs:
       - name: Run tests
         run: pytest
       - name: Validate example set end-to-end
+        shell: bash
         run: |
           mapcheck validate \
             --spec examples/specs/850_reference_spec.xlsx \

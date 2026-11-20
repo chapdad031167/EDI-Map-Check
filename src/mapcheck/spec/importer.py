@@ -86,7 +86,14 @@ _RULE_TYPE_WORDS: dict[str, RuleType] = {
     "translation": RuleType.CODE_LIST,
     "loop_count": RuleType.LOOP_COUNT, "loop count": RuleType.LOOP_COUNT,
     "count": RuleType.LOOP_COUNT,
+    "todo": RuleType.TODO,
 }
+
+#: Native columns the importer generates itself, honored only when a
+#: document names them exactly (so a partner's "Comments" column is never
+#: mistaken for one).
+ROW_ID = "Row ID"
+NOTES = "Notes"
 
 
 class ImportError_(Exception):
@@ -276,6 +283,9 @@ class ImportedRow:
     rule_type: RuleType | None
     needs_review: bool
     reason: str
+    #: Notes the document itself carried for this row, kept beside the
+    #: importer's own reason.
+    notes: str = ""
 
 
 def _get(mapping: dict[str, str], raw: dict[str, str], our_col: str) -> str:
@@ -328,6 +338,7 @@ def classify_row(mapping: dict[str, str], raw: dict[str, str], row_id: str) -> I
     default = _get(mapping, raw, DEFAULT_VALUE)
     code_list = _get(mapping, raw, CODE_LIST_REF)
     cond_text = _get(mapping, raw, CONDITION_TEXT)
+    cond_coded = _get(mapping, raw, CONDITION_CODED)
     explicit = _get(mapping, raw, RULE_TYPE)
 
     values: dict[str, str] = {}
@@ -354,14 +365,29 @@ def classify_row(mapping: dict[str, str], raw: dict[str, str], row_id: str) -> I
             rt, reason_prefix = RuleType.CODE_LIST, f"inferred CODE_LIST: lookup {code_list!r}"
         elif default and not source:
             rt, reason_prefix = RuleType.CONSTANT, f"inferred CONSTANT: default {default!r}, no source"
-        elif cond_text:
+        elif cond_text or cond_coded:
             rt, reason_prefix = RuleType.CONDITIONAL, "inferred CONDITIONAL: condition present"
         elif source:
             rt, reason_prefix = RuleType.DIRECT, "inferred DIRECT: source field, no other evidence"
         else:
             return done(None, "type unclear: no source field, default, lookup, or condition", True)
 
+    # A coded condition only means something on a CONDITIONAL row. On any
+    # other type it would be dropped, so it goes to a human instead.
+    if cond_coded and rt is not RuleType.CONDITIONAL:
+        values[CONDITION_CODED] = cond_coded
+        return done(
+            rt,
+            f"{reason_prefix}, but a coded condition was supplied: "
+            "should this row be CONDITIONAL?",
+            True,
+        )
+
     # per-type completion + review flags
+    if rt is RuleType.TODO:
+        # a placeholder the author chose: it loads and reports NOT TESTED
+        return done(rt, reason_prefix, False)
+
     if rt is RuleType.CODE_LIST:
         if not source:
             return done(rt, f"{reason_prefix}, but no source field to translate", True)
@@ -376,6 +402,19 @@ def classify_row(mapping: dict[str, str], raw: dict[str, str], row_id: str) -> I
         return done(rt, reason_prefix, False)
 
     if rt is RuleType.CONDITIONAL:
+        if cond_coded:
+            # The document already carries the machine condition. Keep it
+            # as written; deriving one from the prose instead would discard
+            # what the author actually decided.
+            values[CONDITION_CODED] = cond_coded
+            try:
+                parse_condition(cond_coded)
+            except ConditionSyntaxError as exc:
+                return done(
+                    rt, f"{reason_prefix}: supplied coded condition is not valid ({exc})", True
+                )
+            values.setdefault(THEN, "SOURCE")
+            return done(rt, f"{reason_prefix}: coded condition supplied", False)
         coded = derive_condition(cond_text)
         if coded is None:
             return done(rt, f"{reason_prefix}: condition prose needs coding by hand", True)
@@ -429,13 +468,27 @@ def import_mapping(
     """Read, column-map, and classify a partner mapping document."""
     table = read_table(path)
     mapping = resolve_columns(table.headers, overrides)
-    rows = [
-        classify_row(mapping, raw, row_id=f"IMP-{i:03d}")
-        for i, raw in enumerate(table.rows, start=1)
-    ]
+    native = {_norm(h): h for h in table.headers}
+    id_header, notes_header = native.get("row id"), native.get("notes")
+    # The document's own row ids are kept only when every row has one and
+    # none repeats; otherwise ids are generated, as for any partner document.
+    supplied_ids = [raw.get(id_header, "").strip() for raw in table.rows] if id_header else []
+    keep_ids = bool(supplied_ids) and all(supplied_ids) and len(set(supplied_ids)) == len(supplied_ids)
+    rows = []
+    for i, raw in enumerate(table.rows, start=1):
+        row = classify_row(
+            mapping, raw, row_id=supplied_ids[i - 1] if keep_ids else f"IMP-{i:03d}"
+        )
+        if notes_header:
+            row.notes = raw.get(notes_header, "").strip()
+        rows.append(row)
     # any header with data that mapped to none of our columns is dropped —
     # surface it so the loss is never silent
     mapped_headers = set(mapping.values())
+    if keep_ids:
+        mapped_headers.add(id_header)
+    if notes_header:
+        mapped_headers.add(notes_header)
     unmapped = [
         h for h in table.headers
         if h not in mapped_headers and any(r.get(h, "").strip() for r in table.rows)
@@ -511,6 +564,8 @@ def write_workbook(result: ImportResult, path: str | Path) -> Path:
         note = row.reason
         if row.needs_review:
             note = f"NEEDS REVIEW — {note}"
+        if row.notes:
+            note = f"{row.notes} | {note}"
         cells["Notes"] = note
         for header, value in cells.items():
             if header in col_index and value:
@@ -569,6 +624,11 @@ def format_worklist(result: ImportResult) -> str:
         lines.append(
             "  → if any of these carry mapping meaning, re-run with "
             "--map \"<Our Column>=<their header>\"."
+        )
+    todo = [r for r in result.rows if r.rule_type is RuleType.TODO]
+    if todo:
+        lines.append(
+            f"TODO rows: {len(todo)} (they load, and report NOT TESTED until mapped)"
         )
     lines.append("")
     if not result.review_rows:
