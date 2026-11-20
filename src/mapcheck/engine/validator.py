@@ -244,7 +244,13 @@ def validate(
     _check_required_segments(tx, result, structure_category, structure_side)
     _check_required_pairs(tx, result, structure_category, structure_side)
 
-    for rule in spec.rules:
+    for unit in spec.units():
+        if len(unit) > 1:
+            # An if / else-if chain (Design 022): one decision, one finding
+            # per scope, whichever row makes it.
+            result.findings.extend(_evaluate_chain(unit, spec, tx, output, outbound))
+            continue
+        rule = unit[0]
         if rule.rule_type is RuleType.TODO:
             # Draft placeholder (Design 012): nothing to evaluate until a
             # human decides the mapping.
@@ -624,9 +630,18 @@ def validate_interchange_files(
 
 
 def _evaluate_per_line(
-    rule: MappingRule, spec: MappingSpec, tx: TransactionDocument, output: CanonicalOutput
+    rule: MappingRule,
+    spec: MappingSpec,
+    tx: TransactionDocument,
+    output: CanonicalOutput,
+    in_scope: Any = None,
 ) -> list[Finding]:
-    """Evaluate a lines[] rule once per line-loop / output line pair."""
+    """Evaluate a lines[] rule once per line-loop / output line pair.
+
+    ``in_scope`` replaces the per-line evaluation step. A chain passes its
+    own, so the pairing and line-count handling here is written once.
+    """
+    in_scope = in_scope or _evaluate_in_scope
     assert rule.loop_context is not None
     pairing = tx.definition.output_pairing
     pairing_context = LoopContext.parse(pairing.loop) if pairing else None
@@ -672,9 +687,7 @@ def _evaluate_per_line(
                     )
                 )
             continue
-        findings.append(
-            _evaluate_in_scope(rule, spec, tx, output, index, scope=scopes[index])
-        )
+        findings.append(in_scope(rule, spec, tx, output, index, scope=scopes[index]))
     return findings
 
 
@@ -750,8 +763,14 @@ def _evaluate_per_line_out(
     spec: MappingSpec,
     tx: TransactionDocument,
     output: CanonicalOutput,
+    in_scope: Any = None,
 ) -> list[Finding]:
-    """Evaluate an outbound per-line rule: lines[] entry n ↔ loop occurrence n."""
+    """Evaluate an outbound per-line rule: lines[] entry n ↔ loop occurrence n.
+
+    ``in_scope`` replaces the per-line evaluation step, as in
+    :func:`_evaluate_per_line`.
+    """
+    in_scope = in_scope or _evaluate_in_scope_out
     assert rule.loop_context is not None
     pairing = tx.definition.output_pairing
     pairing_context = LoopContext.parse(pairing.loop) if pairing else None
@@ -799,7 +818,7 @@ def _evaluate_per_line_out(
                     )
                 )
             continue
-        findings.append(_evaluate_in_scope_out(rule, spec, tx, output, index, scope=scope))
+        findings.append(in_scope(rule, spec, tx, output, index, scope=scope))
     return findings
 
 
@@ -844,6 +863,130 @@ def _evaluate_in_scope(
         fmt=fmt,
         normalize_target=normalize_target,
     )
+
+
+# --------------------------------------------------------------------------
+# If / else-if chains (Design 022)
+# --------------------------------------------------------------------------
+
+
+def _row_scope(
+    rule: MappingRule, tx: TransactionDocument, line_index: int | None
+) -> Scope | None:
+    """The X12 scope one chain row reads (inbound) or writes (outbound).
+
+    Each row of a chain has its own Loop Context, so each resolves its own
+    scope: the first occurrence for a header-level row, the line's
+    occurrence for a per-line one.
+    """
+    scopes = tx.scopes(rule.loop_context)
+    if line_index is None:
+        return scopes[0] if scopes else None
+    return scopes[line_index] if line_index < len(scopes) else None
+
+
+def _chain_decider(
+    chain: tuple[MappingRule, ...],
+    tx: TransactionDocument,
+    output: CanonicalOutput,
+    line_index: int | None,
+    outbound: bool,
+) -> tuple[MappingRule, list[str]]:
+    """Walk a chain top to bottom; the first true condition decides.
+
+    Returns the deciding row and the trail of conditions tested on the way.
+    When none is true the tail decides, by whatever kind of rule it is.
+    """
+    trail: list[str] = []
+    for row in chain[:-1]:
+        assert row.condition is not None  # every non-tail row is CONDITIONAL
+        source: Any = (
+            _CanonicalSource(output, line_index)
+            if outbound
+            else _X12Source(tx, _row_scope(row, tx, line_index))
+        )
+        holds = _evaluate_condition(row.condition, source)
+        trail.append(f"{row.row_id} {row.condition.raw} is {'true' if holds else 'false'}")
+        if holds:
+            return row, trail
+    return chain[-1], trail
+
+
+def _chain_finding(
+    chain: tuple[MappingRule, ...],
+    spec: MappingSpec,
+    tx: TransactionDocument,
+    output: CanonicalOutput,
+    line_index: int | None,
+    outbound: bool,
+) -> Finding:
+    """The one finding a chain produces in one scope.
+
+    The deciding row is evaluated exactly as it would be alone, then the
+    finding is filed under the chain's *first* Row ID. Regression identity
+    is built on Row ID: filed under the deciding row, different data taking
+    a different branch would read as one finding resolved and an unrelated
+    one appearing, instead of the same target having changed.
+    """
+    head = chain[0]
+    decider, trail = _chain_decider(chain, tx, output, line_index, outbound)
+    decided = f"decided by {decider.row_id}"
+    if decider is chain[-1] and not decider.passes_on and decider.condition is None:
+        decided += " (no condition was true)"
+    note = f"{decided}: {'; '.join(trail)}"
+
+    if decider.rule_type is RuleType.TODO:
+        if outbound:
+            _, target = _outbound_refs(decider, tx, line_index)
+        elif line_index is None:
+            target = decider.target_field
+        else:
+            target = decider.target_field.replace("[]", f"[{line_index}]")
+        return Finding(
+            status=Status.NOT_TESTED,
+            row_id=head.row_id,
+            sheet_row=head.sheet_row,
+            source_ref=head.source_ref(),
+            target=target,
+            message=(
+                f"{note} | the chain's final else ({decider.row_id}) is TODO: "
+                "that mapping has not been decided yet"
+            ),
+        )
+
+    evaluate = _evaluate_in_scope_out if outbound else _evaluate_in_scope
+    scope = _row_scope(decider, tx, line_index) if line_index is not None else None
+    finding = evaluate(decider, spec, tx, output, line_index, scope=scope)
+    message = f"{note} | {finding.message}" if finding.message else note
+    return dataclass_replace(
+        finding, row_id=head.row_id, sheet_row=head.sheet_row, message=message
+    )
+
+
+def _evaluate_chain(
+    chain: tuple[MappingRule, ...],
+    spec: MappingSpec,
+    tx: TransactionDocument,
+    output: CanonicalOutput,
+    outbound: bool,
+) -> list[Finding]:
+    """Evaluate an if / else-if chain: one finding per scope."""
+    head = chain[0]
+    if not head.is_per_line:
+        return [_chain_finding(chain, spec, tx, output, None, outbound)]
+
+    def in_scope(
+        rule: MappingRule,
+        spec: MappingSpec,
+        tx: TransactionDocument,
+        output: CanonicalOutput,
+        line_index: int | None,
+        scope: Scope | None = None,
+    ) -> Finding:
+        return _chain_finding(chain, spec, tx, output, line_index, outbound)
+
+    per_line = _evaluate_per_line_out if outbound else _evaluate_per_line
+    return per_line(head, spec, tx, output, in_scope=in_scope)
 
 
 def _judge(
@@ -1038,6 +1181,13 @@ def _expected_for(
         outcome = rule.then_outcome if branch_true else rule.else_outcome
         assert outcome is not None
         note = f"condition {rule.condition.raw!r} is {'true' if branch_true else 'false'}"
+        if outcome.kind is OutcomeKind.NEXT:
+            # Only reachable for a row evaluated outside its chain, which
+            # the loader does not allow. Say so rather than guess.
+            return _Expected(
+                kind="untestable",
+                note=f"{note}; Else is NEXT but this row was evaluated on its own",
+            )
         if outcome.kind is OutcomeKind.SKIP:
             return _Expected(kind="absent", note=note)
         if outcome.kind is OutcomeKind.BLANK:

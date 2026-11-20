@@ -20,7 +20,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from mapcheck.spec.model import Direction, MappingRule, MappingSpec
+from mapcheck.spec.model import Direction, MappingRule, MappingSpec, chain_errors
 from mapcheck.spec.parser import (
     _EXPECTED_CODELIST_HEADER,
     _EXPECTED_MAPPING_HEADER,
@@ -170,6 +170,10 @@ def merge_specs(base: MappingSpec, delta: DeltaSpec) -> tuple[MappingSpec, list[
         by_id[rule.row_id] = stamped
 
     merged_rules = tuple(by_id[row_id] for row_id in order)
+    # Removing, replacing or appending a row can break an if / else-if
+    # chain (Design 022) that was whole in the base spec.
+    if broken := chain_errors(merged_rules):
+        raise SpecLoadError([f"after merging the partner delta: {e}" for e in broken])
     merged_code_lists = {**base.code_lists, **delta.code_lists}
     merged_meta = {**base.meta}
     merged_meta["Partner"] = delta.label.split(":", 1)[-1]

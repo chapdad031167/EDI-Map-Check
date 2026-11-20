@@ -1,0 +1,41 @@
+{
+  "order": {
+    "purpose": "00",
+    "po_type": "SA",
+    "po_number": "POCHN01",
+    "po_date": "2026-06-15"
+  },
+  "ship_to": {
+    "name": "ALPINE OUTFITTERS STORE 118",
+    "id": "VEND8821"
+  },
+  "lines": [
+    {
+      "line_no": 1,
+      "qty": 12,
+      "uom": "EA",
+      "unit_price": 8.5,
+      "item_id": "614141007349",
+      "unit_or_case": "Y"
+    },
+    {
+      "line_no": 2,
+      "qty": 6,
+      "uom": "CA",
+      "unit_price": 24,
+      "item_id": "PART77",
+      "unit_or_case": "Y"
+    },
+    {
+      "line_no": 3,
+      "qty": 5,
+      "uom": "DZ",
+      "unit_price": 12,
+      "item_id": "NONE",
+      "unit_or_case": "N"
+    }
+  ],
+  "summary": {
+    "line_count": 3
+  }
+}

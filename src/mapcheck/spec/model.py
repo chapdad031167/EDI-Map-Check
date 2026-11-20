@@ -69,6 +69,7 @@ class OutcomeKind(str, Enum):
     LITERAL = "LITERAL"  # map a quoted literal
     SKIP = "SKIP"  # target field must be absent
     BLANK = "BLANK"  # target field present but empty
+    NEXT = "NEXT"  # Else only: the next Mapping row decides (Design 022)
 
 
 @dataclass(frozen=True)
@@ -235,6 +236,16 @@ class MappingRule:
             return self.loop_context is not None and self.loop_context.qualifier is None
         return "[]" in self.target_field
 
+    @property
+    def passes_on(self) -> bool:
+        """True when this row's Else hands the decision to the next row
+        (Design 022), making it a link in an if / else-if chain."""
+        return (
+            self.rule_type is RuleType.CONDITIONAL
+            and self.else_outcome is not None
+            and self.else_outcome.kind is OutcomeKind.NEXT
+        )
+
     def source_ref(self) -> str:
         """Human-readable source reference for reports, e.g. ``N1[ST] N104``.
 
@@ -259,6 +270,77 @@ class MappingRule:
         if self.direction is Direction.OUTBOUND and self.loop_context:
             return f"{self.loop_context} {self.target_field}"
         return self.target_field
+
+
+def group_units(rules: tuple[MappingRule, ...] | list[MappingRule]) -> list[tuple[MappingRule, ...]]:
+    """Group rules into the units the engine evaluates (Design 022).
+
+    A unit is one rule, or a chain: consecutive rows each of whose Else is
+    ``NEXT``, plus the row that ends it (the tail). The grouping itself
+    does not judge whether a chain is well formed; :func:`chain_errors`
+    does, and the loader refuses a spec that fails it.
+    """
+    units: list[tuple[MappingRule, ...]] = []
+    current: list[MappingRule] = []
+    for rule in rules:
+        current.append(rule)
+        if not rule.passes_on:
+            units.append(tuple(current))
+            current = []
+    if current:  # a trailing row that passes on to nothing
+        units.append(tuple(current))
+    return units
+
+
+def _same_target(a: MappingRule, b: MappingRule) -> bool:
+    """Do two rows decide the same target? Outbound, the X12 element alone
+    is not enough: Loop Context says which occurrence, so it must agree."""
+    if a.target_field != b.target_field:
+        return False
+    if a.direction is Direction.OUTBOUND:
+        return a.loop_context == b.loop_context
+    return True
+
+
+def chain_errors(rules: tuple[MappingRule, ...] | list[MappingRule]) -> list[str]:
+    """Everything wrong with the chains in ``rules``, one message each.
+
+    Checked at load so a malformed chain is a spec error naming its rows,
+    never a strange finding in a report.
+    """
+
+    def name(rule: MappingRule) -> str:
+        return f"Mapping row {rule.sheet_row} ({rule.row_id})"
+
+    errors: list[str] = []
+    for unit in group_units(rules):
+        last = unit[-1]
+        if last.passes_on:
+            errors.append(
+                f"{name(last)}: Else is NEXT but there is no next row to "
+                "pass the decision to"
+            )
+            continue
+        if len(unit) == 1:
+            continue
+        head = unit[0]
+        for prev, row in zip(unit, unit[1:]):
+            if not _same_target(prev, row):
+                errors.append(
+                    f"{name(prev)}: Else is NEXT, so the next row must decide the "
+                    f"same target ({prev.target_ref()}), but {name(row)} targets "
+                    f"{row.target_ref()}"
+                )
+        scopes = {
+            (r.is_per_line, r.loop_context.base() if r.is_per_line and r.loop_context else None)
+            for r in unit
+        }
+        if len(scopes) > 1:
+            errors.append(
+                f"{name(head)}: the rows of a chain must all be per-line on the "
+                "same loop, or all header-level; this one mixes them"
+            )
+    return errors
 
 
 @dataclass(frozen=True)
@@ -293,3 +375,8 @@ class MappingSpec:
 
     def rules_for_target(self, target_field: str) -> list[MappingRule]:
         return [r for r in self.rules if r.target_field == target_field]
+
+    def units(self) -> list[tuple[MappingRule, ...]]:
+        """The rules as the engine evaluates them: single rows, and chains
+        of rows linked by an Else of ``NEXT`` (Design 022)."""
+        return group_units(self.rules)

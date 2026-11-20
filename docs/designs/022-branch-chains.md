@@ -1,6 +1,7 @@
 # Design 022: if / else-if chains
 
-**Status:** Draft, for sign-off. No implementation until approved.
+**Status:** Approved 2026-11-20 ("go with your leanings" on all four
+open questions; revisit later if needed), implementation in this PR.
 **Applies to:** the spec grammar (`spec/conditions.py`, `spec/parser.py`,
 `spec/model.py`), the engine's expected-value step
 (`engine/validator.py`), the template's Instructions sheet, `import-spec`,
@@ -159,6 +160,29 @@ chain. `draft-spec` emitting chains. Any UI for editing them.
 - A bundled reference pair (spec, clean output, defect output) whose
   defect variant trips exactly one finding, in the style of the existing
   examples.
+
+## Decisions in review (2026-11-20)
+
+All four open questions below were answered with the stated lean, on the
+understanding that any of them can be revisited once chains have seen
+real use:
+
+1. The keyword is `NEXT`.
+2. A TODO row is allowed as a chain's tail.
+3. A chain's finding is filed under its first Row ID.
+4. The loader does not warn when a chain is a lookup in disguise.
+
+Three things the build settled that the text above left open:
+
+- **"The same target" outbound** means the same X12 element *and* the
+  same Loop Context, since the context is what names the occurrence. An
+  outbound chain therefore cannot mix scopes at all.
+- **"A TODO in the middle of a chain"** cannot be written: only a
+  CONDITIONAL may carry `NEXT`, so the refusal is the general one ("NEXT
+  is only allowed on CONDITIONAL rules, not TODO").
+- **A partner delta** is checked after the merge. Removing, replacing or
+  appending a row can break a chain that was whole in the base spec, and
+  that is refused with the same messages.
 
 ## Open questions for review
 

@@ -164,11 +164,16 @@ _OUTCOME_KEYWORDS = {
     "SOURCE": OutcomeKind.SOURCE,
     "SKIP": OutcomeKind.SKIP,
     "BLANK": OutcomeKind.BLANK,
+    "NEXT": OutcomeKind.NEXT,
 }
 
 
 def parse_outcome(text: str) -> Outcome:
     """Parse a Then/Else cell: ``SOURCE``, ``SKIP``, ``BLANK``, or ``'literal'``.
+
+    ``NEXT`` also parses here. It is only meaningful as an Else (Design
+    022: pass the decision to the next row), and the spec loader is what
+    refuses it anywhere else, with the row number.
 
     Raises :class:`ConditionSyntaxError` on anything else — bare words are
     rejected so a forgotten quote can't silently become a literal.
@@ -182,5 +187,6 @@ def parse_outcome(text: str) -> Outcome:
     if len(raw) >= 2 and raw.startswith("'") and raw.endswith("'"):
         return Outcome(kind=OutcomeKind.LITERAL, literal=raw[1:-1])
     raise ConditionSyntaxError(
-        f"invalid outcome {raw!r} (expected SOURCE, SKIP, BLANK, or a 'quoted literal')"
+        f"invalid outcome {raw!r} "
+        "(expected SOURCE, SKIP, BLANK, a 'quoted literal', or NEXT in an Else)"
     )

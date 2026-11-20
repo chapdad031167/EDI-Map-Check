@@ -29,6 +29,7 @@ from mapcheck.spec.model import (
     Outcome,
     OutcomeKind,
     RuleType,
+    chain_errors,
     is_canonical_path,
     is_element_ref,
     split_source_field,
@@ -346,6 +347,18 @@ def _parse_rule(
         if source_field:
             err("CONSTANT rule must not have a Source Field")
             ok = False
+    # NEXT (Design 022) hands the decision to the following row. It only
+    # means something as the Else of a CONDITIONAL.
+    if then_outcome is not None and then_outcome.kind is OutcomeKind.NEXT:
+        err("Then: NEXT is only allowed as an Else (it passes the decision to the next row)")
+        ok = False
+    if (
+        else_outcome is not None
+        and else_outcome.kind is OutcomeKind.NEXT
+        and rule_type is not RuleType.CONDITIONAL
+    ):
+        err(f"Else: NEXT is only allowed on CONDITIONAL rules, not {rule_type_raw}")
+        ok = False
     if rule_type is RuleType.CONDITIONAL:
         if condition is None:
             err("CONDITIONAL rule requires a Condition (Coded)")
@@ -519,6 +532,10 @@ def load_spec(path: str | Path) -> MappingSpec:
             seen_ids[rule.row_id] = idx
             rules.append(rule)
 
+        # Chains are checked only once every row parsed: a row dropped for
+        # its own error would otherwise show up again here as a broken link.
+        if not errors:
+            errors.extend(chain_errors(rules))
         if not rules and not errors:
             errors.append("Mapping sheet contains no rules")
         if errors:
